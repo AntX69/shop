@@ -1,0 +1,6 @@
+{
+  "name": "StorePOS - ლოკალური მაღაზიის მართვა",
+  "description": "ოფლაინ Windows მაღაზიის მართვის, სალაროს, პროდუქციის, მარაგებისა და ნისიების სისტემა (Offline Desktop POS)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
