@@ -249,7 +249,7 @@ export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
     } else {
       console.error(`[IPC Error in ${req.channel}]:`, err);
       try {
-        backupService.logSystemError(req.channel, err.message, err.stack, 'error');
+        new BackupService().logSystemError(req.channel, err.message, err.stack, 'error');
       } catch {}
     }
     return {

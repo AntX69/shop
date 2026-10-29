@@ -248,7 +248,7 @@ export class ProductsService {
     for (const v of variants) {
       v.codes = this.db.prepare(`
         SELECT * FROM product_codes WHERE variant_id = ?
-      `).all(v.id) as ProductCode[];
+      `).all(v.id) as unknown as ProductCode[];
       v.effective_price_tetri = v.price_override_tetri ?? product.base_price_tetri;
     }
 
@@ -313,7 +313,7 @@ export class ProductsService {
       for (const v of variants) {
         v.codes = this.db.prepare(`
           SELECT * FROM product_codes WHERE variant_id = ?
-        `).all(v.id) as ProductCode[];
+        `).all(v.id) as unknown as ProductCode[];
         v.effective_price_tetri = v.price_override_tetri ?? p.base_price_tetri;
       }
 

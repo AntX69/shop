@@ -35,7 +35,7 @@ if (!gotTheLock) {
     initDatabase(dbPath);
 
     // 2. Register IPC handler
-    ipcMain.handle('api:ipc', async (_event, req) => {
+    ipcMain.handle('api:ipc', async (_event: any, req: any) => {
       return await handleIpcMessage(req);
     });
 
