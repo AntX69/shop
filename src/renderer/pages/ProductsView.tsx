@@ -683,7 +683,22 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                         </div>
 
                         <div>
-                          <label className="block text-[11px] text-slate-400 mb-0.5">5-ნიშნა კოდი (10000-99999)</label>
+                          <div className="flex justify-between items-center mb-0.5">
+                            <label className="block text-[11px] text-slate-400">5-ნიშნა კოდი</label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const randCode = String(Math.floor(10000 + Math.random() * 90000));
+                                const updated = [...variantsList];
+                                updated[i].manual_5digit = randCode;
+                                setVariantsList(updated);
+                              }}
+                              className="text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer"
+                              title="შემთხვევითი 5-ნიშნა კოდის გენერაცია"
+                            >
+                              ⚡ გენერაცია
+                            </button>
+                          </div>
                           <input
                             type="text"
                             maxLength={5}

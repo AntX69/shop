@@ -44,6 +44,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
   const [loading, setLoading] = useState<boolean>(true);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Database Reset Modal (Owner Only)
+  const [isResetModalOpen, setIsResetModalOpen] = useState<boolean>(false);
+  const [resetPinInput, setResetPinInput] = useState<string>('');
+  const [resetError, setResetError] = useState<string>('');
+  const [isResetting, setIsResetting] = useState<boolean>(false);
+
+  const handleResetDatabase = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError('');
+    if (!resetPinInput.trim()) {
+      setResetError('გთხოვთ შეიყვანოთ მფლობელის PIN კოდი');
+      return;
+    }
+    try {
+      setIsResetting(true);
+      await invokeIpc('auth:resetStoreDatabase', { pin: resetPinInput.trim() });
+      window.location.reload();
+    } catch (err: any) {
+      setResetError(err.message || 'ბაზის გასუფთავება უარყოფილია');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -280,6 +304,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
             </div>
           </div>
 
+          {/* Danger Zone: Database Reset (Owner Only) */}
+          {currentUser.role === 'owner' && (
+            <div className="bg-slate-900 border border-red-900/40 rounded-2xl p-5 shadow-xl space-y-3">
+              <h2 className="text-sm font-bold text-red-400 flex items-center space-x-2">
+                <AlertTriangle className="w-4 h-4 text-red-400" />
+                <span>სისტემის გასუფთავება (Danger Zone)</span>
+              </h2>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                ყველა პროდუქტის, გაყიდვის, ნისიისა და მომხმარებლის სამუდამოდ წაშლა. ოპერაცია ხელმისაწვდომია მხოლოდ მფლობელისთვის და მოითხოვს PIN კოდის დადასტურებას.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setResetPinInput('');
+                  setResetError('');
+                  setIsResetModalOpen(true);
+                }}
+                className="w-full py-2.5 bg-red-950/60 hover:bg-red-900 border border-red-800 text-red-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-4 h-4" />
+                <span>მონაცემთა ბაზის გასუფთავება</span>
+              </button>
+            </div>
+          )}
+
         </div>
 
         {/* Right Column: Audit Logs & Error Log Viewer */}
@@ -438,6 +487,76 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         </div>
 
       </div>
+
+      {/* Database Reset Confirmation Modal */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-red-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center space-x-3 text-red-400">
+              <div className="w-10 h-10 rounded-full bg-red-950 flex items-center justify-center border border-red-800">
+                <AlertTriangle className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">ბაზის სრული გასუფთავება</h3>
+                <p className="text-xs text-red-300">ეს ოპერაცია შეუქცევადია</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed bg-red-950/40 p-3 rounded-xl border border-red-900/60">
+              ყურადღება! ყველა მონაცემი: პროდუქცია, ნაშთები, გაყიდვები, ნისიები და მომხმარებლები სამუდამოდ წაიშლება. გასაგრძელებლად შეიყვანეთ მფლობელის PIN კოდი:
+            </p>
+
+            {resetError && (
+              <div className="p-3 bg-red-950/80 border border-red-700 rounded-xl text-xs text-red-200 flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                <span>{resetError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleResetDatabase} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  მფლობელის PIN კოდი
+                </label>
+                <input
+                  type="password"
+                  maxLength={6}
+                  autoFocus
+                  value={resetPinInput}
+                  onChange={(e) => setResetPinInput(e.target.value.replace(/\D/g, ''))}
+                  placeholder="••••"
+                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-center text-lg font-mono text-white tracking-widest focus:border-red-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setIsResetModalOpen(false)}
+                  disabled={isResetting}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition cursor-pointer"
+                >
+                  გაუქმება
+                </button>
+                <button
+                  type="submit"
+                  disabled={isResetting || !resetPinInput}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer"
+                >
+                  {isResetting ? (
+                    <span>იშლება...</span>
+                  ) : (
+                    <>
+                      <Trash2 className="w-4 h-4" />
+                      <span>წაშლა და გასუფთავება</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

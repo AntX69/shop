@@ -212,26 +212,7 @@ export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
     }
 
     if (channel === 'auth:resetStoreDatabase') {
-      const db = getDb();
-      db.exec(`
-        DELETE FROM sale_items;
-        DELETE FROM sales;
-        DELETE FROM debt_repayments;
-        DELETE FROM return_items;
-        DELETE FROM returns;
-        DELETE FROM inventory_lots;
-        DELETE FROM inventory_movements;
-        DELETE FROM product_codes;
-        DELETE FROM product_images;
-        DELETE FROM product_variants;
-        DELETE FROM products;
-        DELETE FROM categories;
-        DELETE FROM customers;
-        DELETE FROM expenses;
-        DELETE FROM audit_logs;
-        DELETE FROM system_error_logs;
-        DELETE FROM users;
-      `);
+      authService.resetStoreDatabase(currentUser, payload?.pin);
       return { success: true };
     }
 

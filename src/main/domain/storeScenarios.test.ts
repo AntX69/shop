@@ -351,3 +351,33 @@ test('Scenario 11: Unknown purchase cost does not fabricate 0 cost in profit cal
   assert.equal(summary.unknown_cost_items_count, 1);
   assert.equal(summary.estimated_gross_profit_tetri, null); // Profit cannot be fabricated as 100%!
 });
+
+test('M6.1 Security: Seller cannot reset database and Owner requires exact confirmation PIN', () => {
+  const { authService, seller, owner, db } = createTestEnv();
+
+  // 1. Seller attempts DB reset -> must throw owner role error
+  assert.throws(() => {
+    authService.resetStoreDatabase(seller, '1234');
+  }, /მონაცემთა ბაზის გასუფთავების უფლება აქვს მხოლოდ მფლობელს/);
+
+  // 2. Owner with wrong PIN -> must throw invalid PIN error
+  assert.throws(() => {
+    authService.resetStoreDatabase(owner, '9999');
+  }, /არასწორი PIN კოდი/);
+
+  // 3. Owner with empty PIN -> must throw invalid PIN error
+  assert.throws(() => {
+    authService.resetStoreDatabase(owner, '');
+  }, /არასწორი PIN კოდი/);
+
+  // Verify users table still intact
+  const usersBefore = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+  assert.equal(usersBefore.count, 2);
+
+  // 4. Owner with correct PIN ('1234') -> resets database
+  authService.resetStoreDatabase(owner, '1234');
+
+  const usersAfter = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
+  assert.equal(usersAfter.count, 0);
+});
+

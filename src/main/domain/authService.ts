@@ -235,4 +235,53 @@ export class AuthService {
       "INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (?, 'PIN_RESET', 'users', ?, 'PIN reset', ?)"
     ).run(requester.id, String(targetUserId), now);
   }
+
+  /**
+   * Validates if a PIN matches the store owner's PIN.
+   */
+  verifyOwnerPin(userId: number, pin: string): boolean {
+    if (!isValidPin(pin)) return false;
+    const userRow = this.db.prepare(
+      "SELECT pin_hash, pin_salt, role FROM users WHERE id = ?"
+    ).get(userId) as { pin_hash: string; pin_salt: string; role: string } | undefined;
+
+    if (!userRow || userRow.role !== 'owner') return false;
+    return verifyPin(pin, userRow.pin_hash, userRow.pin_salt);
+  }
+
+  /**
+   * Resets the entire store database (Owner only, strictly requiring valid Owner PIN).
+   */
+  resetStoreDatabase(requester: User, pin: string): void {
+    if (requester.role !== 'owner') {
+      throw new Error('მონაცემთა ბაზის გასუფთავების უფლება აქვს მხოლოდ მფლობელს (Owner)');
+    }
+
+    if (!pin || !this.verifyOwnerPin(requester.id, pin)) {
+      throw new Error('არასწორი PIN კოდი. ბაზის გასუფთავება უარყოფილია');
+    }
+
+    runInTransaction(() => {
+      this.db.exec(`
+        DELETE FROM sale_items;
+        DELETE FROM sales;
+        DELETE FROM debt_repayments;
+        DELETE FROM return_items;
+        DELETE FROM returns;
+        DELETE FROM inventory_lots;
+        DELETE FROM inventory_movements;
+        DELETE FROM product_codes;
+        DELETE FROM product_images;
+        DELETE FROM product_variants;
+        DELETE FROM products;
+        DELETE FROM categories;
+        DELETE FROM customers;
+        DELETE FROM expenses;
+        DELETE FROM audit_logs;
+        DELETE FROM system_error_logs;
+        DELETE FROM users;
+      `);
+    });
+  }
 }
+

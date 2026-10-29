@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
+    "build:electron": "vite build && electron-builder",
+    "dist:win": "electron-builder --win --x64",
     "start": "node server.ts",
     "preview": "vite preview",
     "test": "npx --yes tsx --test src/**/*.test.ts",
@@ -32,6 +34,7 @@
     "@types/react-dom": "^19.3.0",
     "autoprefixer": "^10.4.21",
     "electron": "^45.1.0",
+    "electron-builder": "^26.18.0",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",

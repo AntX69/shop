@@ -371,7 +371,7 @@ export async function recognize5DigitsFromCanvas(
     pCtx.putImageData(pImgData, 0, 0);
   }
 
-  // 1. Try real ONNX inference via local IPC service
+  // 1. Real ONNX inference via local IPC service
   try {
     const ipcRes = await invokeIpc<any>('ocr:recognize', {
       pixels: Array.from(imgData.data),
@@ -387,35 +387,12 @@ export async function recognize5DigitsFromCanvas(
         processedImageUri: previewCanvas.toDataURL('image/png'),
       };
     }
-  } catch (ipcErr) {
-    console.warn('[OCR] IPC ONNX fallback to local client classifier:', ipcErr);
+    throw new Error('ONNX მოდელმა ვერ დააბრუნა ვალიდური შედეგი');
+  } catch (ipcErr: any) {
+    console.error('[OCR] ONNX Inference error:', ipcErr);
+    // Explicit error reporting without disguised fallback
+    throw new Error(
+      `ONNX მოდელი მიუწვდომელია (${ipcErr?.message || 'შეცდომა'}). გთხოვთ შეიყვანოთ 5-ნიშნა კოდი ხელით ან გამოიყენოთ შტრიხკოდის სკანერი.`
+    );
   }
-
-  // 2. Client-side fallback classifier
-  const boxes = find5DigitBoxes(binary, roiWidth, roiHeight);
-  const digitsResult: DigitRecognitionResult[] = [];
-  let totalConf = 0;
-
-  for (let i = 0; i < 5; i++) {
-    const box = boxes[i] || { x: (i * roiWidth) / 5, y: 0, width: roiWidth / 5, height: roiHeight };
-    const norm28 = normalizeTo28x28(binary, roiWidth, box);
-    const classification = classifyNormalizedDigit(norm28, box);
-
-    digitsResult.push({
-      digit: String(classification.digit),
-      confidence: classification.confidence,
-      box,
-    });
-    totalConf += classification.confidence;
-  }
-
-  const code = digitsResult.map((d) => d.digit).join('');
-  const avgConfidence = Math.round(totalConf / 5);
-
-  return {
-    code,
-    confidence: avgConfidence,
-    digits: digitsResult,
-    processedImageUri: previewCanvas.toDataURL('image/png'),
-  };
 }
