@@ -188,7 +188,16 @@ export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
 
     // 10. Backup & Settings
     if (channel === 'backup:create') {
-      return { success: true, data: backupService.createBackup(currentUser) };
+      return { success: true, data: backupService.createBackup(currentUser, payload?.targetDir) };
+    }
+    if (channel === 'backup:list') {
+      return { success: true, data: backupService.listBackups(currentUser) };
+    }
+    if (channel === 'backup:verify') {
+      return { success: true, data: backupService.verifyBackup(currentUser, payload?.dataString, payload?.filename) };
+    }
+    if (channel === 'backup:runDaily') {
+      return { success: true, data: backupService.checkAndRunDailyBackup(currentUser) };
     }
     if (channel === 'backup:restore') {
       return { success: true, data: backupService.restoreBackup(currentUser, payload.base64Data, payload.expectedChecksum) };

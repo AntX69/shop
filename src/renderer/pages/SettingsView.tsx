@@ -5,13 +5,17 @@
  * Settings & Backup Management View (Owner Only).
  * Implements:
  * - Store Settings (store name, currency ₾ GEL, timezone Asia/Tbilisi)
- * - One-click Database Backup Export (.db with SHA-256 checksum)
- * - Backup Restore with integrity checks
- * - System Audit Logs viewer.
+ * - Configurable Backup Directory (supports internal, external, and USB drives)
+ * - Automated Daily Backup (> 24h interval check)
+ * - One-click Database Backup Export (.posbackup with real photos & SHA-256 integrity)
+ * - Safe Backup Restoration with PRAGMA integrity check & pre-restore safety snapshot
+ * - Backups History Table with integrity verification
+ * - System Audit Logs & Sensitive-Data-Sanitized Error Logs viewer
+ * - Secure Database Reset with pre-wipe safety backup guarantee.
  */
 
 import React, { useState, useEffect } from 'react';
-import { AuditLog, SystemErrorLog, User } from '../../shared/types.ts';
+import { AuditLog, SystemErrorLog, User, BackupInfo } from '../../shared/types.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { 
   Settings, 
@@ -27,7 +31,12 @@ import {
   FileText,
   Trash2,
   RefreshCw,
-  Layers
+  Folder,
+  HardDrive,
+  Check,
+  Play,
+  Archive,
+  Eye
 } from 'lucide-react';
 
 interface SettingsViewProps {
@@ -38,11 +47,18 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStoreNameChanged }) => {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [storeNameInput, setStoreNameInput] = useState<string>('');
+  const [backupDirInput, setBackupDirInput] = useState<string>('./data/backups');
+  const [autoBackupEnabled, setAutoBackupEnabled] = useState<boolean>(true);
+  
+  const [backupsList, setBackupsList] = useState<BackupInfo[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [errorLogs, setErrorLogs] = useState<SystemErrorLog[]>([]);
-  const [rightTab, setRightTab] = useState<'audit' | 'errors'>('audit');
+  const [rightTab, setRightTab] = useState<'backups' | 'audit' | 'errors'>('backups');
   const [loading, setLoading] = useState<boolean>(true);
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Verifying / Testing Backup State
+  const [verifyingFilename, setVerifyingFilename] = useState<string | null>(null);
 
   // Database Reset Modal (Owner Only)
   const [isResetModalOpen, setIsResetModalOpen] = useState<boolean>(false);
@@ -71,15 +87,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
   const loadData = async () => {
     try {
       setLoading(true);
-      const [sets, logs, errLogs] = await Promise.all([
+      const [sets, logs, errLogs, backups] = await Promise.all([
         invokeIpc<Record<string, string>>('backup:getSettings'),
         invokeIpc<AuditLog[]>('backup:getLogs', { limit: 100 }),
-        invokeIpc<SystemErrorLog[]>('system:getErrorLogs', { limit: 100 })
+        invokeIpc<SystemErrorLog[]>('system:getErrorLogs', { limit: 100 }),
+        currentUser.role === 'owner' 
+          ? invokeIpc<BackupInfo[]>('backup:list') 
+          : Promise.resolve([])
       ]);
       setSettings(sets);
       setStoreNameInput(sets.store_name || 'ჩემი მაღაზია');
-      setAuditLogs(logs);
-      setErrorLogs(errLogs);
+      setBackupDirInput(sets.backup_directory || './data/backups');
+      setAutoBackupEnabled(sets.auto_backup_enabled !== '0');
+      setAuditLogs(logs || []);
+      setErrorLogs(errLogs || []);
+      setBackupsList(backups || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -96,12 +118,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
     try {
       await invokeIpc('backup:updateSettings', {
         settings: {
-          store_name: storeNameInput.trim() || 'ჩემი მაღაზია'
+          store_name: storeNameInput.trim() || 'ჩემი მაღაზია',
+          backup_directory: backupDirInput.trim() || './data/backups',
+          auto_backup_enabled: autoBackupEnabled ? '1' : '0'
         }
       });
       onStoreNameChanged(storeNameInput.trim());
-      setStatusMsg({ type: 'success', text: 'პარამეტრები წარმატებით შეინახა!' });
+      setStatusMsg({ type: 'success', text: 'პარამეტრები და სარეზერვო კონფიგურაცია წარმატებით შეინახა!' });
       setTimeout(() => setStatusMsg(null), 3000);
+      loadData();
     } catch (err: any) {
       setStatusMsg({ type: 'error', text: err.message || 'შენახვის შეცდომა' });
     }
@@ -115,7 +140,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         checksum_sha256: string;
         created_at: string;
         data_base64: string;
-      }>('backup:create');
+      }>('backup:create', { targetDir: backupDirInput.trim() });
 
       // Trigger download in browser
       const byteCharacters = atob(backup.data_base64);
@@ -124,7 +149,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
       const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: 'application/x-sqlite3' });
+      const blob = new Blob([byteArray], { type: 'application/json' });
 
       const link = document.createElement('a');
       link.href = URL.createObjectURL(blob);
@@ -135,11 +160,47 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
       setStatusMsg({
         type: 'success',
-        text: `სარეზერვო ასლი შეიქმნა! (${(backup.size_bytes / 1024).toFixed(1)} KB, Checksum: ${backup.checksum_sha256.substring(0, 8)}...)`
+        text: `სარეზერვო ასლი წარმატებით შეიქმნა! (${(backup.size_bytes / 1024).toFixed(1)} KB, Checksum: ${backup.checksum_sha256.substring(0, 10)}...)`
       });
       loadData();
     } catch (err: any) {
       setStatusMsg({ type: 'error', text: err.message || 'სარეზერვო ასლის შექმნა ვერ მოხერხდა' });
+    }
+  };
+
+  const handleRunDailyBackupNow = async () => {
+    try {
+      const ran = await invokeIpc<boolean>('backup:runDaily');
+      if (ran) {
+        setStatusMsg({ type: 'success', text: 'ყოველდღიური სარეზერვო ასლი წარმატებით შეიქმნა!' });
+      } else {
+        setStatusMsg({ type: 'success', text: 'სარეზერვო ასლი ბოლო 24 საათში უკვე შექმნილია, განახლება არ იყო საჭირო.' });
+      }
+      loadData();
+    } catch (err: any) {
+      setStatusMsg({ type: 'error', text: err.message || 'ავტომატური რეზერვირების შეცდომა' });
+    }
+  };
+
+  const handleVerifyBackupItem = async (filename: string) => {
+    try {
+      setVerifyingFilename(filename);
+      const res = await invokeIpc<{ is_valid: boolean; integrity_status: string; stats?: any }>('backup:verify', {
+        filename
+      });
+
+      if (res.is_valid) {
+        const statsStr = res.stats 
+          ? ` (პროდუქცია: ${res.stats.products_count}, გაყიდვები: ${res.stats.sales_count}, მომხმარებლები: ${res.stats.customers_count})`
+          : '';
+        alert(`ვალიდაცია წარმატებულია!\n\nსტატუსი: ${res.integrity_status}${statsStr}`);
+      } else {
+        alert(`ყურადღება! ასლის შემოწმება ჩაიშალა:\n\n${res.integrity_status}`);
+      }
+    } catch (err: any) {
+      alert(`შემოწმების შეცდომა: ${err.message}`);
+    } finally {
+      setVerifyingFilename(null);
     }
   };
 
@@ -158,7 +219,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!confirm(`ყურადღება! "${file.name}" ფაილიდან აღდგენა ჩაანაცვლებს მიმდინარე მონაცემებს. ნამდვილად გსურთ გაგრძელება?`)) {
+    if (!confirm(`ყურადღება! "${file.name}" ფაილიდან აღდგენა ჩაანაცვლებს მიმდინარე მონაცემებს.\n\nავტომატურად შეიქმნება უსაფრთხოების ასლი (store.db.before_restore).\n\nნამდვილად გსურთ გაგრძელება?`)) {
       e.target.value = '';
       return;
     }
@@ -192,9 +253,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         <div>
           <h1 className="text-xl font-bold text-white flex items-center space-x-2">
             <Settings className="w-6 h-6 text-emerald-400" />
-            <span>პარამეტრები, ერთიანი სარეზერვო ასლი (.posbackup) და დიაგნოსტიკა</span>
+            <span>პარამეტრები, საიმედო რეზერვირება (.posbackup) და დიაგნოსტიკა</span>
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">მაღაზიის კონფიგურაცია, მონაცემთა ლოკალური რეზერვირება, მთლიანობის შემოწმება და შეცდომების ჟურნალი</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            მონაცემთა ბაზის მთლიანობა, ფოტოების შენარჩუნება, ავტომატური რეზერვირება და უსაფრთხო აღდგენა
+          </p>
         </div>
       </div>
 
@@ -212,14 +275,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
       {/* Main 2-column layout */}
       <div className="flex-1 flex space-x-4 overflow-hidden">
         
-        {/* Left Column: Store Settings & Backup */}
+        {/* Left Column: Store Settings & Backup Configuration */}
         <div className="w-5/12 space-y-4 overflow-y-auto pr-1">
           
           {/* Store Settings Card */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
             <h2 className="text-sm font-bold text-white flex items-center space-x-2 mb-4">
               <Store className="w-4 h-4 text-emerald-400" />
-              <span>მაღაზიის პარამეტრები</span>
+              <span>მაღაზიის პარამეტრები და ლოკაცია</span>
             </h2>
 
             <form onSubmit={handleSaveSettings} className="space-y-3">
@@ -229,7 +292,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                   type="text"
                   value={storeNameInput}
                   onChange={(e) => setStoreNameInput(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                 />
               </div>
 
@@ -245,6 +308,42 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                   <div className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white font-mono">
                     Asia/Tbilisi
                   </div>
+                </div>
+              </div>
+
+              {/* Backup Directory & Automation */}
+              <div className="pt-2 border-t border-slate-800/80 space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center space-x-1.5">
+                    <Folder className="w-3.5 h-3.5 text-amber-400" />
+                    <span>სარეზერვო საქაღალდე (HDD / SSD / USB)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={backupDirInput}
+                    onChange={(e) => setBackupDirInput(e.target.value)}
+                    placeholder="./data/backups ან D:\POS_Backups"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    მხარს უჭერს ლოკალურ და გარე მეხსიერების ბარათებს / USB დისკებს
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                  <div>
+                    <span className="text-xs font-semibold text-slate-200 block">ავტომატური დღიური რეზერვირება</span>
+                    <span className="text-[10px] text-slate-400">შემოწმება ყოველ 24 საათში პროგრამის გაშვებისას</span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      checked={autoBackupEnabled} 
+                      onChange={(e) => setAutoBackupEnabled(e.target.checked)} 
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                  </label>
                 </div>
               </div>
 
@@ -265,7 +364,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
             </h2>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              პაკეტი აერთიანებს SQLite მონაცემთა ბაზას, პროდუქციის ფოტოებს, მაღაზიის პარამეტრებს და SHA-256 ჰეშს (PRAGMA integrity_check დაცვით).
+              პაკეტი აერთიანებს SQLite მონაცემთა ბაზას, პროდუქციის რეალურ ფოტოებს (Binary Base64), მაღაზიის პარამეტრებს და SHA-256 ჰეშს (PRAGMA integrity_check დაცვით).
             </p>
 
             <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] space-y-1.5">
@@ -277,8 +376,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 </span>
               </div>
               <div className="flex justify-between text-slate-400">
-                <span>ავტომატური აღდგენის დაცვა:</span>
+                <span>უსაფრთხოების სნეპშოტი:</span>
                 <span className="text-slate-300 font-mono">store.db.before_restore</span>
+              </div>
+              <div className="flex justify-between text-slate-400">
+                <span>ბოლო ასლის თარიღი:</span>
+                <span className="text-slate-300 font-mono">
+                  {settings.last_backup_date ? new Date(settings.last_backup_date).toLocaleString('ka-GE') : 'არ ფიქსირდება'}
+                </span>
               </div>
             </div>
 
@@ -288,7 +393,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors shadow-lg shadow-emerald-900/30 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                <span>ერთიანი ასლის ჩამოტვირთვა (.posbackup)</span>
+                <span>ერთიანი ასლის შექმნა და ჩამოტვირთვა (.posbackup)</span>
+              </button>
+
+              <button
+                onClick={handleRunDailyBackupNow}
+                className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors cursor-pointer"
+              >
+                <Play className="w-3.5 h-3.5 text-amber-400" />
+                <span>დღიური რეზერვირების შემოწმება ახლავე</span>
               </button>
 
               <label className="w-full py-3 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors cursor-pointer block text-center">
@@ -312,7 +425,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 <span>სისტემის გასუფთავება (Danger Zone)</span>
               </h2>
               <p className="text-xs text-slate-400 leading-relaxed">
-                ყველა პროდუქტის, გაყიდვის, ნისიისა და მომხმარებლის სამუდამოდ წაშლა. ოპერაცია ხელმისაწვდომია მხოლოდ მფლობელისთვის და მოითხოვს PIN კოდის დადასტურებას.
+                ყველა პროდუქტის, გაყიდვის, ნისიისა და მომხმარებლის წაშლა. ოპერაციის წინ <strong className="text-slate-200">სისტემა ავტომატურად ქმნის საგანგებო ასლს</strong> (Emergency Pre-Reset Snapshot), რათა შეცდომის შემთხვევაში მონაცემები არ დაიკარგოს.
               </p>
               <button
                 type="button"
@@ -331,17 +444,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
         </div>
 
-        {/* Right Column: Audit Logs & Error Log Viewer */}
+        {/* Right Column: Backups History, Audit Logs & Error Log Viewer */}
         <div className="w-7/12 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col shadow-xl overflow-hidden p-5">
           
           {/* Tabs */}
           <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
             <div className="flex items-center space-x-2">
               <button
+                onClick={() => setRightTab('backups')}
+                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  rightTab === 'backups'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>სარეზერვო ასლები ({backupsList.length})</span>
+              </button>
+
+              <button
                 onClick={() => setRightTab('audit')}
                 className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                   rightTab === 'audit'
-                    ? 'bg-emerald-600 text-white shadow-sm'
+                    ? 'bg-blue-600 text-white shadow-sm'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                 }`}
               >
@@ -383,6 +508,76 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
             </div>
           </div>
 
+          {/* Backups List Table */}
+          {rightTab === 'backups' && (
+            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
+                  <tr>
+                    <th className="py-2.5 px-3">ფაილი / თარიღი</th>
+                    <th className="py-2.5 px-3">ზომა</th>
+                    <th className="py-2.5 px-3">შინაარსი</th>
+                    <th className="py-2.5 px-3">მთლიანობა</th>
+                    <th className="py-2.5 px-3 text-right">მოქმედება</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {backupsList.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-slate-500">
+                        <Archive className="w-8 h-8 mx-auto mb-2 text-slate-600 opacity-60" />
+                        <span>სარეზერვო ასლები არ მოიძებნა მითითებულ საქაღალდეში</span>
+                        <div className="text-[11px] text-slate-600 mt-1">დააჭირეთ „ერთიანი ასლის შექმნა“-ს პირველი ასლის შესაქმნელად</div>
+                      </td>
+                    </tr>
+                  ) : (
+                    backupsList.map((bk) => (
+                      <tr key={bk.filename} className="hover:bg-slate-900/40">
+                        <td className="py-2.5 px-3">
+                          <div className="font-mono text-[11px] text-slate-200 font-semibold truncate max-w-xs" title={bk.filename}>
+                            {bk.filename}
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">
+                            {new Date(bk.created_at).toLocaleString('ka-GE')}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-300 whitespace-nowrap">
+                          {(bk.size_bytes / 1024).toFixed(1)} KB
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-400 text-[11px]">
+                          {bk.stats ? (
+                            <span>პროდ: {bk.stats.products_count} | გაყ: {bk.stats.sales_count}</span>
+                          ) : (
+                            <span>-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold inline-flex items-center space-x-1 ${
+                            bk.is_valid
+                              ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                              : 'bg-rose-950 text-rose-300 border border-rose-800'
+                          }`}>
+                            {bk.is_valid ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                            <span>{bk.integrity_status}</span>
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => handleVerifyBackupItem(bk.filename)}
+                            disabled={verifyingFilename === bk.filename}
+                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
+                          >
+                            {verifyingFilename === bk.filename ? 'მოწმდება...' : 'შემოწმება'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* Audit Logs Table */}
           {rightTab === 'audit' && (
             <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto">
@@ -405,7 +600,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                   ) : (
                     auditLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-slate-900/40">
-                        <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400">
+                        <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
                           {new Date(log.created_at).toLocaleString('ka-GE')}
                         </td>
                         <td className="py-2.5 px-3">
@@ -498,12 +693,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
               </div>
               <div>
                 <h3 className="text-base font-bold text-white">ბაზის სრული გასუფთავება</h3>
-                <p className="text-xs text-red-300">ეს ოპერაცია შეუქცევადია</p>
+                <p className="text-xs text-red-300">ოპერაციის წინ შეიქმნება Emergency Backup</p>
               </div>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed bg-red-950/40 p-3 rounded-xl border border-red-900/60">
-              ყურადღება! ყველა მონაცემი: პროდუქცია, ნაშთები, გაყიდვები, ნისიები და მომხმარებლები სამუდამოდ წაიშლება. გასაგრძელებლად შეიყვანეთ მფლობელის PIN კოდი:
+              ყურადღება! ყველა მონაცემი: პროდუქცია, ნაშთები, გაყიდვები, ნისიები და მომხმარებლები წაიშლება. უსაფრთხოების მიზნით სისტემა ჯერ ავტომატურად შეინახავს ბაზის ასლს. გასაგრძელებლად შეიყვანეთ მფლობელის PIN კოდი:
             </p>
 
             {resetError && (

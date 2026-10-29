@@ -15,16 +15,48 @@ import { runMigrations } from './migrations.ts';
 let dbInstance: DatabaseSync | null = null;
 let currentDbPath: string = '';
 
-export function getDatabasePath(): string {
-  if (process.env.STORE_DB_PATH) {
-    return process.env.STORE_DB_PATH;
+export function getDataDirectory(): string {
+  if (process.env.STORE_DATA_DIR) {
+    const dir = path.resolve(process.env.STORE_DATA_DIR);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
   }
-  // In development or local server, save inside ./data directory
+  if (process.env.STORE_DB_PATH && process.env.STORE_DB_PATH !== ':memory:') {
+    const dir = path.dirname(path.resolve(process.env.STORE_DB_PATH));
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  // If APPDATA is present (Windows Desktop environment)
+  if (process.env.APPDATA) {
+    const dir = path.join(process.env.APPDATA, 'StorePOS');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  // Default to local ./data folder
   const dataDir = path.resolve(process.cwd(), 'data');
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
-  return path.join(dataDir, 'store.db');
+  return dataDir;
+}
+
+export function getImagesDirectory(): string {
+  const dir = path.join(getDataDirectory(), 'images');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function getBackupsDirectory(): string {
+  const dir = path.join(getDataDirectory(), 'backups');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+export function getDatabasePath(): string {
+  if (process.env.STORE_DB_PATH) {
+    return process.env.STORE_DB_PATH;
+  }
+  return path.join(getDataDirectory(), 'store.db');
 }
 
 export function initDatabase(customPath?: string): DatabaseSync {
@@ -44,14 +76,16 @@ export function initDatabase(customPath?: string): DatabaseSync {
 
   const db = new DatabaseSync(dbPath);
 
-  // Set performance and integrity PRAGMAs
+  // Set production reliability and integrity PRAGMAs
   db.exec('PRAGMA foreign_keys = ON;');
+  db.exec('PRAGMA busy_timeout = 5000;');
   if (dbPath !== ':memory:') {
     db.exec('PRAGMA journal_mode = WAL;');
+    db.exec('PRAGMA synchronous = NORMAL;');
   }
 
-  // Run schema migrations
-  runMigrations(db);
+  // Run schema migrations with safety pre-backup
+  runMigrations(db, dbPath);
 
   dbInstance = db;
   return dbInstance;
@@ -66,6 +100,9 @@ export function getDb(): DatabaseSync {
 
 export function closeDatabase(): void {
   if (dbInstance) {
+    try {
+      dbInstance.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch {}
     dbInstance.close();
     dbInstance = null;
   }

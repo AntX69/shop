@@ -108,6 +108,7 @@ export interface CheckoutPayload {
   customer_id?: number | null;
   cash_received_tetri: number;
   notes?: string;
+  idempotency_key?: string;
 }
 
 export interface SaleItem {
@@ -139,6 +140,7 @@ export interface Sale {
   debt_remaining_tetri?: number;
   status: 'completed' | 'returned' | 'partially_returned';
   notes?: string;
+  idempotency_key?: string;
   created_at: string;
   items?: SaleItem[];
 }
@@ -152,7 +154,24 @@ export interface DebtRepayment {
   user_name?: string;
   payment_method: 'cash';
   notes?: string;
+  idempotency_key?: string;
   created_at: string;
+}
+
+export interface BackupInfo {
+  filename: string;
+  filepath: string;
+  size_bytes: number;
+  created_at: string;
+  checksum_sha256: string;
+  is_valid: boolean;
+  integrity_status: string;
+  stats?: {
+    products_count: number;
+    sales_count: number;
+    customers_count: number;
+    total_debt_tetri?: number;
+  };
 }
 
 export interface ReturnItemPayload {
@@ -243,3 +262,6 @@ export interface SystemErrorLog {
   severity: 'error' | 'warning' | 'critical';
   created_at: string;
 }
+
+
+

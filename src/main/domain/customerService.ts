@@ -112,9 +112,31 @@ export class CustomerService {
     amount_tetri: number;
     sale_id?: number | null;
     notes?: string;
+    idempotency_key?: string;
   }): DebtRepayment {
     if (payload.amount_tetri <= 0) {
       throw new Error('დაფარვის თანხა უნდა იყოს 0-ზე მეტი');
+    }
+
+    // Idempotency check: prevent accidental double repayment
+    if (payload.idempotency_key) {
+      const existing = this.db.prepare(
+        "SELECT dr.*, u.name as user_name FROM debt_repayments dr JOIN users u ON dr.user_id = u.id WHERE dr.idempotency_key = ?"
+      ).get(payload.idempotency_key) as any;
+      if (existing) {
+        return {
+          id: existing.id,
+          customer_id: existing.customer_id,
+          sale_id: existing.sale_id,
+          amount_tetri: existing.amount_tetri,
+          user_id: existing.user_id,
+          user_name: existing.user_name,
+          payment_method: 'cash',
+          notes: existing.notes || undefined,
+          idempotency_key: existing.idempotency_key,
+          created_at: existing.created_at
+        };
+      }
     }
 
     return runInTransaction((db) => {
@@ -136,14 +158,15 @@ export class CustomerService {
 
       const now = new Date().toISOString();
       const res = db.prepare(`
-        INSERT INTO debt_repayments (customer_id, sale_id, amount_tetri, user_id, payment_method, notes, created_at)
-        VALUES (?, ?, ?, ?, 'cash', ?, ?)
+        INSERT INTO debt_repayments (customer_id, sale_id, amount_tetri, user_id, payment_method, notes, idempotency_key, created_at)
+        VALUES (?, ?, ?, ?, 'cash', ?, ?, ?)
       `).run(
         customer.id,
         payload.sale_id || null,
         payload.amount_tetri,
         user.id,
         payload.notes?.trim() || null,
+        payload.idempotency_key || null,
         now
       );
 

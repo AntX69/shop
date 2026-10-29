@@ -8,6 +8,7 @@
  */
 
 import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
 
 export interface Migration {
   version: number;
@@ -276,10 +277,35 @@ export const migrations: Migration[] = [
         );
       `);
     }
+  },
+  {
+    version: 3,
+    name: 'idempotency_keys_and_backup_settings',
+    up: (db: DatabaseSync) => {
+      // 1. Add idempotency_key to sales to prevent duplicate checkouts
+      try {
+        db.exec("ALTER TABLE sales ADD COLUMN idempotency_key TEXT;");
+      } catch {}
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_idempotency ON sales(idempotency_key) WHERE idempotency_key IS NOT NULL;");
+
+      // 2. Add idempotency_key to debt_repayments
+      try {
+        db.exec("ALTER TABLE debt_repayments ADD COLUMN idempotency_key TEXT;");
+      } catch {}
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_repayments_idempotency ON debt_repayments(idempotency_key) WHERE idempotency_key IS NOT NULL;");
+
+      // 3. Add default backup settings
+      db.exec(`
+        INSERT OR IGNORE INTO app_settings (key, value) VALUES 
+        ('auto_backup_enabled', '1'),
+        ('backup_directory', ''),
+        ('last_backup_date', '');
+      `);
+    }
   }
 ];
 
-export function runMigrations(db: DatabaseSync): void {
+export function runMigrations(db: DatabaseSync, dbPath?: string): void {
   // Ensure schema_migrations table exists
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -292,20 +318,33 @@ export function runMigrations(db: DatabaseSync): void {
   const appliedRows = db.prepare('SELECT version FROM schema_migrations ORDER BY version ASC').all() as Array<{ version: number }>;
   const appliedVersions = new Set(appliedRows.map(r => r.version));
 
-  for (const migration of migrations) {
-    if (!appliedVersions.has(migration.version)) {
-      db.exec('BEGIN IMMEDIATE;');
-      try {
-        migration.up(db);
-        const insertStmt = db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)');
-        insertStmt.run(migration.version, migration.name, new Date().toISOString());
-        db.exec('COMMIT;');
-        console.log(`[DB Migration] Applied migration #${migration.version}: ${migration.name}`);
-      } catch (err) {
-        db.exec('ROLLBACK;');
-        console.error(`[DB Migration Error] Failed at migration #${migration.version}: ${migration.name}`, err);
-        throw err;
-      }
+  const pending = migrations.filter(m => !appliedVersions.has(m.version));
+  if (pending.length === 0) return;
+
+  // Pre-migration safety backup if operating on a physical database file
+  if (dbPath && dbPath !== ':memory:' && fs.existsSync(dbPath)) {
+    try {
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+      const backupPath = `${dbPath}.before_migration_v${pending[0].version}_${Date.now()}.bak`;
+      fs.copyFileSync(dbPath, backupPath);
+      console.log(`[DB Migration] Safety pre-migration backup created: ${backupPath}`);
+    } catch (bkErr) {
+      console.warn('[DB Migration Warning] Could not create pre-migration backup:', bkErr);
+    }
+  }
+
+  for (const migration of pending) {
+    db.exec('BEGIN IMMEDIATE;');
+    try {
+      migration.up(db);
+      const insertStmt = db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)');
+      insertStmt.run(migration.version, migration.name, new Date().toISOString());
+      db.exec('COMMIT;');
+      console.log(`[DB Migration] Applied migration #${migration.version}: ${migration.name}`);
+    } catch (err) {
+      db.exec('ROLLBACK;');
+      console.error(`[DB Migration Error] Failed at migration #${migration.version}: ${migration.name}`, err);
+      throw err;
     }
   }
 }

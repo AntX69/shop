@@ -53,6 +53,16 @@ export class PosService {
       throw new Error('კალათა ცარიელია');
     }
 
+    // Idempotency check: prevent duplicate checkouts on network stutter or accidental double-click
+    if (payload.idempotency_key) {
+      const existingSale = this.db.prepare(
+        "SELECT id FROM sales WHERE idempotency_key = ?"
+      ).get(payload.idempotency_key) as { id: number } | undefined;
+      if (existingSale) {
+        return this.getSaleById(existingSale.id)!;
+      }
+    }
+
     // Validate quantities
     for (const item of payload.items) {
       if (!item.quantity || item.quantity <= 0) {
@@ -139,8 +149,8 @@ export class PosService {
         INSERT INTO sales (
           receipt_number, user_id, customer_id, payment_method,
           total_tetri, cash_received_tetri, change_given_tetri,
-          debt_amount_tetri, status, notes, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?)
+          debt_amount_tetri, status, notes, idempotency_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)
       `).run(
         receiptNumber,
         user.id,
@@ -151,6 +161,7 @@ export class PosService {
         changeGivenTetri,
         debtAmountTetri,
         payload.notes?.trim() || null,
+        payload.idempotency_key || null,
         now
       );
       const saleId = Number(saleRes.lastInsertRowid);

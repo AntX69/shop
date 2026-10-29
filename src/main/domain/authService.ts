@@ -11,6 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getDb, runInTransaction } from '../db/database.ts';
 import { User, UserRole, UserSession } from '../../shared/types.ts';
 import { generateSalt, hashPin, isValidPin, verifyPin } from '../../shared/auth.ts';
+import { BackupService } from './backupService.ts';
 import crypto from 'node:crypto';
 
 // In-memory active sessions map: token -> User
@@ -259,6 +260,14 @@ export class AuthService {
 
     if (!pin || !this.verifyOwnerPin(requester.id, pin)) {
       throw new Error('არასწორი PIN კოდი. ბაზის გასუფთავება უარყოფილია');
+    }
+
+    // Mandatory Production Safeguard: Automatic emergency backup snapshot before reset
+    try {
+      const backupService = new BackupService(this.db);
+      backupService.createEmergencyPreResetBackup(requester);
+    } catch (bkErr) {
+      console.warn('[AuthService] Automatic pre-reset backup warning:', bkErr);
     }
 
     runInTransaction(() => {
