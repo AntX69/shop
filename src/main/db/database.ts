@@ -81,7 +81,10 @@ export function initDatabase(customPath?: string): DatabaseSync {
   db.exec('PRAGMA busy_timeout = 5000;');
   if (dbPath !== ':memory:') {
     db.exec('PRAGMA journal_mode = WAL;');
-    db.exec('PRAGMA synchronous = NORMAL;');
+    // In desktop POS with financial transactions and cash drawers, synchronous = FULL
+    // guarantees immediate fsync on WAL commit, eliminating transaction loss during sudden power outages.
+    const syncMode = process.env.SQLITE_SYNCHRONOUS || 'FULL';
+    db.exec(`PRAGMA synchronous = ${syncMode};`);
   }
 
   // Run schema migrations with safety pre-backup

@@ -1,28 +1,38 @@
 appId: com.storepos.offline
 productName: StorePOS
 artifactName: StorePOS-Setup-${version}.${ext}
+
 directories:
   output: release
   buildResources: resources
+
 files:
   - dist/**/*
   - dist-electron/**/*
   - node_modules/**/*
   - package.json
+
 extraResources:
   - from: public/models
     to: models
     filter:
       - "**/*"
+  - from: resources/icons
+    to: icons
+    filter:
+      - "**/*"
+
 win:
   target:
     - target: nsis
       arch:
         - x64
   icon: resources/icons/icon.ico
+
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: StorePOS
+  deleteAppDataOnUninstall: false
