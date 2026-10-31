@@ -292,8 +292,8 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 select-none">
-      <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full p-6 shadow-2xl flex flex-col max-h-[95vh] overflow-hidden">
+    <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-4 select-none">
+      <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
         
         {/* Hidden canvas & file inputs for offline OCR processing */}
         <canvas ref={canvasRef} className="hidden" />
@@ -306,14 +306,14 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
         />
 
         {/* Header */}
-        <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
+        <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-3 shrink-0">
           <div className="flex items-center space-x-2">
-            <div className="p-2 bg-emerald-600/20 text-emerald-400 border border-emerald-600/40 rounded-xl">
-              <Camera className="w-5 h-5" />
+            <div className="p-1.5 sm:p-2 bg-emerald-600/20 text-emerald-400 border border-emerald-600/40 rounded-xl">
+              <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">ვებკამერით 5-ნიშნა კოდის ამოცნობა (Offline ONNX OCR)</h3>
-              <p className="text-[11px] text-slate-400">მიიტანეთ ხელით დაწერილი 5-ნიშნა კოდი მწვანე ჩარჩოსთან</p>
+              <h3 className="text-sm sm:text-base font-bold text-white">ვებკამერით 5-ნიშნა კოდის ამოცნობა (Offline ONNX OCR)</h3>
+              <p className="text-[10px] sm:text-[11px] text-slate-400">მიიტანეთ ხელით დაწერილი 5-ნიშნა კოდი მწვანე ჩარჩოსთან</p>
             </div>
           </div>
 
@@ -322,138 +322,140 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
           </button>
         </div>
 
-        {/* Camera Selector & Tools Bar */}
-        <div className="flex items-center justify-between mb-3 text-xs">
-          <div className="flex items-center space-x-2">
-            <span className="text-slate-400 font-medium">კამერა:</span>
-            {devices.length > 0 ? (
-              <select
-                value={selectedDeviceId}
-                onChange={(e) => setSelectedDeviceId(e.target.value)}
-                className="px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+        {/* Scrollable Modal Body */}
+        <div className="overflow-y-auto flex-1 pr-1 space-y-3 min-h-0">
+
+          {/* Camera Selector & Tools Bar */}
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-2">
+              <span className="text-slate-400 font-medium">კამერა:</span>
+              {devices.length > 0 ? (
+                <select
+                  value={selectedDeviceId}
+                  onChange={(e) => setSelectedDeviceId(e.target.value)}
+                  className="px-2.5 py-1 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+                >
+                  {devices.map((d, idx) => (
+                    <option key={d.deviceId || idx} value={d.deviceId}>
+                      {d.label || `კამერა #${idx + 1}`}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-amber-400 font-mono text-[10px] sm:text-[11px] bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40">
+                  Pending Hardware Verification
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setShowThresholdPreview(!showThresholdPreview)}
+                className={`px-2.5 py-1 rounded-lg border text-xs font-semibold flex items-center space-x-1 cursor-pointer transition-colors ${
+                  showThresholdPreview
+                    ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700'
+                    : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                }`}
               >
-                {devices.map((d, idx) => (
-                  <option key={d.deviceId || idx} value={d.deviceId}>
-                    {d.label || `კამერა #${idx + 1}`}
-                  </option>
-                ))}
-              </select>
+                <SlidersHorizontal className="w-3.5 h-3.5" />
+                <span>კონტრასტის ხედი</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Video / ROI Viewport */}
+          <div className="relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center h-44 sm:h-56 md:h-60 shadow-inner shrink-0">
+            {cameraError ? (
+              <div className="text-center p-4 sm:p-6 text-slate-400 max-w-md">
+                <AlertCircle className="w-8 h-8 sm:w-10 sm:h-10 text-amber-500 mx-auto mb-2" />
+                <p className="text-xs sm:text-sm font-semibold text-slate-200">{cameraError}</p>
+                <p className="text-[11px] sm:text-xs text-slate-400 mt-1 mb-3">
+                  ტესტირებისთვის შეგიძლიათ ატვირთოთ ფოტო ან გაუშვათ სატესტო 5-ნიშნა კოდის ამოცნობა:
+                </p>
+                <div className="flex items-center justify-center space-x-2.5 sm:space-x-3">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-lg border border-slate-600 flex items-center space-x-1.5 cursor-pointer transition-colors"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>ფოტოს ატვირთვა</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={runSampleOcrTest}
+                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg border border-emerald-500 flex items-center space-x-1.5 cursor-pointer transition-colors"
+                  >
+                    <Play className="w-3.5 h-3.5" />
+                    <span>ONNX ტესტი</span>
+                  </button>
+                </div>
+              </div>
             ) : (
-              <span className="text-amber-400 font-mono text-[11px] bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40">
-                Pending Hardware Verification
-              </span>
+              <>
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+
+                {/* ROI Guideline Overlay with 5 slots */}
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <div className="w-[65%] h-[40%] border-2 border-emerald-400/80 rounded-2xl shadow-[0_0_20px_rgba(16,185,129,0.3)] bg-emerald-500/5 backdrop-blur-[0.5px] flex flex-col justify-between p-2">
+                    <div className="flex justify-between items-center text-[10px] text-emerald-300 font-mono font-bold uppercase tracking-wider">
+                      <span>ხელნაწერი 5 ციფრი</span>
+                      <span className="flex items-center space-x-1">
+                        <Scan className="w-3 h-3 animate-pulse" />
+                        <span>ONNX MODEL</span>
+                      </span>
+                    </div>
+
+                    {/* 5 digit slot boxes */}
+                    <div className="grid grid-cols-5 gap-1.5 h-12 sm:h-16">
+                      {[1, 2, 3, 4, 5].map((slot) => (
+                        <div
+                          key={slot}
+                          className="border border-dashed border-emerald-400/50 rounded-lg flex items-center justify-center text-xs font-mono text-emerald-400/70 bg-slate-950/20"
+                        >
+                          #{slot}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="text-[9px] text-slate-400 text-center">
+                      მოათავსეთ კოდი ჩარჩოს შუაში
+                    </div>
+                  </div>
+                </div>
+
+                {/* Optional Binarized Otsu Preview thumbnail in corner */}
+                {showThresholdPreview && ocrResult?.processedImageUri && (
+                  <div className="absolute bottom-2 right-2 border-2 border-emerald-500 rounded-lg overflow-hidden shadow-lg bg-black">
+                    <img
+                      src={ocrResult.processedImageUri}
+                      alt="Binarized Threshold"
+                      className="w-28 sm:w-32 h-12 sm:h-14 object-contain"
+                    />
+                    <div className="text-[9px] text-center bg-emerald-950/80 text-emerald-300 font-mono">
+                      Otsu Binarized
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
-          <div className="flex items-center space-x-2">
-            <button
-              type="button"
-              onClick={() => setShowThresholdPreview(!showThresholdPreview)}
-              className={`px-2.5 py-1 rounded-lg border text-xs font-semibold flex items-center space-x-1 cursor-pointer transition-colors ${
-                showThresholdPreview
-                  ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700'
-                  : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span>კონტრასტის ხედი</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Video / ROI Viewport */}
-        <div className="relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center h-64 shadow-inner mb-4">
-          {cameraError ? (
-            <div className="text-center p-6 text-slate-400 max-w-md">
-              <AlertCircle className="w-10 h-10 text-amber-500 mx-auto mb-2" />
-              <p className="text-sm font-semibold text-slate-200">{cameraError}</p>
-              <p className="text-xs text-slate-400 mt-1 mb-4">
-                ტესტირებისთვის შეგიძლიათ ატვირთოთ ფოტო ან გაუშვათ სატესტო 5-ნიშნა კოდის ამოცნობა:
-              </p>
-              <div className="flex items-center justify-center space-x-3">
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-lg border border-slate-600 flex items-center space-x-1.5 cursor-pointer transition-colors"
-                >
-                  <Upload className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>ფოტოს ატვირთვა</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={runSampleOcrTest}
-                  className="px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg border border-emerald-500 flex items-center space-x-1.5 cursor-pointer transition-colors"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>ONNX ტესტი</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-              />
-
-              {/* ROI Guideline Overlay with 5 slots */}
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                <div className="w-[65%] h-[40%] border-2 border-emerald-400/80 rounded-2xl shadow-[0_0_20px_rgba(16,185,129,0.3)] bg-emerald-500/5 backdrop-blur-[0.5px] flex flex-col justify-between p-2">
-                  <div className="flex justify-between items-center text-[10px] text-emerald-300 font-mono font-bold uppercase tracking-wider">
-                    <span>ხელნაწერი 5 ციფრი</span>
-                    <span className="flex items-center space-x-1">
-                      <Scan className="w-3 h-3 animate-pulse" />
-                      <span>ONNX MODEL</span>
-                    </span>
-                  </div>
-
-                  {/* 5 digit slot boxes */}
-                  <div className="grid grid-cols-5 gap-1.5 h-16">
-                    {[1, 2, 3, 4, 5].map((slot) => (
-                      <div
-                        key={slot}
-                        className="border border-dashed border-emerald-400/50 rounded-lg flex items-center justify-center text-xs font-mono text-emerald-400/70 bg-slate-950/20"
-                      >
-                        #{slot}
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="text-[9px] text-slate-400 text-center">
-                    მოათავსეთ კოდი ჩარჩოს შუაში
-                  </div>
-                </div>
-              </div>
-
-              {/* Optional Binarized Otsu Preview thumbnail in corner */}
-              {showThresholdPreview && ocrResult?.processedImageUri && (
-                <div className="absolute bottom-2 right-2 border-2 border-emerald-500 rounded-lg overflow-hidden shadow-lg bg-black">
-                  <img
-                    src={ocrResult.processedImageUri}
-                    alt="Binarized Threshold"
-                    className="w-32 h-14 object-contain"
-                  />
-                  <div className="text-[9px] text-center bg-emerald-950/80 text-emerald-300 font-mono">
-                    Otsu Binarized
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-
-        {/* Capture Action & Recognized 5 Digits Input Bar */}
-        <div className="space-y-4">
-          <div className="flex items-center space-x-3">
+          {/* Capture Action Button */}
+          <div>
             {!cameraError && (
               <button
                 type="button"
                 disabled={isRecognizing}
                 onClick={captureAndRecognize}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-sm rounded-xl transition-all shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer"
+                className="w-full py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs sm:text-sm rounded-xl transition-all shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer"
               >
                 <Sparkles className="w-4 h-4" />
                 <span>{isRecognizing ? 'ამოცნობა მიმდინარეობს...' : 'კადრის გადაღება და ამოცნობა'}</span>
@@ -465,7 +467,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 type="button"
                 disabled={isRecognizing}
                 onClick={runSampleOcrTest}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-sm rounded-xl transition-all shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer"
+                className="w-full py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs sm:text-sm rounded-xl transition-all shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer"
               >
                 <Play className="w-4 h-4" />
                 <span>{isRecognizing ? 'ამოცნობა მიმდინარეობს...' : 'სატესტო 5-ნიშნა კოდის გაშვება (ONNX)'}</span>
@@ -474,13 +476,13 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
           </div>
 
           {/* 5 Recognized Editable Digits */}
-          <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
+          <div className="bg-slate-950 p-3 sm:p-4 rounded-2xl border border-slate-800 space-y-2.5">
             <div className="flex justify-between items-center">
-              <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                ამოცნობილი 5-ნიშნა კოდი (შესაძლებელია ხელით ჩასწორება):
+              <span className="text-[11px] sm:text-xs font-bold text-slate-300 uppercase tracking-wider">
+                ამოცნობილი 5-ნიშნა კოდი (შესაძლებელია ჩასწორება):
               </span>
               {ocrResult && (
-                <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border tabular-nums ${
                   ocrResult.confidence >= 75
                     ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
                     : 'bg-amber-950/60 text-amber-400 border-amber-800'
@@ -492,13 +494,13 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
 
             {/* Low confidence advisory alert */}
             {ocrResult && ocrResult.confidence < 70 && (
-              <div className="text-[11px] text-amber-300 bg-amber-950/40 border border-amber-800/50 px-3 py-1.5 rounded-lg flex items-center space-x-2">
-                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 text-amber-400" />
+              <div className="text-[10px] sm:text-[11px] text-amber-300 bg-amber-950/40 border border-amber-800/50 px-2.5 py-1 rounded-lg flex items-center space-x-2">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
                 <span>ამოცნობის სანდოობა დაბალია (&lt;70%). გთხოვთ გადაამოწმოთ და საჭიროების შემთხვევაში ხელით შეასწოროთ 5-ნიშნა კოდი.</span>
               </div>
             )}
 
-            <div className="flex justify-center space-x-3">
+            <div className="flex justify-center space-x-2 sm:space-x-3">
               {digitInputs.map((d, idx) => (
                 <input
                   key={idx}
@@ -507,14 +509,14 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                   value={d}
                   onChange={(e) => handleDigitChange(idx, e.target.value)}
                   placeholder="0"
-                  className="w-12 h-14 text-center text-2xl font-black bg-slate-900 border-2 border-slate-700 focus:border-emerald-500 rounded-xl text-white font-mono shadow-inner focus:outline-none"
+                  className="w-10 h-12 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-black bg-slate-900 border-2 border-slate-700 focus:border-emerald-500 rounded-xl text-white font-mono shadow-inner focus:outline-none"
                 />
               ))}
             </div>
 
             {lookupError && (
-              <div className="text-xs text-amber-400 flex items-center justify-center space-x-1.5 pt-1">
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <div className="text-xs text-amber-400 flex items-center justify-center space-x-1.5 pt-0.5">
+                <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{lookupError}</span>
               </div>
             )}
@@ -522,18 +524,18 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
 
           {/* Matched Product Preview & Confirmation Button */}
           {matchedItem && (
-            <div className="bg-emerald-950/30 border border-emerald-800/60 p-4 rounded-2xl flex items-center justify-between animate-in fade-in slide-in-from-bottom-2">
-              <div className="flex items-center space-x-3">
-                <div className="w-12 h-12 rounded-xl bg-slate-950 border border-emerald-700/50 flex items-center justify-center text-emerald-400">
-                  <ShoppingBag className="w-6 h-6" />
+            <div className="bg-emerald-950/30 border border-emerald-800/60 p-3 sm:p-4 rounded-2xl flex items-center justify-between animate-in fade-in slide-in-from-bottom-2 gap-2">
+              <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-slate-950 border border-emerald-700/50 flex items-center justify-center text-emerald-400 shrink-0">
+                  <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
-                <div>
-                  <div className="text-sm font-extrabold text-white">{matchedItem.product.name}</div>
-                  <div className="text-xs text-slate-300">
+                <div className="min-w-0">
+                  <div className="text-xs sm:text-sm font-extrabold text-white truncate">{matchedItem.product.name}</div>
+                  <div className="text-[11px] sm:text-xs text-slate-300 truncate">
                     ვარიანტი: <span className="text-emerald-300 font-bold">{matchedItem.variant.variant_name}</span> &bull; 
-                    მარაგი: <span className="font-bold text-white">{matchedItem.variant.stock_quantity} ც</span>
+                    მარაგი: <span className="font-bold text-white tabular-nums">{matchedItem.variant.stock_quantity} ც</span>
                   </div>
-                  <div className="text-xs font-extrabold text-emerald-400 mt-0.5">
+                  <div className="text-[11px] sm:text-xs font-extrabold text-emerald-400 mt-0.5 tabular-nums">
                     ფასი: {formatTetri(matchedItem.variant.price_override_tetri ?? matchedItem.product.base_price_tetri)}
                   </div>
                 </div>
@@ -546,10 +548,10 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                   onConfirmProduct(matchedItem.product, matchedItem.variant, matchedItem.code_used);
                   onClose();
                 }}
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-900/40 transition-colors cursor-pointer flex items-center space-x-1.5"
+                className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-900/40 transition-colors cursor-pointer flex items-center space-x-1.5 shrink-0"
               >
                 <CheckCircle2 className="w-4 h-4" />
-                <span>დადასტურება და დამატება</span>
+                <span>დადასტურება</span>
               </button>
             </div>
           )}

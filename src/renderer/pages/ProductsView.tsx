@@ -307,24 +307,24 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] bg-slate-950 p-6 overflow-hidden select-none">
+    <div className="flex-1 flex flex-col h-full bg-slate-950 p-4 lg:p-6 overflow-hidden select-none min-h-0">
       
       {/* Top Controls Bar */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 shrink-0">
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center space-x-2">
-            <Package className="w-6 h-6 text-emerald-400" />
+          <h1 className="text-lg sm:text-xl font-bold text-white flex items-center space-x-2">
+            <Package className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-400" />
             <span>პროდუქცია და კატალოგი</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">სულ რეგისტრირებულია {products.length} პროდუქტი</p>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2.5 sm:space-x-3">
           {isOwner && (
             <>
               <button
                 onClick={() => setIsNewCategoryOpen(true)}
-                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer"
+                className="px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer"
               >
                 <Tag className="w-3.5 h-3.5 text-slate-400" />
                 <span>+ კატეგორია</span>
@@ -335,10 +335,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                   setIsNewProductOpen(true);
                   setFormError('');
                 }}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
+                className="px-3.5 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>ახალი პროდუქტის დამატება</span>
+                <span>ახალი პროდუქტი</span>
               </button>
             </>
           )}
@@ -346,8 +346,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       </div>
 
       {/* Filter and Search row */}
-      <div className="flex items-center space-x-3 mb-4">
-        <div className="relative flex-1">
+      <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 mb-3.5 shrink-0">
+        <div className="relative flex-1 min-w-[240px]">
           <input
             type="text"
             value={searchTerm}
@@ -359,10 +359,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         </div>
 
         {/* Category Tabs */}
-        <div className="flex items-center space-x-1 overflow-x-auto pb-1 max-w-md">
+        <div className="flex items-center space-x-1 overflow-x-auto pb-1 max-w-full scrollbar-none">
           <button
             onClick={() => setSelectedCategory(null)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
               selectedCategory === null
                 ? 'bg-emerald-600 text-white font-bold'
                 : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
@@ -374,7 +374,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
             <button
               key={c.id}
               onClick={() => setSelectedCategory(c.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
                 selectedCategory === c.id
                   ? 'bg-emerald-600 text-white font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
@@ -387,9 +387,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       </div>
 
       {/* Products Table */}
-      <div className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-xl">
-        <div className="overflow-y-auto flex-1">
-          <table className="w-full text-left text-xs">
+      <div className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-xl min-h-0">
+        <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
+          <table className="w-full min-w-[760px] text-left text-xs">
             <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold tracking-wider sticky top-0 border-b border-slate-800">
               <tr>
                 <th className="py-3 px-4 w-16 text-center">ფოტო</th>
@@ -529,26 +529,26 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
       {/* --- MODAL: Add Product (Owner Only) --- */}
       {isNewProductOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-3xl w-full p-6 shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-3xl w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
             
-            <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
-              <h3 className="text-lg font-bold text-white">ახალი პროდუქტის რეგისტრაცია</h3>
-              <button onClick={() => setIsNewProductOpen(false)} className="text-slate-400 hover:text-white">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-3 shrink-0">
+              <h3 className="text-base sm:text-lg font-bold text-white">ახალი პროდუქტის რეგისტრაცია</h3>
+              <button onClick={() => setIsNewProductOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {formError && (
-              <div className="mb-4 p-3 bg-red-950/60 border border-red-800 rounded-xl text-red-200 text-xs flex items-center space-x-2">
+              <div className="mb-3 p-3 bg-red-950/60 border border-red-800 rounded-xl text-red-200 text-xs flex items-center space-x-2 shrink-0">
                 <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
                 <span>{formError}</span>
               </div>
             )}
 
-            <form onSubmit={handleCreateProductSubmit} className="flex-1 overflow-y-auto space-y-4 pr-1">
+            <form onSubmit={handleCreateProductSubmit} className="flex-1 overflow-y-auto space-y-4 pr-1 min-h-0">
               {/* Product main details */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">დასახელება *</label>
                   <input
@@ -734,17 +734,17 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               </div>
 
               {/* Actions */}
-              <div className="flex space-x-3 pt-3 border-t border-slate-800">
+              <div className="flex space-x-3 pt-3 border-t border-slate-800 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsNewProductOpen(false)}
-                  className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs"
+                  className="flex-1 py-2.5 sm:py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs cursor-pointer transition-colors"
                 >
                   გაუქმება
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40"
+                  className="flex-1 py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40 cursor-pointer transition-colors"
                 >
                   პროდუქტის რეგისტრაცია
                 </button>
@@ -756,15 +756,15 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
       {/* --- MODAL: Multi-Image Product Gallery --- */}
       {galleryProduct && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-6 shadow-2xl flex flex-col max-h-[90vh]">
-            <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-3 shrink-0">
               <div>
-                <h3 className="text-base font-bold text-white flex items-center space-x-2">
-                  <ImageIcon className="w-5 h-5 text-emerald-400" />
+                <h3 className="text-sm sm:text-base font-bold text-white flex items-center space-x-2">
+                  <ImageIcon className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />
                   <span>{galleryProduct.name} — ფოტო გალერეა</span>
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
+                <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
                   სულ {galleryProduct.images?.length || 0} ფოტო
                 </p>
               </div>

@@ -109,7 +109,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col font-sans text-slate-100 antialiased select-none">
+    <div className="h-screen w-screen max-h-screen overflow-hidden bg-slate-950 flex flex-col font-sans text-slate-100 antialiased select-none">
       <Header
         activeTab={activeTab}
         onSelectTab={setActiveTab}
@@ -118,7 +118,7 @@ export default function App() {
         onLockSession={handleLockSession}
       />
 
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 flex flex-col overflow-hidden min-h-0">
         {activeTab === 'pos' && <PosView currentUser={currentUser} />}
         {activeTab === 'products' && <ProductsView currentUser={currentUser} />}
         {activeTab === 'inventory' && <InventoryView currentUser={currentUser} />}

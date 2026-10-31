@@ -170,24 +170,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
   };
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] bg-slate-950 p-6 overflow-hidden select-none">
+    <div className="flex-1 flex flex-col h-full bg-slate-950 p-4 lg:p-6 overflow-hidden select-none min-h-0">
       
       {/* Top Header */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 shrink-0">
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center space-x-2">
-            <Boxes className="w-6 h-6 text-emerald-400" />
+          <h1 className="text-lg sm:text-xl font-bold text-white flex items-center space-x-2">
+            <Boxes className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-400" />
             <span>მარაგების აღრიცხვა და მოძრაობა</span>
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">ინვენტარიზაცია, მარაგის შევსება და კორექტირების ისტორია</p>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2 sm:space-x-3">
           {/* Tabs: Stock vs Movements */}
-          <div className="bg-slate-900 border border-slate-800 p-1 rounded-xl flex items-center space-x-1">
+          <div className="bg-slate-900 border border-slate-800 p-1 rounded-xl flex items-center space-x-1 shrink-0">
             <button
               onClick={() => setActiveTab('stock')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                 activeTab === 'stock' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -195,7 +195,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
             </button>
             <button
               onClick={() => setActiveTab('movements')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+              className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                 activeTab === 'movements' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -210,10 +210,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                   setIsRestockOpen(true);
                   setModalError('');
                 }}
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
+                className="px-3 sm:px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer shrink-0"
               >
                 <PlusCircle className="w-3.5 h-3.5" />
-                <span>მარაგის შევსება</span>
+                <span>შევსება</span>
               </button>
 
               <button
@@ -221,10 +221,10 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                   setIsCorrectionOpen(true);
                   setModalError('');
                 }}
-                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-400 text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer"
+                className="px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-400 text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer shrink-0"
               >
                 <Sliders className="w-3.5 h-3.5" />
-                <span>მარაგის კორექცია</span>
+                <span>კორექცია</span>
               </button>
             </>
           )}
@@ -234,9 +234,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       {activeTab === 'stock' ? (
         <>
           {/* Stock Filters Bar */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center space-x-2">
-              <div className="relative w-64">
+          <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 mb-3.5 shrink-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative w-48 sm:w-64">
                 <input
                   type="text"
                   value={searchTerm}
@@ -252,7 +252,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 <button
                   key={f}
                   onClick={() => setStockFilter(f)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                  className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border cursor-pointer ${
                     stockFilter === f
                       ? 'bg-slate-800 text-white border-slate-700 font-bold'
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
@@ -281,9 +281,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
           </div>
 
           {/* Stock Table */}
-          <div className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-xl">
-            <div className="overflow-y-auto flex-1">
-              <table className="w-full text-left text-xs">
+          <div className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-xl min-h-0">
+            <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
+              <table className="w-full min-w-[700px] text-left text-xs">
                 <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold tracking-wider sticky top-0 border-b border-slate-800">
                   <tr>
                     <th className="py-3 px-4">პროდუქტი</th>
@@ -341,9 +341,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
         </>
       ) : (
         /* Movements Ledger Table */
-        <div className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-xl">
-          <div className="overflow-y-auto flex-1">
-            <table className="w-full text-left text-xs">
+        <div className="flex-1 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-xl min-h-0">
+          <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
+            <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold tracking-wider sticky top-0 border-b border-slate-800">
                 <tr>
                   <th className="py-3 px-4">თარიღი</th>
@@ -402,9 +402,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
 
       {/* --- MODAL: Restock (Owner Only) --- */}
       {isRestockOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl">
-            <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="flex justify-between items-center border-b border-slate-800 p-4 sm:p-5 shrink-0">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <PlusCircle className="w-5 h-5 text-emerald-400" />
                 <span>მარაგის შევსება</span>
@@ -414,90 +414,93 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
               </button>
             </div>
 
-            {modalError && (
-              <div className="mb-4 p-3 bg-red-950/60 border border-red-800 rounded-xl text-red-200 text-xs">
-                {modalError}
-              </div>
-            )}
+            <div className="p-4 sm:p-5 overflow-y-auto flex-1 min-h-0">
+              {modalError && (
+                <div className="mb-4 p-3 bg-red-950/60 border border-red-800 rounded-xl text-red-200 text-xs">
+                  {modalError}
+                </div>
+              )}
 
-            <form onSubmit={handleRestockSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">აირჩიეთ პროდუქტი / ვარიანტი *</label>
-                <select
-                  required
-                  value={selectedVariantId || ''}
-                  onChange={(e) => setSelectedVariantId(parseInt(e.target.value, 10))}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
-                >
-                  <option value="">-- აირჩიეთ --</option>
-                  {allVariants.map(v => (
-                    <option key={v.id} value={v.id}>
-                      {v.product_name} - {v.variant_name} (მიმდინარე ნაშთი: {v.stock_quantity})
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <form id="restock-form" onSubmit={handleRestockSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">აირჩიეთ პროდუქტი / ვარიანტი *</label>
+                  <select
+                    required
+                    value={selectedVariantId || ''}
+                    onChange={(e) => setSelectedVariantId(parseInt(e.target.value, 10))}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                  >
+                    <option value="">-- აირჩიეთ --</option>
+                    {allVariants.map(v => (
+                      <option key={v.id} value={v.id}>
+                        {v.product_name} - {v.variant_name} (მიმდინარე ნაშთი: {v.stock_quantity})
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">დამატებული რაოდენობა (ცალი) *</label>
-                <input
-                  type="number"
-                  min="1"
-                  required
-                  value={restockQty}
-                  onChange={(e) => setRestockQty(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">დამატებული რაოდენობა (ცალი) *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={restockQty}
+                    onChange={(e) => setRestockQty(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">შესყიდვის ერთეულის ფასი (₾, არასავალდებულო FIFO-სთვის)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={restockUnitCost}
-                  onChange={(e) => setRestockUnitCost(e.target.value)}
-                  placeholder="თუ უცნობია დატოვეთ ცარიელი"
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">შესყიდვის ერთეულის ფასი (₾, არასავალდებულო FIFO-სთვის)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={restockUnitCost}
+                    onChange={(e) => setRestockUnitCost(e.target.value)}
+                    placeholder="თუ უცნობია დატოვეთ ცარიელი"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">შენიშვნა</label>
-                <input
-                  type="text"
-                  value={restockNotes}
-                  onChange={(e) => setRestockNotes(e.target.value)}
-                  placeholder="მაგ. ახალი პარტია"
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">შენიშვნა</label>
+                  <input
+                    type="text"
+                    value={restockNotes}
+                    onChange={(e) => setRestockNotes(e.target.value)}
+                    placeholder="მაგ. ახალი პარტია"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+              </form>
+            </div>
 
-              <div className="flex space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsRestockOpen(false)}
-                  className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs"
-                >
-                  გაუქმება
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40"
-                >
-                  მარაგის შევსება
-                </button>
-              </div>
-            </form>
+            <div className="flex space-x-2 p-4 sm:p-5 border-t border-slate-800 shrink-0 bg-slate-900/90">
+              <button
+                type="button"
+                onClick={() => setIsRestockOpen(false)}
+                className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700"
+              >
+                გაუქმება
+              </button>
+              <button
+                type="submit"
+                form="restock-form"
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40"
+              >
+                მარაგის შევსება
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* --- MODAL: Stock Correction (Owner Only) --- */}
       {isCorrectionOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl">
-            <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-4">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="flex justify-between items-center border-b border-slate-800 p-4 sm:p-5 shrink-0">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <Sliders className="w-5 h-5 text-amber-400" />
                 <span>მარაგის კორექცია</span>
@@ -507,75 +510,78 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
               </button>
             </div>
 
-            {modalError && (
-              <div className="mb-4 p-3 bg-red-950/60 border border-red-800 rounded-xl text-red-200 text-xs">
-                {modalError}
-              </div>
-            )}
+            <div className="p-4 sm:p-5 overflow-y-auto flex-1 min-h-0">
+              {modalError && (
+                <div className="mb-4 p-3 bg-red-950/60 border border-red-800 rounded-xl text-red-200 text-xs">
+                  {modalError}
+                </div>
+              )}
 
-            <form onSubmit={handleCorrectionSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">აირჩიეთ პროდუქტი / ვარიანტი *</label>
-                <select
-                  required
-                  value={correctionVariantId || ''}
-                  onChange={(e) => {
-                    const id = parseInt(e.target.value, 10);
-                    setCorrectionVariantId(id);
-                    const v = allVariants.find(it => it.id === id);
-                    if (v) setCountedQty(String(v.stock_quantity));
-                  }}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
-                >
-                  <option value="">-- აირჩიეთ --</option>
-                  {allVariants.map(v => (
-                    <option key={v.id} value={v.id}>
-                      {v.product_name} - {v.variant_name} (ბაზაში: {v.stock_quantity} ცალი)
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <form id="correction-form" onSubmit={handleCorrectionSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">აირჩიეთ პროდუქტი / ვარიანტი *</label>
+                  <select
+                    required
+                    value={correctionVariantId || ''}
+                    onChange={(e) => {
+                      const id = parseInt(e.target.value, 10);
+                      setCorrectionVariantId(id);
+                      const v = allVariants.find(it => it.id === id);
+                      if (v) setCountedQty(String(v.stock_quantity));
+                    }}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                  >
+                    <option value="">-- აირჩიეთ --</option>
+                    {allVariants.map(v => (
+                      <option key={v.id} value={v.id}>
+                        {v.product_name} - {v.variant_name} (ბაზაში: {v.stock_quantity} ცალი)
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">ფაქტობრივად დათვლილი ახალი მარაგი *</label>
-                <input
-                  type="number"
-                  min="0"
-                  required
-                  value={countedQty}
-                  onChange={(e) => setCountedQty(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-base font-bold"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">ფაქტობრივად დათვლილი ახალი მარაგი *</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={countedQty}
+                    onChange={(e) => setCountedQty(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-base font-bold"
+                  />
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">კორექტირების მიზეზი * (აუცილებელია Audit-ისთვის)</label>
-                <textarea
-                  required
-                  rows={2}
-                  value={correctionReason}
-                  onChange={(e) => setCorrectionReason(e.target.value)}
-                  placeholder="მაგ. ინვენტარიზაციის გადამოწმება, დაზიანებული ნივთის ჩამოწერა..."
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
-                />
-              </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">კორექტირების მიზეზი * (აუცილებელია Audit-ისთვის)</label>
+                  <textarea
+                    required
+                    rows={2}
+                    value={correctionReason}
+                    onChange={(e) => setCorrectionReason(e.target.value)}
+                    placeholder="მაგ. ინვენტარიზაციის გადამოწმება, დაზიანებული ნივთის ჩამოწერა..."
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                  />
+                </div>
+              </form>
+            </div>
 
-              <div className="flex space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsCorrectionOpen(false)}
-                  className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs"
-                >
-                  გაუქმება
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-amber-900/40"
-                >
-                  კორექტირების შენახვა
-                </button>
-              </div>
-            </form>
+            <div className="flex space-x-2 p-4 sm:p-5 border-t border-slate-800 shrink-0 bg-slate-900/90">
+              <button
+                type="button"
+                onClick={() => setIsCorrectionOpen(false)}
+                className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700"
+              >
+                გაუქმება
+              </button>
+              <button
+                type="submit"
+                form="correction-form"
+                className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-amber-900/40"
+              >
+                კორექტირების შენახვა
+              </button>
+            </div>
           </div>
         </div>
       )}

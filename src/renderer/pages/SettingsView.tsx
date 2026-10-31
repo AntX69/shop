@@ -246,23 +246,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
   };
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-4rem)] bg-slate-950 p-6 overflow-hidden select-none">
+    <div className="flex-1 flex flex-col h-full bg-slate-950 p-3 sm:p-4 lg:p-6 overflow-hidden min-h-0 select-none">
       
       {/* Top Header */}
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3 lg:mb-4 shrink-0">
         <div>
-          <h1 className="text-xl font-bold text-white flex items-center space-x-2">
-            <Settings className="w-6 h-6 text-emerald-400" />
-            <span>პარამეტრები, საიმედო რეზერვირება (.posbackup) და დიაგნოსტიკა</span>
+          <h1 className="text-lg lg:text-xl font-bold text-white flex items-center space-x-2">
+            <Settings className="w-5 h-5 lg:w-6 lg:h-6 text-emerald-400" />
+            <span>პარამეტრები, საიმედო რეზერვირება და დიაგნოსტიკა</span>
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">
             მონაცემთა ბაზის მთლიანობა, ფოტოების შენარჩუნება, ავტომატური რეზერვირება და უსაფრთხო აღდგენა
           </p>
         </div>
       </div>
 
       {statusMsg && (
-        <div className={`mb-4 p-3 rounded-xl border text-xs flex items-center space-x-2 ${
+        <div className={`mb-3 sm:mb-4 p-2.5 sm:p-3 rounded-xl border text-xs flex items-center space-x-2 shrink-0 ${
           statusMsg.type === 'success'
             ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
             : 'bg-red-950/60 border-red-800 text-red-300'
@@ -273,14 +273,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
       )}
 
       {/* Main 2-column layout */}
-      <div className="flex-1 flex space-x-4 overflow-hidden">
+      <div className="flex-1 flex flex-col lg:flex-row gap-3 sm:gap-4 overflow-hidden min-h-0">
         
         {/* Left Column: Store Settings & Backup Configuration */}
-        <div className="w-5/12 space-y-4 overflow-y-auto pr-1">
+        <div className="w-full lg:w-5/12 space-y-3 sm:space-y-4 overflow-y-auto pr-1 min-h-0 shrink-0 lg:shrink max-h-[42vh] lg:max-h-none">
           
           {/* Store Settings Card */}
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl">
-            <h2 className="text-sm font-bold text-white flex items-center space-x-2 mb-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
+            <h2 className="text-xs sm:text-sm font-bold text-white flex items-center space-x-2 mb-3 sm:mb-4">
               <Store className="w-4 h-4 text-emerald-400" />
               <span>მაღაზიის პარამეტრები და ლოკაცია</span>
             </h2>
@@ -445,45 +445,45 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         </div>
 
         {/* Right Column: Backups History, Audit Logs & Error Log Viewer */}
-        <div className="w-7/12 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col shadow-xl overflow-hidden p-5">
+        <div className="w-full lg:w-7/12 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col shadow-xl overflow-hidden p-3 sm:p-5 min-h-0 flex-1">
           
           {/* Tabs */}
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
-            <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5 sm:pb-3 mb-3 shrink-0">
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
               <button
                 onClick={() => setRightTab('backups')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                   rightTab === 'backups'
                     ? 'bg-emerald-600 text-white shadow-sm'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                 }`}
               >
                 <Archive className="w-3.5 h-3.5" />
-                <span>სარეზერვო ასლები ({backupsList.length})</span>
+                <span>ასლები ({backupsList.length})</span>
               </button>
 
               <button
                 onClick={() => setRightTab('audit')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                   rightTab === 'audit'
                     ? 'bg-blue-600 text-white shadow-sm'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>აუდიტის ჟურნალი ({auditLogs.length})</span>
+                <span>აუდიტი ({auditLogs.length})</span>
               </button>
 
               <button
                 onClick={() => setRightTab('errors')}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                className={`flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
                   rightTab === 'errors'
                     ? 'bg-rose-600 text-white shadow-sm'
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                 }`}
               >
                 <AlertTriangle className="w-3.5 h-3.5" />
-                <span>შეცდომების ჟურნალი ({errorLogs.length})</span>
+                <span>შეცდომები ({errorLogs.length})</span>
               </button>
             </div>
 
@@ -510,8 +510,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
           {/* Backups List Table */}
           {rightTab === 'backups' && (
-            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto">
-              <table className="w-full text-left text-xs">
+            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto overflow-y-auto min-h-0">
+              <table className="w-full text-left text-xs min-w-[560px]">
                 <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                   <tr>
                     <th className="py-2.5 px-3">ფაილი / თარიღი</th>
@@ -580,8 +580,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
           {/* Audit Logs Table */}
           {rightTab === 'audit' && (
-            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto">
-              <table className="w-full text-left text-xs">
+            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto overflow-y-auto min-h-0">
+              <table className="w-full text-left text-xs min-w-[540px]">
                 <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                   <tr>
                     <th className="py-2.5 px-3">თარიღი</th>
@@ -603,7 +603,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                         <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
                           {new Date(log.created_at).toLocaleString('ka-GE')}
                         </td>
-                        <td className="py-2.5 px-3">
+                        <td className="py-2.5 px-3 whitespace-nowrap">
                           <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
                             {log.action}
                           </span>
@@ -611,7 +611,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                         <td className="py-2.5 px-3 text-slate-200">
                           {log.details || '-'}
                         </td>
-                        <td className="py-2.5 px-3 text-slate-400">
+                        <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">
                           {log.user_name || 'System'}
                         </td>
                       </tr>
@@ -624,7 +624,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
           {/* System Error Logs Table */}
           {rightTab === 'errors' && (
-            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-y-auto">
+            <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto overflow-y-auto min-h-0">
               {errorLogs.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
                   <div className="w-12 h-12 rounded-full bg-emerald-950/60 border border-emerald-800 flex items-center justify-center text-emerald-400 mb-2">
@@ -634,7 +634,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                   <div className="text-xs text-slate-500 mt-1">ყველა ოპერაცია და ტრანზაქცია მუშაობს გამართულად</div>
                 </div>
               ) : (
-                <table className="w-full text-left text-xs">
+                <table className="w-full text-left text-xs min-w-[560px]">
                   <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                     <tr>
                       <th className="py-2.5 px-3">თარიღი</th>
@@ -685,10 +685,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
       {/* Database Reset Confirmation Modal */}
       {isResetModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-red-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center space-x-3 text-red-400">
-              <div className="w-10 h-10 rounded-full bg-red-950 flex items-center justify-center border border-red-800">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-slate-900 border border-red-800 rounded-2xl max-w-md w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="flex items-center space-x-3 text-red-400 p-4 sm:p-5 border-b border-red-900/50 shrink-0">
+              <div className="w-10 h-10 rounded-full bg-red-950 flex items-center justify-center border border-red-800 shrink-0">
                 <AlertTriangle className="w-5 h-5 text-red-400" />
               </div>
               <div>
@@ -697,58 +697,61 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
               </div>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed bg-red-950/40 p-3 rounded-xl border border-red-900/60">
-              ყურადღება! ყველა მონაცემი: პროდუქცია, ნაშთები, გაყიდვები, ნისიები და მომხმარებლები წაიშლება. უსაფრთხოების მიზნით სისტემა ჯერ ავტომატურად შეინახავს ბაზის ასლს. გასაგრძელებლად შეიყვანეთ მფლობელის PIN კოდი:
-            </p>
+            <div className="p-4 sm:p-5 overflow-y-auto flex-1 min-h-0 space-y-3">
+              <p className="text-xs text-slate-300 leading-relaxed bg-red-950/40 p-3 rounded-xl border border-red-900/60">
+                ყურადღება! ყველა მონაცემი: პროდუქცია, ნაშთები, გაყიდვები, ნისიები და მომხმარებლები წაიშლება. უსაფრთხოების მიზნით სისტემა ჯერ ავტომატურად შეინახავს ბაზის ასლს. გასაგრძელებლად შეიყვანეთ მფლობელის PIN კოდი:
+              </p>
 
-            {resetError && (
-              <div className="p-3 bg-red-950/80 border border-red-700 rounded-xl text-xs text-red-200 flex items-center space-x-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-                <span>{resetError}</span>
-              </div>
-            )}
+              {resetError && (
+                <div className="p-3 bg-red-950/80 border border-red-700 rounded-xl text-xs text-red-200 flex items-center space-x-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                  <span>{resetError}</span>
+                </div>
+              )}
 
-            <form onSubmit={handleResetDatabase} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  მფლობელის PIN კოდი
-                </label>
-                <input
-                  type="password"
-                  maxLength={6}
-                  autoFocus
-                  value={resetPinInput}
-                  onChange={(e) => setResetPinInput(e.target.value.replace(/\D/g, ''))}
-                  placeholder="••••"
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-center text-lg font-mono text-white tracking-widest focus:border-red-500 focus:outline-none"
-                />
-              </div>
+              <form id="reset-db-form" onSubmit={handleResetDatabase} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    მფლობელის PIN კოდი
+                  </label>
+                  <input
+                    type="password"
+                    maxLength={6}
+                    autoFocus
+                    value={resetPinInput}
+                    onChange={(e) => setResetPinInput(e.target.value.replace(/\D/g, ''))}
+                    placeholder="••••"
+                    className="w-full px-4 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-center text-lg font-mono text-white tracking-widest focus:border-red-500 focus:outline-none"
+                  />
+                </div>
+              </form>
+            </div>
 
-              <div className="flex space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setIsResetModalOpen(false)}
-                  disabled={isResetting}
-                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition cursor-pointer"
-                >
-                  გაუქმება
-                </button>
-                <button
-                  type="submit"
-                  disabled={isResetting || !resetPinInput}
-                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer"
-                >
-                  {isResetting ? (
-                    <span>იშლება...</span>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" />
-                      <span>წაშლა და გასუფთავება</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
+            <div className="flex space-x-3 p-4 sm:p-5 border-t border-slate-800 shrink-0 bg-slate-900/90">
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(false)}
+                disabled={isResetting}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition cursor-pointer"
+              >
+                გაუქმება
+              </button>
+              <button
+                type="submit"
+                form="reset-db-form"
+                disabled={isResetting || !resetPinInput}
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer"
+              >
+                {isResetting ? (
+                  <span>იშლება...</span>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>წაშლა და გასუფთავება</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
