@@ -163,6 +163,12 @@ export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
     if (channel === 'customers:getRepayments') {
       return { success: true, data: customerService.getRepayments(payload.customerId) };
     }
+    if (channel === 'customers:getLedger') {
+      return { success: true, data: customerService.getCustomerLedger(payload.customerId) };
+    }
+    if (channel === 'customers:getActiveSales') {
+      return { success: true, data: customerService.getCustomerActiveSales(payload.customerId) };
+    }
 
     // 8. Returns & Exchanges
     if (channel === 'returns:process') {
@@ -170,6 +176,9 @@ export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
     }
     if (channel === 'returns:exchange') {
       return { success: true, data: returnsService.processExchange(currentUser, payload) };
+    }
+    if (channel === 'returns:list') {
+      return { success: true, data: returnsService.listReturns(payload) };
     }
 
     // 9. Finance & Expenses (Owner Only)

@@ -59,7 +59,15 @@ export class PosService {
         "SELECT id FROM sales WHERE idempotency_key = ?"
       ).get(payload.idempotency_key) as { id: number } | undefined;
       if (existingSale) {
-        return this.getSaleById(existingSale.id)!;
+        const fullExisting = this.getSaleById(existingSale.id)!;
+        if (
+          fullExisting.payment_method !== payload.payment_method ||
+          (fullExisting.customer_id || null) !== (payload.customer_id || null) ||
+          (fullExisting.items?.length || 0) !== payload.items.length
+        ) {
+          throw new Error('იდემპოტენტურობის გასაღები უკვე გამოყენებულია სხვა ტრანზაქციისთვის');
+        }
+        return fullExisting;
       }
     }
 
@@ -70,10 +78,60 @@ export class PosService {
       }
     }
 
-    // Calculate total price in tetri
+    // Authoritative Price Verification from SQLite database
+    let hasDiscount = false;
+    let totalDiscountTetri = 0;
+
+    for (const item of payload.items) {
+      const variantDb = this.db.prepare(`
+        SELECT pv.id, pv.price_override_tetri, p.base_price_tetri, p.name as product_name, pv.variant_name
+        FROM product_variants pv
+        JOIN products p ON pv.product_id = p.id
+        WHERE pv.id = ?
+      `).get(item.variant_id) as any;
+
+      if (!variantDb) {
+        throw new Error(`ვარიანტი #${item.variant_id} ვერ მოიძებნა`);
+      }
+
+      const authoritativePriceTetri = variantDb.price_override_tetri ?? variantDb.base_price_tetri;
+
+      if (item.unit_price_tetri !== authoritativePriceTetri) {
+        // Price differs: verify permission
+        if (user.role !== 'owner') {
+          throw new Error(
+            `გამყიდველს ფასის შეცვლის ან ფასდაკლების უფლება არ აქვს. ` +
+            `"${variantDb.product_name}"-ის აქტუალური ფასია: ${(authoritativePriceTetri / 100).toFixed(2)} ₾ (გაგზავნილი: ${(item.unit_price_tetri / 100).toFixed(2)} ₾)`
+          );
+        }
+        // Owner authorized discount or adjustment
+        hasDiscount = true;
+        totalDiscountTetri += (authoritativePriceTetri - item.unit_price_tetri) * item.quantity;
+      }
+    }
+
+    // Calculate total price in tetri based on verified prices
     const totalTetri = payload.items.reduce((sum, item) => sum + (item.quantity * item.unit_price_tetri), 0);
     if (totalTetri <= 0) {
       throw new Error('გაყიდვის ჯამური თანხა უნდა აღემატებოდეს 0-ს');
+    }
+
+    // Idempotency check: prevent duplicate checkouts and reject mismatched payloads
+    if (payload.idempotency_key) {
+      const existingSale = this.db.prepare(
+        "SELECT id, total_tetri, payment_method, customer_id FROM sales WHERE idempotency_key = ?"
+      ).get(payload.idempotency_key) as any;
+
+      if (existingSale) {
+        const customerMatches = (existingSale.customer_id || null) === (payload.customer_id || null);
+        const methodMatches = existingSale.payment_method === payload.payment_method;
+        const totalMatches = existingSale.total_tetri === totalTetri;
+
+        if (!customerMatches || !methodMatches || !totalMatches) {
+          throw new Error('Idempotency key mismatch: ამ გასაღებით უკვე დაფიქსირებულია განსხვავებული გაყიდვა');
+        }
+        return this.getSaleById(existingSale.id)!;
+      }
     }
 
     // Validate payment method and customer requirements
@@ -81,12 +139,15 @@ export class PosService {
     let changeGivenTetri = 0;
     let debtAmountTetri = 0;
 
+    const exchangeCreditTetri = (payload as any).exchange_credit_tetri || 0;
+    const effectiveCashNeeded = Math.max(0, totalTetri - exchangeCreditTetri);
+
     if (payload.payment_method === 'cash') {
-      cashReceivedTetri = payload.cash_received_tetri;
-      if (cashReceivedTetri < totalTetri) {
-        throw new Error(`მიღებული ნაღდი თანხა (${(cashReceivedTetri / 100).toFixed(2)} ₾) ნაკლებია ჯამურ თანხაზე (${(totalTetri / 100).toFixed(2)} ₾)`);
+      cashReceivedTetri = payload.cash_received_tetri || 0;
+      if (cashReceivedTetri < effectiveCashNeeded) {
+        throw new Error(`მიღებული ნაღდი თანხა (${(cashReceivedTetri / 100).toFixed(2)} ₾) ნაკლებია ჯამურ თანხაზე (${(effectiveCashNeeded / 100).toFixed(2)} ₾)`);
       }
-      changeGivenTetri = cashReceivedTetri - totalTetri;
+      changeGivenTetri = cashReceivedTetri - effectiveCashNeeded;
       debtAmountTetri = 0;
     } else if (payload.payment_method === 'debt') {
       if (!payload.customer_id) {
@@ -99,7 +160,7 @@ export class PosService {
       if (!payload.customer_id) {
         throw new Error('შერეული გადახდისთვის (ნაღდი + ნისია) კლიენტის არჩევა ან რეგისტრაცია აუცილებელია');
       }
-      cashReceivedTetri = payload.cash_received_tetri;
+      cashReceivedTetri = payload.cash_received_tetri || 0;
       if (cashReceivedTetri <= 0 || cashReceivedTetri >= totalTetri) {
         throw new Error(`შერეული გადახდისას მიღებული ნაღდი თანხა უნდა იყოს 0-ზე მეტი და მთლიან თანხაზე (${(totalTetri / 100).toFixed(2)} ₾) ნაკლები`);
       }
@@ -144,13 +205,21 @@ export class PosService {
       // 3. Generate receipt number
       const receiptNumber = this.generateReceiptNumber();
 
+      const saleType = (payload as any).sale_type || 'standard';
+      const relatedReturnId = (payload as any).related_return_id || null;
+      const exchangeDiffTetri = (payload as any).exchange_diff_tetri || 0;
+      const discountAuthorizedBy = hasDiscount ? user.id : null;
+      const discountReason = hasDiscount ? ((payload as any).discount_reason || payload.notes || 'მფლობელის ფასდაკლება') : null;
+
       // 4. Insert Sale record
       const saleRes = db.prepare(`
         INSERT INTO sales (
           receipt_number, user_id, customer_id, payment_method,
           total_tetri, cash_received_tetri, change_given_tetri,
-          debt_amount_tetri, status, notes, idempotency_key, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)
+          debt_amount_tetri, status, sale_type, related_return_id,
+          exchange_diff_tetri, discount_authorized_by, discount_reason,
+          notes, idempotency_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         receiptNumber,
         user.id,
@@ -160,6 +229,11 @@ export class PosService {
         cashReceivedTetri,
         changeGivenTetri,
         debtAmountTetri,
+        saleType,
+        relatedReturnId,
+        exchangeDiffTetri,
+        discountAuthorizedBy,
+        discountReason,
         payload.notes?.trim() || null,
         payload.idempotency_key || null,
         now
@@ -264,7 +338,8 @@ export class PosService {
       `).run(
         user.id,
         String(saleId),
-        `Sale ${receiptNumber} completed: total ${totalTetri} tetri, method: ${payload.payment_method}`,
+        `Sale ${receiptNumber} (${saleType}) completed: total ${totalTetri} tetri, method: ${payload.payment_method}` +
+        (hasDiscount ? `, owner discount: ${totalDiscountTetri} tetri` : ''),
         now
       );
 
@@ -273,7 +348,7 @@ export class PosService {
   }
 
   /**
-   * Retrieves sale with all items and customer info.
+   * Retrieves sale with all items, customer info, and linked return records.
    */
   getSaleById(saleId: number): Sale | null {
     const sale = this.db.prepare(`
@@ -306,19 +381,42 @@ export class PosService {
       sale.debt_remaining_tetri = 0;
     }
 
+    // Retrieve linked returns for this sale
+    const returns = this.db.prepare(`
+      SELECT r.*, u.name as user_name
+      FROM returns r
+      JOIN users u ON r.user_id = u.id
+      WHERE r.sale_id = ?
+      ORDER BY r.id DESC
+    `).all(saleId) as any[];
+
+    for (const ret of returns) {
+      ret.items = this.db.prepare(`
+        SELECT ri.*, si.product_name_snap as product_name, si.variant_name_snap as variant_name, si.code_snap as code
+        FROM return_items ri
+        JOIN sale_items si ON ri.sale_item_id = si.id
+        WHERE ri.return_id = ?
+      `).all(ret.id);
+    }
+
     return {
       ...sale,
-      items
+      final_total_tetri: sale.total_tetri,
+      items,
+      returns
     };
   }
 
   /**
-   * Search sales for history or returns.
+   * Search sales for history, returns, and filtering.
    */
   searchSales(params?: {
-    searchTerm?: string; // Receipt number or customer name or product code
+    searchTerm?: string;
     startDate?: string;
     endDate?: string;
+    status?: string;
+    saleType?: string;
+    hasDebt?: boolean;
     limit?: number;
   }): Sale[] {
     let sql = `
@@ -350,13 +448,41 @@ export class PosService {
       sql += " AND s.created_at <= ?";
       args.push(params.endDate);
     }
+    if (params?.status) {
+      sql += " AND s.status = ?";
+      args.push(params.status);
+    }
+    if (params?.saleType) {
+      sql += " AND s.sale_type = ?";
+      args.push(params.saleType);
+    }
+    if (params?.hasDebt) {
+      sql += " AND s.debt_amount_tetri > 0";
+    }
 
     sql += " ORDER BY s.id DESC LIMIT ?";
-    args.push(params?.limit || 50);
+    args.push(params?.limit || 100);
 
     const sales = this.db.prepare(sql).all(...args) as any[];
     for (const s of sales) {
       s.items = this.db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(s.id);
+      
+      // Calculate remaining debt on each sale
+      if (s.debt_amount_tetri > 0) {
+        const repaid = this.db.prepare(`
+          SELECT COALESCE(SUM(amount_tetri), 0) as total FROM debt_repayments WHERE sale_id = ?
+        `).get(s.id) as { total: number };
+        const returnedDebt = this.db.prepare(`
+          SELECT COALESCE(SUM(debt_deduction_tetri), 0) as total FROM returns WHERE sale_id = ?
+        `).get(s.id) as { total: number };
+        s.debt_remaining_tetri = Math.max(0, s.debt_amount_tetri - repaid.total - returnedDebt.total);
+      } else {
+        s.debt_remaining_tetri = 0;
+      }
+
+      // Check return count
+      const retCount = this.db.prepare("SELECT COUNT(*) as count FROM returns WHERE sale_id = ?").get(s.id) as { count: number };
+      s.returns_count = retCount.count;
     }
     return sales;
   }

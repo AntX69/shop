@@ -339,6 +339,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
 
     try {
       setIsSubmitting(true);
+      const idempotencyKey = crypto.randomUUID();
       const sale = await invokeIpc<Sale>('pos:checkout', {
         items: cart.map(c => ({
           variant_id: c.variant_id,
@@ -347,7 +348,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         })),
         payment_method: paymentMethod,
         customer_id: selectedCustomerId,
-        cash_received_tetri: parsedCashReceived
+        cash_received_tetri: parsedCashReceived,
+        idempotency_key: idempotencyKey
       });
 
       // Clear cart, close checkout modal, show receipt
@@ -591,13 +593,19 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
 
       {/* --- MODAL 1: Mandatory Product Confirmation Modal --- */}
       {confirmModalData && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setConfirmModalData(null);
+            e.stopPropagation();
+          }}
+        >
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl animate-in fade-in zoom-in-95 overflow-hidden">
             <div className="flex justify-between items-start border-b border-slate-800 pb-3 mb-3 shrink-0">
               <h3 className="text-base sm:text-lg font-bold text-white">პროდუქტის დადასტურება</h3>
               <button
                 onClick={() => setConfirmModalData(null)}
-                className="text-slate-400 hover:text-white"
+                className="text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -686,7 +694,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
 
       {/* --- MODAL 2: Payment Modal (Exact 3 Methods: ნაღდი, ნისია, შერეული) --- */}
       {isCheckoutModalOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setIsCheckoutModalOpen(false);
+            e.stopPropagation();
+          }}
+        >
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
             <div className="flex justify-between items-start border-b border-slate-800 pb-3 mb-3 shrink-0">
               <div>
@@ -937,7 +951,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
 
       {/* --- MODAL 4: Completed Sale Receipt View --- */}
       {completedSale && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setCompletedSale(null);
+            e.stopPropagation();
+          }}
+        >
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
             <div className="text-center border-b border-slate-800 pb-3 mb-3 shrink-0">
               <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-600/20 text-emerald-400 border border-emerald-600/40 rounded-full flex items-center justify-center mx-auto mb-2">

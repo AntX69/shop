@@ -83,9 +83,9 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Navigation Tabs - Centered safely with mx-auto, never clips left */}
-        <nav className="flex-1 min-w-0 flex items-center overflow-x-auto scrollbar-none py-1 px-0.5">
-          <div className="flex items-center gap-0.5 sm:gap-1 2xl:gap-1.5 mx-auto shrink-0">
+        {/* Navigation Tabs - Never clips start items; neatly fits 1280px+ and Windows scaling */}
+        <nav className="flex-1 min-w-0 flex items-center justify-start xl:justify-center overflow-x-auto scrollbar-none py-1 px-1">
+          <div className="flex items-center gap-1 xl:gap-1.5 shrink-0">
             {navItems.map((item) => {
               if (item.ownerOnly && !isOwner) return null;
               const isActive = activeTab === item.id;
@@ -94,15 +94,15 @@ export const Header: React.FC<HeaderProps> = ({
                   key={item.id}
                   onClick={() => onSelectTab(item.id)}
                   title={`${item.label} (${item.hotkey})`}
-                  className={`flex items-center space-x-1 sm:space-x-1.5 px-1.5 sm:px-2 2xl:px-2.5 py-1.5 rounded-lg text-[11px] xl:text-xs transition-all shrink-0 cursor-pointer ${
+                  className={`flex items-center space-x-1 sm:space-x-1.5 px-2 xl:px-2.5 py-1.5 rounded-lg text-xs transition-all shrink-0 cursor-pointer ${
                     isActive
                       ? 'bg-emerald-600 text-white font-bold shadow-md shadow-emerald-950/40'
                       : 'text-slate-300 hover:bg-slate-800 hover:text-white font-medium'
                   }`}
                 >
                   {item.icon}
-                  <span className="whitespace-nowrap">{item.label}</span>
-                  <span className={`hidden 2xl:inline-block text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none ${
+                  <span className="whitespace-nowrap font-medium">{item.label}</span>
+                  <span className={`hidden xl:inline-block text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none ${
                     isActive ? 'bg-emerald-700/90 text-emerald-100' : 'bg-slate-800 text-slate-400 border border-slate-700/60'
                   }`}>
                     {item.hotkey}

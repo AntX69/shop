@@ -302,6 +302,39 @@ export const migrations: Migration[] = [
         ('last_backup_date', '');
       `);
     }
+  },
+  {
+    version: 4,
+    name: 'returns_idempotency_and_exchanges_tracking',
+    up: (db: DatabaseSync) => {
+      // 1. Add idempotency_key to returns
+      try {
+        db.exec("ALTER TABLE returns ADD COLUMN idempotency_key TEXT;");
+      } catch {}
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_returns_idempotency ON returns(idempotency_key) WHERE idempotency_key IS NOT NULL;");
+
+      // 2. Add related_sale_id to returns (for tracking exchange sale)
+      try {
+        db.exec("ALTER TABLE returns ADD COLUMN related_sale_id INTEGER REFERENCES sales(id);");
+      } catch {}
+
+      // 3. Add exchange & tracking columns to sales
+      try {
+        db.exec("ALTER TABLE sales ADD COLUMN sale_type TEXT NOT NULL DEFAULT 'standard';");
+      } catch {}
+      try {
+        db.exec("ALTER TABLE sales ADD COLUMN related_return_id INTEGER REFERENCES returns(id);");
+      } catch {}
+      try {
+        db.exec("ALTER TABLE sales ADD COLUMN exchange_diff_tetri INTEGER DEFAULT 0;");
+      } catch {}
+      try {
+        db.exec("ALTER TABLE sales ADD COLUMN discount_authorized_by INTEGER REFERENCES users(id);");
+      } catch {}
+      try {
+        db.exec("ALTER TABLE sales ADD COLUMN discount_reason TEXT;");
+      } catch {}
+    }
   }
 ];
 

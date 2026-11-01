@@ -22,7 +22,7 @@ export interface CreateProductInput {
     color?: string;
     price_override_tetri?: number | null;
     cost_override_tetri?: number | null;
-    initial_stock: number;
+    initial_stock?: number;
     codes: Array<{
       code_type: 'barcode' | 'manual_5digit';
       code_value: string;

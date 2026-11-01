@@ -253,7 +253,7 @@ export class AuthService {
   /**
    * Resets the entire store database (Owner only, strictly requiring valid Owner PIN).
    */
-  resetStoreDatabase(requester: User, pin: string): void {
+  resetStoreDatabase(requester: User, pin: string, backupServiceInstance?: BackupService): void {
     if (requester.role !== 'owner') {
       throw new Error('მონაცემთა ბაზის გასუფთავების უფლება აქვს მხოლოდ მფლობელს (Owner)');
     }
@@ -262,13 +262,10 @@ export class AuthService {
       throw new Error('არასწორი PIN კოდი. ბაზის გასუფთავება უარყოფილია');
     }
 
-    // Mandatory Production Safeguard: Automatic emergency backup snapshot before reset
-    try {
-      const backupService = new BackupService(this.db);
-      backupService.createEmergencyPreResetBackup(requester);
-    } catch (bkErr) {
-      console.warn('[AuthService] Automatic pre-reset backup warning:', bkErr);
-    }
+    // Mandatory Production Safeguard: Automatic emergency backup snapshot before reset.
+    // If backup creation or verification fails, abort immediately preserving all store data!
+    const backupService = backupServiceInstance || new BackupService(this.db);
+    backupService.createEmergencyPreResetBackup(requester);
 
     runInTransaction(() => {
       this.db.exec(`

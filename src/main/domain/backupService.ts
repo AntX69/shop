@@ -233,16 +233,19 @@ export class BackupService {
 
   /**
    * Creates an emergency pre-wipe backup automatically when database reset is triggered.
+   * Strictly verifies integrity and throws if backup creation or validation fails.
    */
   createEmergencyPreResetBackup(user: User): string {
-    try {
-      const emergencyDir = this.getEffectiveBackupDirectory();
-      const res = this.createBackup(user, emergencyDir);
-      return res.filepath;
-    } catch (err: any) {
-      console.warn('[BackupService] Could not create emergency pre-reset backup:', err);
-      return '';
+    const emergencyDir = this.getEffectiveBackupDirectory();
+    const res = this.createBackup(user, emergencyDir);
+    
+    // Strict integrity verification of the emergency backup
+    const verification = this.verifyBackup(user, undefined, res.backup_filename);
+    if (!verification.is_valid) {
+      throw new Error(`ავარიული ასლის შექმნისას დაფიქსირდა შეცდომა: ${verification.integrity_status}`);
     }
+    
+    return res.filepath;
   }
 
   /**

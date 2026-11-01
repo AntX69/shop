@@ -4,11 +4,12 @@
  * 
  * Customers & Debts (ნისიები და კლიენტები) View.
  * Tracks client balances, receivables, and cash debt repayments.
- * Cash repayment is recorded as a cash collection and NEVER double-counts sales revenue.
+ * Includes complete chronological Ledger (Sales creating debt, Cash Repayments, Returns reducing debt)
+ * and active sales breakdown.
  */
 
 import React, { useState, useEffect } from 'react';
-import { Customer, DebtRepayment, User } from '../../shared/types.ts';
+import { Customer, DebtRepayment, CustomerLedgerEntry, Sale, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { 
@@ -17,22 +18,34 @@ import {
   UserPlus, 
   Banknote, 
   Phone, 
-  AlertCircle, 
   History, 
   X,
-  CreditCard
+  CreditCard,
+  Receipt,
+  RotateCcw,
+  Clock,
+  CheckCircle2,
+  AlertTriangle
 } from 'lucide-react';
 
 interface DebtsViewProps {
   currentUser: User;
 }
 
+type DetailTab = 'ledger' | 'active_sales' | 'repayments';
+
 export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
+  
+  // Detail tabs & data
+  const [detailTab, setDetailTab] = useState<DetailTab>('ledger');
+  const [ledgerEntries, setLedgerEntries] = useState<CustomerLedgerEntry[]>([]);
+  const [activeSales, setActiveSales] = useState<Sale[]>([]);
   const [repayments, setRepayments] = useState<DebtRepayment[]>([]);
+  const [loadingDetails, setLoadingDetails] = useState<boolean>(false);
 
   // Repayment Modal
   const [isRepayOpen, setIsRepayOpen] = useState<boolean>(false);
@@ -70,11 +83,32 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
 
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId) || null;
 
+  // Load details whenever selected customer changes or refresh requested
+  const loadCustomerDetails = async (custId: number) => {
+    try {
+      setLoadingDetails(true);
+      const [led, act, reps] = await Promise.all([
+        invokeIpc<CustomerLedgerEntry[]>('customers:getLedger', { customerId: custId }),
+        invokeIpc<Sale[]>('customers:getActiveSales', { customerId: custId }),
+        invokeIpc<DebtRepayment[]>('customers:getRepayments', { customerId: custId })
+      ]);
+      setLedgerEntries(led);
+      setActiveSales(act);
+      setRepayments(reps);
+    } catch (err) {
+      console.error('Error loading customer details:', err);
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
+
   useEffect(() => {
     if (selectedCustomerId) {
-      invokeIpc<DebtRepayment[]>('customers:getRepayments', { customerId: selectedCustomerId })
-        .then(setRepayments)
-        .catch(console.error);
+      loadCustomerDetails(selectedCustomerId);
+    } else {
+      setLedgerEntries([]);
+      setActiveSales([]);
+      setRepayments([]);
     }
   }, [selectedCustomerId]);
 
@@ -129,19 +163,20 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
 
     try {
       setIsSubmitting(true);
+      const idempotencyKey = crypto.randomUUID();
       await invokeIpc('customers:repay', {
         customer_id: selectedCustomer.id,
         amount_tetri: amountTetri,
-        notes: repayNotes.trim() || undefined
+        notes: repayNotes.trim() || undefined,
+        idempotency_key: idempotencyKey
       });
 
       setIsRepayOpen(false);
       setRepayAmountInput('');
       setRepayNotes('');
-      loadCustomers();
+      await loadCustomers();
       if (selectedCustomerId) {
-        const reps = await invokeIpc<DebtRepayment[]>('customers:getRepayments', { customerId: selectedCustomerId });
-        setRepayments(reps);
+        await loadCustomerDetails(selectedCustomerId);
       }
     } catch (err: any) {
       setRepayError(err.message || 'დაფარვის შენახვა ვერ მოხერხდა');
@@ -162,13 +197,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
             <Users className="w-5 h-5 lg:w-6 lg:h-6 text-emerald-400" />
             <span>ნისიები და კლიენტების აღრიცხვა</span>
           </h1>
-          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">აქტიური დავალიანებები და თანხის დაფარვა (Cash Collection)</p>
+          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">აქტიური დავალიანებები, სრული ქრონოლოგიური Ledger და თანხის დაფარვა</p>
         </div>
 
         <div className="flex items-center space-x-3 sm:space-x-4">
           <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl flex items-center space-x-2 sm:space-x-3">
             <div className="text-right">
-              <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase font-semibold">ჯამური ნისია</div>
+              <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase font-semibold">ჯამური ნისია მაღაზიაში</div>
               <div className="text-base sm:text-lg font-black text-amber-400 tabular-nums">{formatTetri(totalStoreDebtTetri)}</div>
             </div>
           </div>
@@ -188,7 +223,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
       <div className="flex-1 flex flex-col lg:flex-row gap-3 sm:gap-4 overflow-hidden min-h-0">
         
         {/* Left Column: Customers List */}
-        <div className="w-full lg:w-5/12 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col shadow-xl overflow-hidden min-h-0 max-h-[38vh] lg:max-h-none shrink-0 lg:shrink">
+        <div className="w-full lg:w-4/12 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col shadow-xl overflow-hidden min-h-0 max-h-[38vh] lg:max-h-none shrink-0 lg:shrink">
           
           {/* Search Box */}
           <div className="p-2.5 sm:p-3 border-b border-slate-800 shrink-0">
@@ -247,13 +282,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
 
         </div>
 
-        {/* Right Column: Customer Details & Repayments Ledger */}
-        <div className="w-full lg:w-7/12 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col shadow-xl overflow-hidden p-3 sm:p-5 min-h-0 flex-1">
+        {/* Right Column: Customer Details, Ledger & Tabs */}
+        <div className="w-full lg:w-8/12 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col shadow-xl overflow-hidden p-3 sm:p-4 min-h-0 flex-1">
           {selectedCustomer ? (
             <div className="flex-1 flex flex-col overflow-hidden min-h-0">
               
               {/* Header profile */}
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3 sm:pb-4 mb-3 sm:mb-4 shrink-0">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3 mb-3 shrink-0">
                 <div>
                   <h2 className="text-base sm:text-lg font-extrabold text-white">
                     {selectedCustomer.first_name} {selectedCustomer.last_name || ''}
@@ -288,17 +323,170 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 </div>
               </div>
 
-              {/* Repayments History */}
-              <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-                <div className="flex items-center space-x-2 text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 shrink-0">
-                  <History className="w-4 h-4 text-emerald-400" />
-                  <span>თანხის შემოტანის ისტორია (Repayments Ledger)</span>
-                </div>
+              {/* Navigation Tabs for Customer: Ledger, Active Sales, Repayments */}
+              <div className="flex items-center space-x-1 sm:space-x-2 border-b border-slate-800 pb-2 mb-3 shrink-0">
+                <button
+                  onClick={() => setDetailTab('ledger')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    detailTab === 'ledger'
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <History className="w-3.5 h-3.5" />
+                  <span>სრული Ledger (ქრონოლოგია)</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950/50 text-slate-300 ml-1">
+                    {ledgerEntries.length}
+                  </span>
+                </button>
 
-                <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto overflow-y-auto min-h-0">
-                  {repayments.length === 0 ? (
+                <button
+                  onClick={() => setDetailTab('active_sales')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    detailTab === 'active_sales'
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <CreditCard className="w-3.5 h-3.5" />
+                  <span>აქტიური ნისიები (გაყიდვები)</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950/50 text-slate-300 ml-1">
+                    {activeSales.length}
+                  </span>
+                </button>
+
+                <button
+                  onClick={() => setDetailTab('repayments')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                    detailTab === 'repayments'
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950/40'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  <Receipt className="w-3.5 h-3.5" />
+                  <span>თანხის შემოტანები</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950/50 text-slate-300 ml-1">
+                    {repayments.length}
+                  </span>
+                </button>
+              </div>
+
+              {/* Tab Content */}
+              <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto overflow-y-auto min-h-0">
+                {loadingDetails ? (
+                  <div className="p-8 text-center text-xs text-slate-400">იტვირთება მონაცემები...</div>
+                ) : detailTab === 'ledger' ? (
+                  /* --- 1. FULL LEDGER TIMELINE --- */
+                  ledgerEntries.length === 0 ? (
                     <div className="p-8 text-center text-xs text-slate-400">
-                      ამ კლიენტზე ნისიის დაფარვის ჩანაწერები ჯერ არ ფიქსირდება
+                      ამ კლიენტზე ფინანსური მოძრაობის ისტორია არ ფიქსირდება
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-xs min-w-[550px]">
+                      <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
+                        <tr>
+                          <th className="py-2.5 px-3">თარიღი</th>
+                          <th className="py-2.5 px-3">ოპერაცია</th>
+                          <th className="py-2.5 px-3">აღწერა</th>
+                          <th className="py-2.5 px-3 text-right">ცვლილება</th>
+                          <th className="py-2.5 px-3 text-right">მიმდინარე ბალანსი</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {ledgerEntries.map((e) => {
+                          const isDebtIncrease = e.type === 'sale_debt';
+                          const isRepay = e.type === 'repayment';
+                          const isReturn = e.type === 'return_credit';
+
+                          return (
+                            <tr key={e.id} className="hover:bg-slate-900/40">
+                              <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
+                                {new Date(e.date).toLocaleString('ka-GE')}
+                              </td>
+                              <td className="py-2.5 px-3 whitespace-nowrap">
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                                  isDebtIncrease
+                                    ? 'bg-amber-950/70 text-amber-300 border border-amber-800/70'
+                                    : isRepay
+                                    ? 'bg-emerald-950/70 text-emerald-300 border border-emerald-800/70'
+                                    : 'bg-cyan-950/70 text-cyan-300 border border-cyan-800/70'
+                                }`}>
+                                  {isDebtIncrease && <CreditCard className="w-3 h-3" />}
+                                  {isRepay && <CheckCircle2 className="w-3 h-3" />}
+                                  {isReturn && <RotateCcw className="w-3 h-3" />}
+                                  <span>{e.title}</span>
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-300 max-w-xs truncate">
+                                <div>{e.description}</div>
+                                {e.receipt_number && (
+                                  <div className="text-[10px] text-slate-500 font-mono">ქვითარი: #{e.receipt_number}</div>
+                                )}
+                              </td>
+                              <td className={`py-2.5 px-3 font-black tabular-nums text-right whitespace-nowrap text-xs sm:text-sm ${
+                                isDebtIncrease ? 'text-amber-400' : 'text-emerald-400'
+                              }`}>
+                                {isDebtIncrease ? `+${formatTetri(e.change_tetri || 0)}` : `-${formatTetri(Math.abs(e.change_tetri || 0))}`}
+                              </td>
+                              <td className="py-2.5 px-3 font-bold text-slate-200 tabular-nums text-right whitespace-nowrap text-xs sm:text-sm">
+                                {formatTetri(e.running_balance_tetri)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )
+                ) : detailTab === 'active_sales' ? (
+                  /* --- 2. ACTIVE SALES (WITH UNPAID DEBT) --- */
+                  activeSales.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-400">
+                      აქტიური დაუფარავი გაყიდვები არ არის
+                    </div>
+                  ) : (
+                    <table className="w-full text-left text-xs min-w-[550px]">
+                      <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
+                        <tr>
+                          <th className="py-2.5 px-3">თარიღი / ქვითარი</th>
+                          <th className="py-2.5 px-3">ჯამური თანხა</th>
+                          <th className="py-2.5 px-3">გადახდილი ნაღდი</th>
+                          <th className="py-2.5 px-3">დარჩენილი ვალი</th>
+                          <th className="py-2.5 px-3">სტატუსი</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {activeSales.map((s) => (
+                          <tr key={s.id} className="hover:bg-slate-900/40">
+                            <td className="py-2.5 px-3">
+                              <div className="font-mono text-slate-200 font-bold">#{s.receipt_number}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">
+                                {new Date(s.created_at).toLocaleString('ka-GE')}
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-slate-300 tabular-nums">
+                              {formatTetri(s.total_tetri)}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-400 tabular-nums">
+                              {formatTetri(s.cash_received_tetri)}
+                            </td>
+                            <td className="py-2.5 px-3 font-black text-amber-400 text-xs sm:text-sm tabular-nums">
+                              {formatTetri(s.debt_amount_tetri)}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/70 text-amber-300 border border-amber-800">
+                                დაუფარავი
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )
+                ) : (
+                  /* --- 3. REPAYMENTS LIST --- */
+                  repayments.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-400">
+                      ნისიის დაფარვის ჩანაწერები ჯერ არ ფიქსირდება
                     </div>
                   ) : (
                     <table className="w-full text-left text-xs min-w-[480px]">
@@ -329,8 +517,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                         ))}
                       </tbody>
                     </table>
-                  )}
-                </div>
+                  )
+                )}
               </div>
 
             </div>
@@ -345,45 +533,80 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
 
       {/* --- MODAL: Record Debt Repayment --- */}
       {isRepayOpen && selectedCustomer && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setIsRepayOpen(false);
+            e.stopPropagation();
+          }}
+        >
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="flex justify-between items-center border-b border-slate-800 p-4 shrink-0">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <Banknote className="w-5 h-5 text-emerald-400" />
                 <span>ნისიის დაფარვა</span>
               </h3>
-              <button onClick={() => setIsRepayOpen(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setIsRepayOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="p-4 sm:p-5 overflow-y-auto flex-1 min-h-0">
               {repayError && (
-                <div className="mb-3 p-2.5 bg-red-950/60 border border-red-800 rounded-lg text-red-200 text-xs">
-                  {repayError}
+                <div className="mb-3 p-2.5 bg-red-950/60 border border-red-800 rounded-lg text-red-200 text-xs flex items-center space-x-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                  <span>{repayError}</span>
                 </div>
               )}
 
               <form id="repay-form" onSubmit={handleRepaySubmit} className="space-y-3">
                 <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs">
-                  <span className="text-slate-400">კლიენტი:</span> <span className="font-bold text-white">{selectedCustomer.first_name} {selectedCustomer.last_name || ''}</span>
-                  <div className="mt-1">
-                    <span className="text-slate-400">მიმდინარე ვალი:</span> <span className="font-bold text-amber-400 tabular-nums">{formatTetri(selectedCustomer.total_debt_tetri)}</span>
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-slate-400">კლიენტი:</span>
+                    <span className="font-bold text-white">{selectedCustomer.first_name} {selectedCustomer.last_name || ''}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">მიმდინარე ვალი:</span>
+                    <span className="font-black text-amber-400 tabular-nums text-sm">
+                      {formatTetri(selectedCustomer.total_debt_tetri)}
+                    </span>
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    შემოტანილი ნაღდი თანხა (₾) *
+                    შემოტანილი თანხა (₾) *
                   </label>
                   <input
                     type="number"
                     step="0.01"
+                    min="0.01"
                     required
+                    autoFocus
                     value={repayAmountInput}
                     onChange={(e) => setRepayAmountInput(e.target.value)}
-                    className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg font-bold tabular-nums"
+                    className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg font-bold tabular-nums focus:border-emerald-500 focus:outline-none"
                   />
+                  {/* Quick amount buttons */}
+                  <div className="flex items-center gap-1.5 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setRepayAmountInput((((selectedCustomer.total_debt_tetri || 0)) / 100).toFixed(2))}
+                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
+                    >
+                      სრული დაფარვა
+                    </button>
+                    {[10, 20, 50, 100].map(amt => (
+                      <button
+                        key={amt}
+                        type="button"
+                        onClick={() => setRepayAmountInput(amt.toFixed(2))}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
+                      >
+                        {amt} ₾
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div>
@@ -393,7 +616,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                     value={repayNotes}
                     onChange={(e) => setRepayNotes(e.target.value)}
                     placeholder="მაგ. ნაწილობრივი გადახდა"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
               </form>
@@ -403,7 +626,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
               <button
                 type="button"
                 onClick={() => setIsRepayOpen(false)}
-                className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700"
+                className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700 cursor-pointer"
               >
                 გაუქმება
               </button>
@@ -411,7 +634,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 type="submit"
                 form="repay-form"
                 disabled={isSubmitting}
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40 disabled:opacity-50"
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40 disabled:opacity-50 cursor-pointer"
               >
                 {isSubmitting ? 'ინახება...' : 'დაფარვა'}
               </button>
@@ -422,11 +645,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
 
       {/* --- MODAL: Add Customer --- */}
       {isNewCustOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setIsNewCustOpen(false);
+            e.stopPropagation();
+          }}
+        >
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="flex justify-between items-center border-b border-slate-800 p-4 shrink-0">
               <h3 className="text-base font-bold text-white">ახალი კლიენტის რეგისტრაცია</h3>
-              <button onClick={() => setIsNewCustOpen(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setIsNewCustOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -438,10 +667,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                   <input
                     type="text"
                     required
+                    autoFocus
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     placeholder="მაგ. დავით"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
@@ -451,7 +681,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
                     placeholder="მაგ. ბერიძე"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
@@ -461,7 +691,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="მაგ. 599 12 34 56"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
@@ -471,7 +701,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     placeholder="მაგ. რუსთაველის 15"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
@@ -481,7 +711,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="სურვილისამებრ"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
               </form>
@@ -491,14 +721,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
               <button
                 type="button"
                 onClick={() => setIsNewCustOpen(false)}
-                className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700"
+                className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700 cursor-pointer"
               >
                 გაუქმება
               </button>
               <button
                 type="submit"
                 form="new-cust-form"
-                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40"
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40 cursor-pointer"
               >
                 დამატება
               </button>

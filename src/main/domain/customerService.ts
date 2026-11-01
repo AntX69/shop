@@ -124,6 +124,9 @@ export class CustomerService {
         "SELECT dr.*, u.name as user_name FROM debt_repayments dr JOIN users u ON dr.user_id = u.id WHERE dr.idempotency_key = ?"
       ).get(payload.idempotency_key) as any;
       if (existing) {
+        if (existing.customer_id !== payload.customer_id || existing.amount_tetri !== payload.amount_tetri) {
+          throw new Error('Idempotency key mismatch: ამ გასაღებით უკვე დაფიქსირებულია განსხვავებული გადახდა');
+        }
         return {
           id: existing.id,
           customer_id: existing.customer_id,
@@ -207,5 +210,139 @@ export class CustomerService {
       WHERE dr.customer_id = ?
       ORDER BY dr.id DESC
     `).all(customerId) as any[];
+  }
+
+  /**
+   * Returns unified chronological ledger of all customer debt debits & credits:
+   * - Sales creating debt (+)
+   * - Cash repayments (-)
+   * - Returns reducing debt (-)
+   */
+  getCustomerLedger(customerId: number): any[] {
+    const customer = this.getCustomerById(customerId);
+    if (!customer) return [];
+
+    // 1. Debt Sales
+    const sales = this.db.prepare(`
+      SELECT s.id, s.receipt_number, s.debt_amount_tetri, s.created_at, u.name as user_name
+      FROM sales s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.customer_id = ? AND s.debt_amount_tetri > 0
+    `).all(customerId) as any[];
+
+    // 2. Repayments
+    const repayments = this.db.prepare(`
+      SELECT dr.id, dr.amount_tetri, dr.notes, dr.created_at, u.name as user_name
+      FROM debt_repayments dr
+      JOIN users u ON dr.user_id = u.id
+      WHERE dr.customer_id = ?
+    `).all(customerId) as any[];
+
+    // 3. Returns that reduced debt
+    const returns = this.db.prepare(`
+      SELECT r.id, r.debt_deduction_tetri, s.receipt_number, r.created_at, u.name as user_name
+      FROM returns r
+      JOIN sales s ON r.sale_id = s.id
+      JOIN users u ON r.user_id = u.id
+      WHERE s.customer_id = ? AND r.debt_deduction_tetri > 0
+    `).all(customerId) as any[];
+
+    // Merge into single chronological timeline
+    const events: Array<{
+      id: string;
+      type: 'sale_debt' | 'repayment' | 'return_credit';
+      title: string;
+      date: string;
+      receipt_number?: string;
+      reference_id: number;
+      user_name?: string;
+      debit_tetri: number;
+      credit_tetri: number;
+      description: string;
+      notes?: string;
+    }> = [];
+
+    for (const s of sales) {
+      events.push({
+        id: `sale-${s.id}`,
+        type: 'sale_debt',
+        title: 'ნისია',
+        date: s.created_at,
+        receipt_number: s.receipt_number,
+        reference_id: s.id,
+        user_name: s.user_name,
+        debit_tetri: s.debt_amount_tetri,
+        credit_tetri: 0,
+        description: `ნისია გაყიდვიდან #${s.receipt_number}`
+      });
+    }
+
+    for (const r of repayments) {
+      events.push({
+        id: `repay-${r.id}`,
+        type: 'repayment',
+        title: 'დაფარვა',
+        date: r.created_at,
+        reference_id: r.id,
+        user_name: r.user_name,
+        debit_tetri: 0,
+        credit_tetri: r.amount_tetri,
+        description: 'ნისიის დაფარვა (ნაღდი ფული)',
+        notes: r.notes || undefined
+      });
+    }
+
+    for (const ret of returns) {
+      events.push({
+        id: `return-${ret.id}`,
+        type: 'return_credit',
+        title: 'დაბრუნება',
+        date: ret.created_at,
+        receipt_number: ret.receipt_number,
+        reference_id: ret.id,
+        user_name: ret.user_name,
+        debit_tetri: 0,
+        credit_tetri: ret.debt_deduction_tetri,
+        description: `დაბრუნებით ვალის შემცირება (ჩეკი #${ret.receipt_number})`
+      });
+    }
+
+    // Sort ascending by date to compute accurate running balance
+    events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    let runningBalance = 0;
+    const ledger = events.map(ev => {
+      const change = ev.debit_tetri - ev.credit_tetri;
+      runningBalance += change;
+      return {
+        ...ev,
+        change_tetri: change,
+        running_balance_tetri: Math.max(0, runningBalance)
+      };
+    });
+
+    return ledger;
+  }
+
+  /**
+   * Returns sales for a customer that currently have an unpaid debt.
+   */
+  getCustomerActiveSales(customerId: number): any[] {
+    const sales = this.db.prepare(`
+      SELECT s.*, u.name as user_name
+      FROM sales s
+      JOIN users u ON s.user_id = u.id
+      WHERE s.customer_id = ? AND s.debt_amount_tetri > 0
+      ORDER BY s.id DESC
+    `).all(customerId) as any[];
+
+    for (const s of sales) {
+      s.items = this.db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(s.id);
+      const repaid = this.db.prepare("SELECT COALESCE(SUM(amount_tetri), 0) as total FROM debt_repayments WHERE sale_id = ?").get(s.id) as { total: number };
+      const returnedDebt = this.db.prepare("SELECT COALESCE(SUM(debt_deduction_tetri), 0) as total FROM returns WHERE sale_id = ?").get(s.id) as { total: number };
+      s.debt_remaining_tetri = Math.max(0, s.debt_amount_tetri - repaid.total - returnedDebt.total);
+    }
+
+    return sales;
   }
 }

@@ -13,6 +13,7 @@ import { Product, ProductVariant } from '../../shared/types.ts';
 import { formatTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { recognize5DigitsFromCanvas, OcrResult, BoundingBox } from '../utils/offlineOcr.ts';
+import { SmartDigitInput } from './SmartDigitInput.tsx';
 import { 
   Camera, 
   RotateCw, 
@@ -500,18 +501,24 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               </div>
             )}
 
-            <div className="flex justify-center space-x-2 sm:space-x-3">
-              {digitInputs.map((d, idx) => (
-                <input
-                  key={idx}
-                  type="text"
-                  maxLength={1}
-                  value={d}
-                  onChange={(e) => handleDigitChange(idx, e.target.value)}
-                  placeholder="0"
-                  className="w-10 h-12 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-black bg-slate-900 border-2 border-slate-700 focus:border-emerald-500 rounded-xl text-white font-mono shadow-inner focus:outline-none"
-                />
-              ))}
+            <div className="flex justify-center py-1">
+              <SmartDigitInput
+                length={5}
+                value={digitInputs.join('')}
+                autoFocus={true}
+                onChange={(code) => {
+                  const arr = code.padEnd(5, ' ').split('').map(c => c.trim());
+                  setDigitInputs(arr);
+                  if (code.length === 5) {
+                    checkProductLookup(code);
+                  } else {
+                    setMatchedItem(null);
+                  }
+                }}
+                onComplete={(code) => {
+                  checkProductLookup(code);
+                }}
+              />
             </div>
 
             {lookupError && (

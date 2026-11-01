@@ -106,9 +106,14 @@ export interface CheckoutPayload {
   }>;
   payment_method: PaymentMethod;
   customer_id?: number | null;
-  cash_received_tetri: number;
+  cash_received_tetri?: number;
   notes?: string;
   idempotency_key?: string;
+  discount_reason?: string;
+  sale_type?: 'standard' | 'exchange';
+  related_return_id?: number | null;
+  exchange_diff_tetri?: number;
+  exchange_credit_tetri?: number;
 }
 
 export interface SaleItem {
@@ -134,15 +139,73 @@ export interface Sale {
   customer_name?: string | null;
   payment_method: PaymentMethod;
   total_tetri: number;
+  final_total_tetri?: number;
+  paid_cash_tetri?: number;
   cash_received_tetri: number;
   change_given_tetri: number;
   debt_amount_tetri: number;
   debt_remaining_tetri?: number;
   status: 'completed' | 'returned' | 'partially_returned';
+  sale_type?: 'standard' | 'exchange';
+  related_return_id?: number | null;
+  exchange_diff_tetri?: number;
+  discount_authorized_by?: number | null;
+  discount_reason?: string | null;
   notes?: string;
   idempotency_key?: string;
   created_at: string;
   items?: SaleItem[];
+}
+
+export interface ReturnItemRecord {
+  id: number;
+  return_id: number;
+  sale_item_id: number;
+  variant_id: number;
+  product_name?: string;
+  variant_name?: string;
+  code?: string;
+  quantity: number;
+  unit_price_tetri: number;
+  total_tetri: number;
+}
+
+export interface ReturnRecord {
+  id: number;
+  sale_id: number;
+  receipt_number?: string;
+  user_id: number;
+  user_name?: string;
+  customer_id?: number | null;
+  customer_name?: string | null;
+  return_type: 'refund' | 'exchange';
+  total_refund_tetri: number;
+  debt_deduction_tetri: number;
+  cash_refund_tetri: number;
+  condition: 'resellable' | 'damaged';
+  reason?: string | null;
+  related_sale_id?: number | null;
+  idempotency_key?: string | null;
+  created_at: string;
+  items?: ReturnItemRecord[];
+  refund_cash_tetri?: number;
+  refund_debt_reduction_tetri?: number;
+}
+
+export interface CustomerLedgerEntry {
+  id: string; // unique identifier (e.g. "sale-1", "repay-2", "return-3")
+  type: 'sale_debt' | 'repayment' | 'return_deduction' | 'return_credit';
+  title?: string;
+  date: string;
+  receipt_number?: string;
+  reference_id?: number;
+  user_name?: string;
+  debit_tetri: number;   // increases debt (e.g. new debt on sale)
+  credit_tetri: number;  // decreases debt (e.g. cash repayment or return debt reduction)
+  change_tetri?: number;
+  running_balance_tetri: number;
+  description: string;
+  notes?: string;
 }
 
 export interface DebtRepayment {
@@ -175,16 +238,18 @@ export interface BackupInfo {
 }
 
 export interface ReturnItemPayload {
-  sale_item_id: number;
+  sale_item_id?: number;
   variant_id: number;
   quantity: number;
-  condition: 'resellable' | 'damaged';
+  condition?: 'resellable' | 'damaged';
+  reason?: string;
 }
 
 export interface ReturnPayload {
   sale_id: number;
   items: ReturnItemPayload[];
   reason?: string;
+  idempotency_key?: string;
 }
 
 export interface ExchangePayload {
@@ -195,8 +260,11 @@ export interface ExchangePayload {
     quantity: number;
     unit_price_tetri: number;
   }>;
-  cash_adjusted_tetri: number; // positive = customer paid extra cash; negative = store refunded cash
+  cash_adjusted_tetri?: number; // optional client hint, authoritative difference calculated server-side
+  cash_received_tetri?: number;
+  payment_method?: 'cash' | 'debt';
   notes?: string;
+  idempotency_key?: string;
 }
 
 export interface Expense {

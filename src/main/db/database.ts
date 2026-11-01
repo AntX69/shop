@@ -111,18 +111,38 @@ export function closeDatabase(): void {
   }
 }
 
+let txDepth = 0;
+
 /**
- * Executes a function inside an immediate transaction.
+ * Executes a function inside a transaction.
+ * Supports nesting via SQLite SAVEPOINTS.
  * Rolls back automatically if an error is thrown.
  */
 export function runInTransaction<T>(fn: (db: DatabaseSync) => T, db: DatabaseSync = getDb()): T {
-  db.exec('BEGIN IMMEDIATE;');
+  const isTopLevel = txDepth === 0;
+  txDepth++;
+  const spName = `sp_${txDepth}`;
   try {
+    if (isTopLevel) {
+      db.exec('BEGIN IMMEDIATE;');
+    } else {
+      db.exec(`SAVEPOINT ${spName};`);
+    }
     const result = fn(db);
-    db.exec('COMMIT;');
+    if (isTopLevel) {
+      db.exec('COMMIT;');
+    } else {
+      db.exec(`RELEASE SAVEPOINT ${spName};`);
+    }
     return result;
   } catch (error) {
-    db.exec('ROLLBACK;');
+    if (isTopLevel) {
+      try { db.exec('ROLLBACK;'); } catch {}
+    } else {
+      try { db.exec(`ROLLBACK TO SAVEPOINT ${spName};`); } catch {}
+    }
     throw error;
+  } finally {
+    txDepth--;
   }
 }

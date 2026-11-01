@@ -77,7 +77,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       color: '',
       price_override: '',
       cost_override: '',
-      initial_stock: 5,
+      initial_stock: 0,
       manual_5digit: '',
       barcode: ''
     }
@@ -250,7 +250,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         color: '',
         price_override: '',
         cost_override: '',
-        initial_stock: 5,
+        initial_stock: 0,
         manual_5digit: '',
         barcode: ''
       }]);
