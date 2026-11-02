@@ -183,7 +183,11 @@ export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
 
     // 9. Finance & Expenses (Owner Only)
     if (channel === 'finance:summary') {
-      return { success: true, data: financeService.getFinancialSummary(currentUser, payload?.startDate, payload?.endDate) };
+      const p = payload || {};
+      const data = p.preset || p.from || p.to
+        ? financeService.getFinancialSummary(currentUser, { preset: p.preset, from: p.from, to: p.to })
+        : financeService.getFinancialSummary(currentUser, p.startDate, p.endDate);
+      return { success: true, data };
     }
     if (channel === 'finance:createExpense') {
       return { success: true, data: financeService.createExpense(currentUser, payload) };

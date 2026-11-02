@@ -102,18 +102,18 @@ export interface CheckoutPayload {
   items: Array<{
     variant_id: number;
     quantity: number;
-    unit_price_tetri: number;
+    unit_price_tetri?: number;
+    /** Owner only: discount on the whole line, in tetri. */
+    line_discount_tetri?: number;
   }>;
   payment_method: PaymentMethod;
   customer_id?: number | null;
   cash_received_tetri?: number;
   notes?: string;
   idempotency_key?: string;
+  /** Owner only: discount on the whole cart, in tetri, spread over the lines. */
+  cart_discount_tetri?: number;
   discount_reason?: string;
-  sale_type?: 'standard' | 'exchange';
-  related_return_id?: number | null;
-  exchange_diff_tetri?: number;
-  exchange_credit_tetri?: number;
 }
 
 export interface SaleItem {
@@ -124,9 +124,10 @@ export interface SaleItem {
   variant_name_snap?: string;
   code_snap?: string;
   quantity: number;
-  unit_price_tetri: number;
-  unit_cost_tetri?: number | null;
-  total_price_tetri: number;
+  unit_price_tetri: number;          // List price at the time of sale
+  unit_cost_tetri?: number | null;   // Owner only (stripped for sellers)
+  discount_tetri?: number;           // Line + cart discount share
+  total_price_tetri: number;         // Net amount paid for the line
   returned_quantity: number;
 }
 
@@ -138,6 +139,9 @@ export interface Sale {
   customer_id?: number | null;
   customer_name?: string | null;
   payment_method: PaymentMethod;
+  subtotal_tetri?: number;
+  discount_tetri?: number;
+  exchange_credit_tetri?: number;
   total_tetri: number;
   final_total_tetri?: number;
   paid_cash_tetri?: number;
@@ -182,6 +186,8 @@ export interface ReturnRecord {
   total_refund_tetri: number;
   debt_deduction_tetri: number;
   cash_refund_tetri: number;
+  exchange_credit_tetri?: number;
+  related_receipt_number?: string | null;
   condition: 'resellable' | 'damaged';
   reason?: string | null;
   related_sale_id?: number | null;
@@ -194,7 +200,8 @@ export interface ReturnRecord {
 
 export interface CustomerLedgerEntry {
   id: string; // unique identifier (e.g. "sale-1", "repay-2", "return-3")
-  type: 'sale_debt' | 'repayment' | 'return_deduction' | 'return_credit';
+  type: 'sale_debt' | 'repayment' | 'repayment_void' | 'return_deduction' | 'return_credit' | 'write_off';
+  voided?: boolean;
   title?: string;
   date: string;
   receipt_number?: string;
@@ -229,6 +236,9 @@ export interface DebtRepayment {
   notes?: string;
   idempotency_key?: string;
   created_at: string;
+  voided_at?: string | null;
+  voided_by_name?: string | null;
+  void_reason?: string | null;
   allocations?: DebtRepaymentAllocation[];
 }
 
@@ -273,7 +283,7 @@ export interface ExchangePayload {
   }>;
   cash_adjusted_tetri?: number; // optional client hint, authoritative difference calculated server-side
   cash_received_tetri?: number;
-  payment_method?: 'cash' | 'debt';
+  payment_method?: 'cash' | 'debt' | 'mixed';
   notes?: string;
   idempotency_key?: string;
 }
@@ -290,21 +300,49 @@ export interface Expense {
 }
 
 export interface FinancialSummary {
-  period_start: string;
-  period_end: string;
+  period_preset?: string;
+  period_start: string;                 // First local (Tbilisi) day, or 'დასაწყისიდან'
+  period_end: string;                   // Last local day, or 'დღემდე'
+  period_start_utc?: string | null;
+  period_end_utc?: string | null;       // Exclusive
+
   total_sales_count: number;
-  total_sales_revenue_tetri: number;    // Gross sales volume
-  cash_collected_direct_tetri: number;  // Cash paid in checkout
-  cash_collected_debts_tetri: number;   // Cash paid towards past debts (NOT double-counted in sales)
-  total_cash_inflow_tetri: number;      // direct + debt repayments - cash refunds
-  total_new_debt_tetri: number;         // Debts created during this period
-  total_returns_amount_tetri: number;   // Value of returned goods
+  exchange_sales_count?: number;
+  sales_before_discount_tetri?: number; // List-price value of goods sold
+  total_discounts_tetri?: number;       // Owner discounts
+  total_sales_revenue_tetri: number;    // Gross sales: charged on sales in the period (after discounts)
+  total_returns_count?: number;
+  total_returns_amount_tetri: number;   // Value of goods returned in the period (price paid)
+  net_sales_tetri?: number;             // Gross sales - returns
+
+  cost_of_goods_sold_tetri: number;     // FIFO cost of units sold in the period (known costs)
+  cogs_reversed_by_returns_tetri?: number; // Original FIFO cost of units returned in the period
+  net_cogs_tetri?: number;
+  has_unknown_costs: boolean;           // Some units sold/returned have unknown purchase cost
+  unknown_cost_items_count: number;     // Units sold with unknown cost
+  unknown_cost_returned_items_count?: number;
+  estimated_gross_profit_tetri: number | null; // Net sales - net COGS; null when any cost is unknown
+  gross_profit_partial_tetri?: number;  // Same, computed from known costs only (incomplete)
+  damaged_goods_writeoff_tetri?: number; // Cost of damaged returned goods (real loss)
+  damaged_goods_units?: number;
+  debt_written_off_tetri?: number;      // Debt forgiven by the owner
   total_expenses_tetri: number;         // Shop expenses (rent, utilities, etc.)
-  cost_of_goods_sold_tetri: number;     // Known COGS via FIFO lot attribution
-  has_unknown_costs: boolean;           // True if some sold items had unknown/null purchase cost
-  unknown_cost_items_count: number;
-  estimated_gross_profit_tetri: number | null; // Null or partial if unknown costs exist
-  net_cash_flow_tetri: number;
+  operating_result_tetri?: number | null; // Gross profit - damaged write-off - debt write-off - expenses
+  operating_result_partial_tetri?: number;
+
+  cash_collected_direct_tetri: number;  // Cash kept from sales (received - change)
+  cash_collected_debts_tetri: number;   // Cash paid towards debts (NOT a sale)
+  repayments_count?: number;
+  cash_refunded_tetri?: number;         // Cash actually paid back on returns/exchanges
+  total_cash_inflow_tetri: number;      // direct + debt repayments - cash refunds
+  net_cash_flow_tetri: number;          // Same as total_cash_inflow_tetri (till flow)
+  net_cash_after_expenses_tetri?: number;
+  exchange_credit_used_tetri?: number;  // Non-cash exchange credit applied to new sales
+  returns_debt_reduction_tetri?: number;
+
+  total_new_debt_tetri: number;         // Debts created during this period
+  outstanding_debt_tetri?: number;      // All customers' open debt right now
+  customers_with_debt_count?: number;
 }
 
 export interface StockCorrectionPayload {

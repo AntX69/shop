@@ -246,6 +246,9 @@ test('M12 - Comprehensive Real Store Simulation (200 Products, 50 Cash Sales, 20
         quantity: 1,
         unit_price_tetri: newVariant.price_tetri
       }],
+      // A more expensive new item is paid explicitly in cash; the server never assumes cash.
+      payment_method: 'cash',
+      cash_received_tetri: Math.max(0, newVariant.price_tetri - itemToReturn.unit_price_tetri),
       idempotency_key: `sim_exchange_${exIdx}_${crypto.randomUUID()}`
     });
   }

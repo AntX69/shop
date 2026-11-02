@@ -67,6 +67,39 @@ export function formatTetri(tetri: number | null | undefined, includeSymbol: boo
 }
 
 /**
+ * Splits an integer amount across weights (e.g. a cart discount across lines) so that the
+ * parts are integers, proportional to the weights, and sum exactly to the amount
+ * (largest-remainder method). Uses BigInt so large products never lose precision.
+ */
+export function allocateProportionally(amount: number, weights: number[]): number[] {
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (amount <= 0 || total <= 0) return weights.map(() => 0);
+  const A = BigInt(amount);
+  const T = BigInt(total);
+  const parts = weights.map((w) => (A * BigInt(w)) / T);
+  const remainders = weights.map((w, i) => ({ i, r: (A * BigInt(w)) % T }));
+  let left = amount - parts.reduce((s, p) => s + Number(p), 0);
+  remainders.sort((a, b) => (b.r > a.r ? 1 : b.r < a.r ? -1 : a.i - b.i));
+  const result = parts.map(Number);
+  for (let k = 0; left > 0; k++, left--) result[remainders[k % remainders.length].i]++;
+  return result;
+}
+
+/**
+ * Amount attributable to `count` more units of a line whose `quantity` units cost `lineTotal`
+ * in total, after `alreadyCounted` units were handled earlier. Successive partial returns
+ * therefore always add up to exactly `lineTotal`, without fractional tetri.
+ */
+export function proratedLineAmount(lineTotal: number, quantity: number, alreadyCounted: number, count: number): number {
+  if (quantity <= 0) return 0;
+  const T = BigInt(lineTotal);
+  const Q = BigInt(quantity);
+  const upper = (T * BigInt(alreadyCounted + count)) / Q;
+  const lower = (T * BigInt(alreadyCounted)) / Q;
+  return Number(upper - lower);
+}
+
+/**
  * Parses user input from UI (e.g. "12.50") safely to tetri. Returns null if empty/invalid.
  */
 export function safeParseTetri(input: string | number | null | undefined): number | null {

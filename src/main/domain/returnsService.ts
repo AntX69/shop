@@ -1,249 +1,266 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Returns & Exchanges Domain Service.
+ *
+ * Accounting rules:
+ * - A return is never a sale and only happens against a specific historical sale.
+ * - The refund value is the net amount the customer paid for the returned units
+ *   (discounts included), split so that successive partial returns add up exactly.
+ * - The value first reduces debt still open on that sale; only the rest is paid in cash.
+ * - The exact FIFO cost layers consumed by the sale are reversed: resellable units go back
+ *   into their original lot with their original cost; damaged units leave stock and their
+ *   cost is reported as a damage write-off. Unknown costs stay unknown.
+ * - In an exchange the returned value is credit for the new goods, not cash. Only the part
+ *   above the new goods' value reduces debt still open on the original sale, and only what is
+ *   left after that is paid back in cash. An even exchange of goods bought on debt therefore
+ *   leaves the debt unchanged; a more expensive new item is paid for explicitly.
+ */
+
 import { DatabaseSync } from 'node:sqlite';
 import { getDb, runInTransaction } from '../db/database.ts';
 import { ExchangePayload, ReturnPayload, ReturnRecord, User } from '../../shared/types.ts';
+import { proratedLineAmount } from '../../shared/money.ts';
+import { boundToUtc } from '../../shared/time.ts';
 import { PosService } from './posService.ts';
-import { CustomerService } from './customerService.ts';
+import {
+  oneOf, optionalAmount, optionalIdempotencyKey, optionalString,
+  requireArray, requireId, requireObject, requireQuantity,
+} from './validation.ts';
+
+export interface ReturnResult {
+  return_id: number;
+  id?: number;
+  total_refund_tetri: number;
+  debt_deduction_tetri: number;
+  refund_debt_reduction_tetri?: number;
+  cash_refund_tetri: number;
+  refund_cash_tetri?: number;
+  exchange_credit_tetri: number;
+}
+
+type Condition = 'resellable' | 'damaged';
 
 export class ReturnsService {
   private db: DatabaseSync;
   private posService: PosService;
-  private customerService: CustomerService;
 
   constructor(db: DatabaseSync = getDb()) {
     this.db = db;
     this.posService = new PosService(db);
-    this.customerService = new CustomerService(db);
   }
 
   /**
    * Processes a return for a historical sale.
    */
-  processReturn(user: User, payload: ReturnPayload): {
-    return_id: number;
-    id?: number;
-    total_refund_tetri: number;
-    debt_deduction_tetri: number;
-    refund_debt_reduction_tetri?: number;
-    cash_refund_tetri: number;
-    refund_cash_tetri?: number;
-  } {
-    if (!payload.items || payload.items.length === 0) {
+  processReturn(user: User, payload: ReturnPayload): ReturnResult {
+    return this.createReturn(user, payload, 'refund');
+  }
+
+  private toResult(row: any): ReturnResult {
+    return {
+      return_id: row.id,
+      id: row.id,
+      total_refund_tetri: row.total_refund_tetri,
+      debt_deduction_tetri: row.debt_deduction_tetri,
+      refund_debt_reduction_tetri: row.debt_deduction_tetri,
+      cash_refund_tetri: row.cash_refund_tetri,
+      refund_cash_tetri: row.cash_refund_tetri,
+      exchange_credit_tetri: row.exchange_credit_tetri || 0,
+    };
+  }
+
+  private createReturn(user: User, rawPayload: ReturnPayload, mode: 'refund' | 'exchange', exchangeNewValueTetri: number = 0): ReturnResult {
+    const payload = requireObject<ReturnPayload>(rawPayload, 'დაბრუნება');
+    const saleId = requireId(payload.sale_id, 'გაყიდვა');
+    if (!Array.isArray(payload.items) || payload.items.length === 0) {
       throw new Error('დასაბრუნებელი პროდუქტები არ არის არჩეული');
     }
-
-    // Idempotency check: prevent duplicate returns
-    if (payload.idempotency_key) {
-      const existingReturn = this.db.prepare(
-        "SELECT * FROM returns WHERE idempotency_key = ?"
-      ).get(payload.idempotency_key) as any;
-
-      if (existingReturn) {
-        if (existingReturn.sale_id !== payload.sale_id) {
-          throw new Error('Idempotency key mismatch: ამ გასაღებით უკვე დაფიქსირებულია განსხვავებული დაბრუნება');
-        }
-        return {
-          return_id: existingReturn.id,
-          id: existingReturn.id,
-          total_refund_tetri: existingReturn.total_refund_tetri,
-          debt_deduction_tetri: existingReturn.debt_deduction_tetri,
-          refund_debt_reduction_tetri: existingReturn.debt_deduction_tetri,
-          cash_refund_tetri: existingReturn.cash_refund_tetri,
-          refund_cash_tetri: existingReturn.cash_refund_tetri
-        };
-      }
-    }
+    const rawItems = requireArray<any>(payload.items, 'დასაბრუნებელი პროდუქტები', 200);
+    const reason = optionalString(payload.reason, 500, 'დაბრუნების მიზეზი');
+    const idempotencyKey = optionalIdempotencyKey(payload.idempotency_key);
 
     return runInTransaction((db) => {
-      const now = new Date().toISOString();
+      if (idempotencyKey) {
+        const existingReturn = db.prepare("SELECT * FROM returns WHERE idempotency_key = ?").get(idempotencyKey) as any;
+        if (existingReturn) {
+          if (existingReturn.sale_id !== saleId) {
+            throw new Error('Idempotency key mismatch: ამ გასაღებით უკვე დაფიქსირებულია განსხვავებული დაბრუნება');
+          }
+          return this.toResult(existingReturn);
+        }
+      }
 
-      // 1. Get original sale
-      const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(payload.sale_id) as any;
+      const now = new Date().toISOString();
+      const sale = db.prepare("SELECT * FROM sales WHERE id = ?").get(saleId) as any;
       if (!sale) {
         throw new Error('ორიგინალი გაყიდვა ვერ მოიძებნა');
       }
-
       if (sale.status === 'returned') {
         throw new Error('შეცდომა: ამ გაყიდვაზე ყველა ნივთი უკვე დაბრუნებულია (აღემატება დარჩენილ დაბრუნებად რაოდენობას)');
       }
 
-      // Calculate already returned amounts and repayments for this sale
-      const pastReturns = db.prepare(`
-        SELECT COALESCE(SUM(debt_deduction_tetri), 0) as past_debt_deduction,
-               COALESCE(SUM(cash_refund_tetri), 0) as past_cash_refund
-        FROM returns WHERE sale_id = ?
-      `).get(sale.id) as { past_debt_deduction: number; past_cash_refund: number };
-
-      const pastRepayments = db.prepare(`
-        SELECT COALESCE(SUM(allocated_tetri), 0) as total_repaid
-        FROM debt_repayment_allocations WHERE sale_id = ?
-      `).get(sale.id) as { total_repaid: number };
-
-      const remainingSaleDebt = Math.max(0, sale.debt_amount_tetri - pastReturns.past_debt_deduction - pastRepayments.total_repaid);
-
-      // Check customer's overall debt across the store so customer debt NEVER goes negative
-      const customerTotalDebt = sale.customer_id
-        ? (this.customerService.getCustomerById(sale.customer_id)?.total_debt_tetri || 0)
-        : 0;
-
-      let totalRefundTetri = 0;
-
-      // 2. Validate line items and returnable quantities
-      const processedItems: Array<{
-        sale_item_id: number;
-        variant_id: number;
-        quantity: number;
-        unit_price_tetri: number;
-        line_total_tetri: number;
-        condition: 'resellable' | 'damaged';
-      }> = [];
-
-      for (const reqItem of payload.items) {
-        if (reqItem.quantity <= 0) {
-          throw new Error('დასაბრუნებელი რაოდენობა უნდა იყოს მინიმუმ 1');
-        }
+      // 1. Resolve requested lines. The same line listed several times is summed and
+      //    checked against what is still returnable, so it can never be refunded twice.
+      const requests: Array<{ saleItem: any; quantity: number; condition: Condition }> = [];
+      const requestedBySaleItem = new Map<number, number>();
+      for (const raw of rawItems) {
+        const item = requireObject<any>(raw, 'დასაბრუნებელი პოზიცია');
+        const quantity = requireQuantity(item.quantity, 'დასაბრუნებელი რაოდენობა');
+        const condition: Condition = item.condition == null
+          ? 'resellable'
+          : oneOf(item.condition, ['resellable', 'damaged'] as const, 'ნივთის მდგომარეობა');
 
         let saleItem: any = null;
-        if (reqItem.sale_item_id) {
+        if (item.sale_item_id != null) {
+          saleItem = db.prepare("SELECT * FROM sale_items WHERE id = ? AND sale_id = ?")
+            .get(requireId(item.sale_item_id, 'გაყიდული პოზიცია'), sale.id);
+        } else if (item.variant_id != null) {
           saleItem = db.prepare(`
-            SELECT * FROM sale_items WHERE id = ? AND sale_id = ?
-          `).get(reqItem.sale_item_id, sale.id) as any;
-        } else if ((reqItem as any).variant_id) {
-          saleItem = db.prepare(`
-            SELECT * FROM sale_items WHERE variant_id = ? AND sale_id = ?
-          `).get((reqItem as any).variant_id, sale.id) as any;
+            SELECT * FROM sale_items WHERE variant_id = ? AND sale_id = ? AND quantity > returned_quantity ORDER BY id ASC LIMIT 1
+          `).get(requireId(item.variant_id, 'პროდუქტის ვარიანტი'), sale.id);
         }
-
         if (!saleItem) {
           throw new Error(`გაყიდული პოზიცია არ ეკუთვნის ამ გაყიდვას`);
         }
 
+        const requested = (requestedBySaleItem.get(saleItem.id) || 0) + quantity;
         const maxReturnable = saleItem.quantity - saleItem.returned_quantity;
-        if (reqItem.quantity > maxReturnable) {
+        if (requested > maxReturnable) {
           throw new Error(
-            `შეცდომა: "${saleItem.product_name_snap}"-სთვის დაბრუნების რაოდენობა (${reqItem.quantity}) ` +
+            `შეცდომა: "${saleItem.product_name_snap}"-სთვის დაბრუნების რაოდენობა (${requested}) ` +
             `აღემატება დარჩენილ დაბრუნებად რაოდენობას (${maxReturnable})`
           );
         }
-
-        const lineTotal = reqItem.quantity * saleItem.unit_price_tetri;
-        totalRefundTetri += lineTotal;
-
-        processedItems.push({
-          sale_item_id: saleItem.id,
-          variant_id: saleItem.variant_id,
-          quantity: reqItem.quantity,
-          unit_price_tetri: saleItem.unit_price_tetri,
-          line_total_tetri: lineTotal,
-          condition: reqItem.condition || 'resellable'
-        });
+        requestedBySaleItem.set(saleItem.id, requested);
+        requests.push({ saleItem, quantity, condition });
       }
 
-      // 3. Determine financial allocation:
-      // Deduct debt first up to the customer's actual remaining debt, then refund the rest in CASH.
-      // Customer's total debt NEVER becomes negative.
-      const maxDebtDeductible = Math.min(remainingSaleDebt, customerTotalDebt);
-      const debtDeductionTetri = Math.min(totalRefundTetri, maxDebtDeductible);
-      const cashRefundTetri = totalRefundTetri - debtDeductionTetri;
+      // 2. Refund value of each line: net paid amount, prorated without fractional tetri.
+      const processedBySaleItem = new Map<number, number>();
+      const lines = requests.map((req) => {
+        const done = processedBySaleItem.get(req.saleItem.id) || 0;
+        const refund = proratedLineAmount(
+          req.saleItem.total_price_tetri,
+          req.saleItem.quantity,
+          req.saleItem.returned_quantity + done,
+          req.quantity
+        );
+        processedBySaleItem.set(req.saleItem.id, done + req.quantity);
+        return { ...req, refund };
+      });
+      const totalRefundTetri = lines.reduce((s, l) => s + l.refund, 0);
 
-      // 4. Create Return record
+      // 3. Refund: debt on this sale is reduced first, the rest is cash.
+      //    Exchange: the value pays for the new goods first; only the excess reduces debt, then cash.
+      const balance = db.prepare("SELECT remaining_tetri FROM sale_debt_balances WHERE sale_id = ?").get(sale.id) as any;
+      const remainingSaleDebt = balance ? balance.remaining_tetri : 0;
+      const exchangeCreditTetri = mode === 'exchange' ? Math.min(totalRefundTetri, exchangeNewValueTetri) : 0;
+      const excess = totalRefundTetri - exchangeCreditTetri;
+      const debtDeductionTetri = Math.min(excess, remainingSaleDebt);
+      const cashRefundTetri = excess - debtDeductionTetri;
+
+      const primaryCondition: Condition = lines.every((l) => l.condition === 'damaged') ? 'damaged' : 'resellable';
       const returnRes = db.prepare(`
         INSERT INTO returns (
           sale_id, user_id, return_type, total_refund_tetri,
-          debt_deduction_tetri, cash_refund_tetri, condition, reason, idempotency_key, created_at
-        ) VALUES (?, ?, 'refund', ?, ?, ?, ?, ?, ?, ?)
+          debt_deduction_tetri, cash_refund_tetri, exchange_credit_tetri,
+          condition, reason, idempotency_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         sale.id,
         user.id,
+        mode,
         totalRefundTetri,
         debtDeductionTetri,
         cashRefundTetri,
-        payload.items[0]?.condition || 'resellable', // Primary condition
-        payload.reason?.trim() || null,
-        payload.idempotency_key || null,
+        exchangeCreditTetri,
+        primaryCondition,
+        reason || (mode === 'exchange' ? 'გაცვლა' : null),
+        idempotencyKey,
         now
       );
       const returnId = Number(returnRes.lastInsertRowid);
 
-      // 5. Insert return items and update inventory & sale_items
-      for (const pItem of processedItems) {
+      // 4. Stock and FIFO cost layers.
+      let cogsReversedTetri = 0;
+      for (const line of lines) {
+        const plan = this.planLayerReversal(db, line.saleItem.id, line.quantity);
+        const knownCost = plan.reduce((s, p) => s + (p.unit_cost_tetri ?? 0) * p.quantity, 0);
+        const unknownQty = plan.filter((p) => p.unit_cost_tetri === null).reduce((s, p) => s + p.quantity, 0);
+        cogsReversedTetri += knownCost;
+        const avgCost = unknownQty === 0 ? Math.round(knownCost / line.quantity) : null;
+
         db.prepare(`
-          INSERT INTO return_items (return_id, sale_item_id, variant_id, quantity, unit_price_tetri, total_tetri)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO return_items (
+            return_id, sale_item_id, variant_id, quantity, unit_price_tetri, total_tetri,
+            condition, cost_total_tetri, unknown_cost_quantity
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           returnId,
-          pItem.sale_item_id,
-          pItem.variant_id,
-          pItem.quantity,
-          pItem.unit_price_tetri,
-          pItem.line_total_tetri
+          line.saleItem.id,
+          line.saleItem.variant_id,
+          line.quantity,
+          Math.round(line.refund / line.quantity),
+          line.refund,
+          line.condition,
+          knownCost,
+          unknownQty
         );
 
-        // Update returned_quantity on original sale item
-        db.prepare(`
-          UPDATE sale_items SET returned_quantity = returned_quantity + ? WHERE id = ?
-        `).run(pItem.quantity, pItem.sale_item_id);
+        db.prepare("UPDATE sale_items SET returned_quantity = returned_quantity + ? WHERE id = ?").run(line.quantity, line.saleItem.id);
 
-        // Handle inventory: if resellable, add back to stock and lot
-        const variant = db.prepare("SELECT stock_quantity FROM product_variants WHERE id = ?").get(pItem.variant_id) as any;
-        const currentStock = variant ? variant.stock_quantity : 0;
-
-        if (pItem.condition === 'resellable') {
-          const newStock = currentStock + pItem.quantity;
-          db.prepare("UPDATE product_variants SET stock_quantity = ? WHERE id = ?").run(newStock, pItem.variant_id);
-
-          const moveRes = db.prepare(`
+        let movementId: number | null = null;
+        if (line.condition === 'resellable') {
+          db.prepare("UPDATE product_variants SET stock_quantity = stock_quantity + ? WHERE id = ?").run(line.quantity, line.saleItem.variant_id);
+          const stock = (db.prepare("SELECT stock_quantity FROM product_variants WHERE id = ?").get(line.saleItem.variant_id) as any).stock_quantity;
+          movementId = Number(db.prepare(`
             INSERT INTO inventory_movements (
               variant_id, movement_type, quantity_change, resulting_stock,
               unit_cost_tetri, reason, reference_id, user_id, created_at
-            ) VALUES (?, 'return', ?, ?, NULL, 'დაბრუნება (ვარგისი)', ?, ?, ?)
+            ) VALUES (?, 'return', ?, ?, ?, ?, ?, ?, ?)
           `).run(
-            pItem.variant_id,
-            pItem.quantity,
-            newStock,
-            sale.receipt_number,
-            user.id,
-            now
-          );
-
-          // Add to inventory lots
-          db.prepare(`
-            INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, movement_id, created_at)
-            VALUES (?, ?, ?, NULL, ?, ?)
-          `).run(pItem.variant_id, pItem.quantity, pItem.quantity, Number(moveRes.lastInsertRowid), now);
+            line.saleItem.variant_id, line.quantity, stock, avgCost,
+            mode === 'exchange' ? 'გაცვლა: დაბრუნება (ვარგისი)' : 'დაბრუნება (ვარგისი)',
+            sale.receipt_number, user.id, now
+          ).lastInsertRowid);
         } else {
-          // Damaged: does not enter sellable stock
+          // Damaged: does not enter sellable stock; its cost is a damage write-off.
+          const stock = (db.prepare("SELECT stock_quantity FROM product_variants WHERE id = ?").get(line.saleItem.variant_id) as any)?.stock_quantity ?? 0;
           db.prepare(`
             INSERT INTO inventory_movements (
               variant_id, movement_type, quantity_change, resulting_stock,
               unit_cost_tetri, reason, reference_id, user_id, created_at
-            ) VALUES (?, 'return', 0, ?, NULL, 'დაბრუნება (დაზიანებული/ჩამოწერილი)', ?, ?, ?)
+            ) VALUES (?, 'return', 0, ?, ?, ?, ?, ?, ?)
           `).run(
-            pItem.variant_id,
-            currentStock,
-            sale.receipt_number,
-            user.id,
-            now
+            line.saleItem.variant_id, stock, avgCost,
+            `დაბრუნება (დაზიანებული/ჩამოწერილი, ${line.quantity} ც.)`,
+            sale.receipt_number, user.id, now
           );
         }
+
+        this.applyLayerReversal(db, plan, line.saleItem.variant_id, line.condition, movementId, now);
       }
 
-      // Check if all items in original sale are now returned
+      // 5. Sale status.
       const checkItems = db.prepare(`
         SELECT SUM(quantity) as total_qty, SUM(returned_quantity) as total_ret
         FROM sale_items WHERE sale_id = ?
       `).get(sale.id) as { total_qty: number; total_ret: number };
-
       const newSaleStatus = checkItems.total_ret >= checkItems.total_qty ? 'returned' : 'partially_returned';
       db.prepare("UPDATE sales SET status = ? WHERE id = ?").run(newSaleStatus, sale.id);
 
-      // Audit log
       db.prepare(`
         INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at)
-        VALUES (?, 'SALE_RETURN', 'returns', ?, ?, ?)
+        VALUES (?, ?, 'returns', ?, ?, ?)
       `).run(
         user.id,
+        mode === 'exchange' ? 'EXCHANGE_RETURN' : 'SALE_RETURN',
         String(returnId),
-        `Return processed for sale ${sale.receipt_number}: total ${totalRefundTetri} tetri (debt reduced: ${debtDeductionTetri}, cash refunded: ${cashRefundTetri})`,
+        `Return processed for sale ${sale.receipt_number}: total ${totalRefundTetri} tetri ` +
+        `(exchange credit: ${exchangeCreditTetri}, debt reduced: ${debtDeductionTetri}, cash refunded: ${cashRefundTetri}, ` +
+        `cost reversed: ${cogsReversedTetri})`,
         now
       );
 
@@ -254,111 +271,192 @@ export class ReturnsService {
         debt_deduction_tetri: debtDeductionTetri,
         refund_debt_reduction_tetri: debtDeductionTetri,
         cash_refund_tetri: cashRefundTetri,
-        refund_cash_tetri: cashRefundTetri
+        refund_cash_tetri: cashRefundTetri,
+        exchange_credit_tetri: exchangeCreditTetri,
       };
     }, this.db);
   }
 
+  /** Which consumed cost layers the returned units come from (most recently consumed first). */
+  private planLayerReversal(db: DatabaseSync, saleItemId: number, quantity: number) {
+    const layers = db.prepare(`
+      SELECT id, lot_id, quantity, returned_quantity, unit_cost_tetri
+      FROM sale_item_lots
+      WHERE sale_item_id = ? AND quantity > returned_quantity
+      ORDER BY id DESC
+    `).all(saleItemId) as Array<{ id: number; lot_id: number | null; quantity: number; returned_quantity: number; unit_cost_tetri: number | null }>;
+
+    const plan: Array<{ layer_id: number | null; lot_id: number | null; quantity: number; unit_cost_tetri: number | null }> = [];
+    let left = quantity;
+    for (const layer of layers) {
+      if (left <= 0) break;
+      const take = Math.min(left, layer.quantity - layer.returned_quantity);
+      plan.push({ layer_id: layer.id, lot_id: layer.lot_id, quantity: take, unit_cost_tetri: layer.unit_cost_tetri });
+      left -= take;
+    }
+    if (left > 0) {
+      // No recorded layer (inconsistent legacy data): the cost of these units is unknown.
+      plan.push({ layer_id: null, lot_id: null, quantity: left, unit_cost_tetri: null });
+    }
+    return plan;
+  }
+
+  private applyLayerReversal(
+    db: DatabaseSync,
+    plan: ReturnType<ReturnsService['planLayerReversal']>,
+    variantId: number,
+    condition: Condition,
+    movementId: number | null,
+    now: string
+  ): void {
+    for (const step of plan) {
+      if (step.layer_id !== null) {
+        db.prepare("UPDATE sale_item_lots SET returned_quantity = returned_quantity + ? WHERE id = ?").run(step.quantity, step.layer_id);
+      }
+      if (condition !== 'resellable') continue;
+      if (step.lot_id !== null) {
+        // Back into the original cost layer: same cost, same FIFO position.
+        db.prepare("UPDATE inventory_lots SET remaining_quantity = remaining_quantity + ? WHERE id = ?").run(step.quantity, step.lot_id);
+      } else {
+        db.prepare(`
+          INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, movement_id, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(variantId, step.quantity, step.quantity, step.unit_cost_tetri, movementId, now);
+      }
+    }
+  }
+
   /**
-   * Performs an atomic exchange: returns old item(s) and issues new item(s) with price difference handling.
+   * Performs an atomic exchange: returns old item(s) and sells new item(s).
+   * The returned value first reduces debt still open on the original sale, then pays for
+   * the new goods as credit; an excess is paid back in cash, a shortfall is paid by the
+   * customer in cash, on debt or mixed.
    */
-  processExchange(user: User, payload: ExchangePayload): {
+  processExchange(user: User, rawPayload: ExchangePayload): {
     return_id: number;
     new_sale_id: number;
     difference_tetri: number;
-    cash_action?: 'customer_pays' | 'store_refunds' | 'even';
+    returned_value_tetri: number;
+    new_items_value_tetri: number;
+    debt_deduction_tetri: number;
+    credit_applied_tetri: number;
+    cash_refund_tetri: number;
+    amount_due_tetri: number;
+    cash_action: 'customer_pays' | 'store_refunds' | 'even';
     new_sale?: any;
     return_record?: any;
   } {
+    const payload = requireObject<ExchangePayload>(rawPayload, 'გაცვლა');
+    const originalSaleId = requireId(payload.original_sale_id, 'ორიგინალი გაყიდვა');
+    requireArray(payload.return_items, 'დასაბრუნებელი პროდუქტები', 200);
+    const newItemsRaw = requireArray<any>(payload.new_items, 'ახალი პროდუქტები', 200);
+    const paymentMethod = payload.payment_method == null
+      ? 'cash'
+      : oneOf(payload.payment_method, ['cash', 'debt', 'mixed'] as const, 'გადახდის მეთოდი');
+    const cashInput = optionalAmount(payload.cash_received_tetri, 'მიღებული ნაღდი თანხა');
+    const idempotencyKey = optionalIdempotencyKey(payload.idempotency_key);
+    const notes = optionalString(payload.notes, 500, 'შენიშვნა');
+
     return runInTransaction((db) => {
       const now = new Date().toISOString();
 
-      // 1. Process return part
-      const returnResult = this.processReturn(user, {
-        sale_id: payload.original_sale_id,
+      if (idempotencyKey) {
+        const existing = db.prepare("SELECT * FROM returns WHERE idempotency_key = ?").get(`ret_${idempotencyKey}`) as any;
+        if (existing) {
+          if (existing.sale_id !== originalSaleId || !existing.related_sale_id) {
+            throw new Error('Idempotency key mismatch: ამ გასაღებით უკვე დაფიქსირებულია განსხვავებული გაცვლა');
+          }
+          return this.describeExchange(existing.id);
+        }
+      }
+
+      const originalSale = db.prepare("SELECT * FROM sales WHERE id = ?").get(originalSaleId) as any;
+      if (!originalSale) {
+        throw new Error('ორიგინალი გაყიდვა ვერ მოიძებნა');
+      }
+
+      // New goods at list price (no discounts inside an exchange).
+      const newItems = newItemsRaw.map((it) => ({ variant_id: it?.variant_id, quantity: it?.quantity }));
+      const newValue = this.posService.priceCart(user, newItems, undefined, db).total_tetri;
+
+      // 1. Return part: its value pays for the new goods first; the excess reduces the
+      //    original sale's debt and only then is paid back in cash.
+      const ret = this.createReturn(user, {
+        sale_id: originalSaleId,
         items: payload.return_items,
-        reason: payload.notes || 'გაცვლა (Exchange)',
-        idempotency_key: payload.idempotency_key ? `ret_${payload.idempotency_key}` : undefined
+        reason: notes || 'გაცვლა (Exchange)',
+        idempotency_key: idempotencyKey ? `ret_${idempotencyKey}` : undefined
+      }, 'exchange', newValue);
+
+      const creditApplied = ret.exchange_credit_tetri;
+      const cashBack = ret.cash_refund_tetri;
+      const due = newValue - creditApplied;
+
+      // 2. A more expensive new item is paid explicitly; cash is never assumed.
+      const method: 'cash' | 'debt' | 'mixed' = due === 0 ? 'cash' : paymentMethod;
+      if ((method === 'debt' || method === 'mixed') && !originalSale.customer_id) {
+        throw new Error('ნისიით ან შერეული გადახდისთვის ორიგინალ გაყიდვაზე კლიენტი უნდა იყოს მითითებული');
+      }
+      if (due > 0 && method !== 'debt' && cashInput === null) {
+        throw new Error(`მიუთითეთ კლიენტისგან მიღებული ნაღდი თანხა (გადასახდელია ${(due / 100).toFixed(2)} ₾)`);
+      }
+      const cashReceived = due === 0 || method === 'debt' ? 0 : (cashInput ?? 0);
+
+      const newSale = this.posService.checkout(user, {
+        items: newItems as any,
+        payment_method: method,
+        customer_id: originalSale.customer_id,
+        cash_received_tetri: cashReceived,
+        notes: `გაცვლა გაყიდვიდან #${originalSale.receipt_number}`,
+        idempotency_key: idempotencyKey ? `sale_${idempotencyKey}` : undefined,
+      }, {
+        relatedReturnId: ret.return_id,
+        exchangeCreditTetri: creditApplied,
+        exchangeDiffTetri: newValue - ret.total_refund_tetri,
       });
 
-      // Update return type to 'exchange'
-      db.prepare("UPDATE returns SET return_type = 'exchange' WHERE id = ?").run(returnResult.return_id);
+      db.prepare("UPDATE returns SET related_sale_id = ? WHERE id = ?").run(newSale.id, ret.return_id);
 
-      // 2. Calculate authoritative price of new items from database
-      let newTotalTetri = 0;
-      for (const it of payload.new_items) {
-        const vDb = db.prepare(`
-          SELECT pv.price_override_tetri, p.base_price_tetri
-          FROM product_variants pv JOIN products p ON pv.product_id = p.id
-          WHERE pv.id = ?
-        `).get(it.variant_id) as any;
-        const authoritativeUnitPrice = vDb ? (vDb.price_override_tetri ?? vDb.base_price_tetri) : it.unit_price_tetri;
-        it.unit_price_tetri = authoritativeUnitPrice;
-        newTotalTetri += (it.quantity * authoritativeUnitPrice);
-      }
-
-      const diffTetri = newTotalTetri - returnResult.total_refund_tetri;
-      const originalSale = db.prepare("SELECT * FROM sales WHERE id = ?").get(payload.original_sale_id) as any;
-
-      // 3. Checkout new items based on price difference
-      let paymentMethod: 'cash' | 'debt' = payload.payment_method === 'debt' && originalSale.customer_id ? 'debt' : 'cash';
-      let cashReceivedTetri = 0;
-
-      if (diffTetri > 0) {
-        // New item is more expensive: customer pays difference
-        cashReceivedTetri = paymentMethod === 'cash' ? diffTetri : 0;
-      } else {
-        // Even exchange or customer gets cash back
-        paymentMethod = 'cash';
-        cashReceivedTetri = 0;
-      }
-
-      // Perform checkout with special sale_type = 'exchange'
-      const newSale = this.posService.checkout(user, {
-        items: payload.new_items,
-        payment_method: paymentMethod,
-        customer_id: originalSale.customer_id,
-        cash_received_tetri: cashReceivedTetri,
-        notes: `გაცვლა გაყიდვიდან #${originalSale.receipt_number}. სხვაობა: ${(diffTetri / 100).toFixed(2)} ₾`,
-        idempotency_key: payload.idempotency_key ? `sale_${payload.idempotency_key}` : undefined,
-        sale_type: 'exchange',
-        related_return_id: returnResult.return_id,
-        exchange_diff_tetri: diffTetri,
-        exchange_credit_tetri: returnResult.total_refund_tetri
-      } as any);
-
-      // Link new sale to return record
-      db.prepare("UPDATE returns SET related_sale_id = ? WHERE id = ?").run(newSale.id, returnResult.return_id);
-
-      // Record audit
       db.prepare(`
         INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at)
         VALUES (?, 'EXCHANGE', 'sales', ?, ?, ?)
       `).run(
         user.id,
         String(newSale.id),
-        `Exchange completed for sale ${originalSale.receipt_number}. Returned value: ${returnResult.total_refund_tetri}, New sale value: ${newTotalTetri}, Difference: ${diffTetri}`,
+        `Exchange for sale ${originalSale.receipt_number}: returned ${ret.total_refund_tetri} (debt reduced ${ret.debt_deduction_tetri}), ` +
+        `new goods ${newValue}, credit applied ${creditApplied}, cash back ${cashBack}, customer pays ${due} (${method})`,
         now
       );
 
-      const returnRecord = this.getReturnById(returnResult.return_id);
-
-      return {
-        return_id: returnResult.return_id,
-        new_sale_id: newSale.id,
-        difference_tetri: diffTetri,
-        cash_action: diffTetri > 0 ? 'customer_pays' : diffTetri < 0 ? 'store_refunds' : 'even',
-        new_sale: newSale,
-        return_record: returnRecord
-      } as any;
+      return this.describeExchange(ret.return_id);
     }, this.db);
+  }
+
+  private describeExchange(returnId: number) {
+    const ret = this.db.prepare("SELECT * FROM returns WHERE id = ?").get(returnId) as any;
+    const sale = this.posService.getSaleById(ret.related_sale_id)!;
+    const due = sale.total_tetri - (sale as any).exchange_credit_tetri;
+    const difference = sale.total_tetri - ret.total_refund_tetri;
+    return {
+      return_id: ret.id,
+      new_sale_id: sale.id,
+      difference_tetri: difference,
+      returned_value_tetri: ret.total_refund_tetri,
+      new_items_value_tetri: sale.total_tetri,
+      debt_deduction_tetri: ret.debt_deduction_tetri,
+      credit_applied_tetri: ret.exchange_credit_tetri,
+      cash_refund_tetri: ret.cash_refund_tetri,
+      amount_due_tetri: due,
+      cash_action: (due > 0 ? 'customer_pays' : ret.cash_refund_tetri > 0 ? 'store_refunds' : 'even') as 'customer_pays' | 'store_refunds' | 'even',
+      new_sale: sale,
+      return_record: this.getReturnById(ret.id)
+    };
   }
 
   /**
    * Retrieves a single return by ID.
    */
   getReturnById(returnId: number): ReturnRecord | null {
-    const returns = this.listReturns({ limit: 1 });
     const row = this.db.prepare(`
       SELECT r.*, s.receipt_number, u.name as user_name,
              c.id as customer_id,
@@ -381,7 +479,8 @@ export class ReturnsService {
   }
 
   /**
-   * Lists all returns with customer, cashier, and returned items info.
+   * Lists returns with customer, cashier, and returned items info.
+   * Date bounds may be local days (YYYY-MM-DD, Tbilisi) or ISO instants.
    */
   listReturns(params?: {
     saleId?: number;
@@ -395,11 +494,13 @@ export class ReturnsService {
     let sql = `
       SELECT r.*, s.receipt_number, u.name as user_name,
              c.id as customer_id,
-             c.first_name || CASE WHEN c.last_name IS NOT NULL THEN ' ' || c.last_name ELSE '' END as customer_name
+             c.first_name || CASE WHEN c.last_name IS NOT NULL THEN ' ' || c.last_name ELSE '' END as customer_name,
+             ns.receipt_number as related_receipt_number
       FROM returns r
       JOIN sales s ON r.sale_id = s.id
       JOIN users u ON r.user_id = u.id
       LEFT JOIN customers c ON s.customer_id = c.id
+      LEFT JOIN sales ns ON ns.id = r.related_sale_id
       WHERE 1=1
     `;
     const args: any[] = [];
@@ -412,37 +513,46 @@ export class ReturnsService {
       sql += " AND r.return_type = ?";
       args.push(params.returnType);
     }
-    if (params?.searchTerm) {
+    if (params?.searchTerm && params.searchTerm.trim()) {
       const term = `%${params.searchTerm.trim()}%`;
       sql += ` AND (
         s.receipt_number LIKE ? OR
+        ns.receipt_number LIKE ? OR
         c.first_name LIKE ? OR
         c.last_name LIKE ? OR
+        c.phone LIKE ? OR
         r.reason LIKE ? OR
-        r.id IN (SELECT return_id FROM return_items WHERE code_snap LIKE ? OR product_name_snap LIKE ?)
+        r.id IN (
+          SELECT ri.return_id FROM return_items ri
+          JOIN sale_items si ON si.id = ri.sale_item_id
+          WHERE si.code_snap LIKE ? OR si.product_name_snap LIKE ?
+        )
       )`;
-      args.push(term, term, term, term, term, term);
+      args.push(term, term, term, term, term, term, term, term);
     }
     if (params?.startDate) {
       sql += " AND r.created_at >= ?";
-      args.push(params.startDate);
+      args.push(boundToUtc(params.startDate, 'start'));
     }
     if (params?.endDate) {
-      sql += " AND r.created_at <= ?";
-      args.push(params.endDate);
+      sql += " AND r.created_at < ?";
+      args.push(boundToUtc(params.endDate, 'end'));
     }
 
+    const limit = Math.min(Math.max(1, Math.floor(Number(params?.limit) || 100)), 500);
+    const offset = Math.max(0, Math.floor(Number(params?.offset) || 0));
     sql += " ORDER BY r.id DESC LIMIT ? OFFSET ?";
-    args.push(params?.limit || 100, params?.offset || 0);
+    args.push(limit, offset);
 
     const rows = this.db.prepare(sql).all(...args) as any[];
+    const itemsStmt = this.db.prepare(`
+      SELECT ri.*, si.product_name_snap as product_name, si.variant_name_snap as variant_name, si.code_snap as code
+      FROM return_items ri
+      JOIN sale_items si ON ri.sale_item_id = si.id
+      WHERE ri.return_id = ?
+    `);
     for (const row of rows) {
-      row.items = this.db.prepare(`
-        SELECT ri.*, si.product_name_snap as product_name, si.variant_name_snap as variant_name, si.code_snap as code
-        FROM return_items ri
-        JOIN sale_items si ON ri.sale_item_id = si.id
-        WHERE ri.return_id = ?
-      `).all(row.id);
+      row.items = itemsStmt.all(row.id);
     }
     return rows;
   }

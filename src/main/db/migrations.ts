@@ -396,8 +396,218 @@ export const migrations: Migration[] = [
         }
       }
     }
+  },
+  {
+    version: 6,
+    name: 'fifo_cost_layers_discounts_debt_admin_pin_lockout',
+    up: (db: DatabaseSync) => {
+      const now = new Date().toISOString();
+
+      // 1. Exact FIFO consumption per sale line. Returns restore these layers with their
+      //    original cost, so a sale followed by a resellable return nets to zero COGS.
+      //    lot_id is NULL only for lines sold before this migration (cost known per line only).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sale_item_lots (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          sale_item_id INTEGER NOT NULL REFERENCES sale_items(id) ON DELETE CASCADE,
+          lot_id INTEGER REFERENCES inventory_lots(id),
+          quantity INTEGER NOT NULL CHECK(quantity > 0),
+          unit_cost_tetri INTEGER,
+          returned_quantity INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_sale_item_lots_item ON sale_item_lots(sale_item_id);
+      `);
+
+      // 2. Discounts (owner only): list price stays in unit_price_tetri, total_price_tetri is the net paid.
+      addColumnIfMissing(db, 'sale_items', 'discount_tetri', 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'sales', 'subtotal_tetri', 'INTEGER');
+      addColumnIfMissing(db, 'sales', 'discount_tetri', 'INTEGER NOT NULL DEFAULT 0');
+      // Non-cash credit from an exchange return that paid part of this sale.
+      addColumnIfMissing(db, 'sales', 'exchange_credit_tetri', 'INTEGER NOT NULL DEFAULT 0');
+
+      // 3. Per-line return condition and the cost reversed by the return.
+      addColumnIfMissing(db, 'return_items', 'condition', "TEXT NOT NULL DEFAULT 'resellable'");
+      addColumnIfMissing(db, 'return_items', 'cost_total_tetri', 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'return_items', 'unknown_cost_quantity', 'INTEGER NOT NULL DEFAULT 0');
+      // total_refund = debt_deduction + exchange_credit + cash_refund
+      addColumnIfMissing(db, 'returns', 'exchange_credit_tetri', 'INTEGER NOT NULL DEFAULT 0');
+
+      // 4. Owner debt administration: repayments are voided, never deleted; write-offs are recorded.
+      addColumnIfMissing(db, 'debt_repayments', 'voided_at', 'TEXT');
+      addColumnIfMissing(db, 'debt_repayments', 'voided_by', 'INTEGER REFERENCES users(id)');
+      addColumnIfMissing(db, 'debt_repayments', 'void_reason', 'TEXT');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS debt_adjustments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          customer_id INTEGER NOT NULL REFERENCES customers(id),
+          sale_id INTEGER NOT NULL REFERENCES sales(id),
+          adjustment_type TEXT NOT NULL CHECK(adjustment_type IN ('write_off')),
+          amount_tetri INTEGER NOT NULL CHECK(amount_tetri > 0),
+          reason TEXT NOT NULL,
+          sale_balance_before_tetri INTEGER NOT NULL,
+          sale_balance_after_tetri INTEGER NOT NULL,
+          customer_balance_before_tetri INTEGER NOT NULL,
+          customer_balance_after_tetri INTEGER NOT NULL,
+          user_id INTEGER NOT NULL REFERENCES users(id),
+          idempotency_key TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_debt_adj_idempotency ON debt_adjustments(idempotency_key) WHERE idempotency_key IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_debt_adj_sale ON debt_adjustments(sale_id);
+        CREATE INDEX IF NOT EXISTS idx_debt_adj_customer ON debt_adjustments(customer_id);
+      `);
+
+      // 5. Single source of truth for the open balance of every debt sale.
+      db.exec(`
+        DROP VIEW IF EXISTS sale_debt_balances;
+        CREATE VIEW sale_debt_balances AS
+        SELECT b.*,
+               MAX(0, b.debt_amount_tetri - b.repaid_tetri - b.returned_tetri - b.written_off_tetri) AS remaining_tetri
+        FROM (
+          SELECT s.id AS sale_id,
+                 s.customer_id AS customer_id,
+                 s.receipt_number AS receipt_number,
+                 s.created_at AS created_at,
+                 s.debt_amount_tetri AS debt_amount_tetri,
+                 COALESCE((SELECT SUM(a.allocated_tetri)
+                             FROM debt_repayment_allocations a
+                             JOIN debt_repayments r ON r.id = a.repayment_id
+                            WHERE a.sale_id = s.id AND r.voided_at IS NULL), 0) AS repaid_tetri,
+                 COALESCE((SELECT SUM(rt.debt_deduction_tetri) FROM returns rt WHERE rt.sale_id = s.id), 0) AS returned_tetri,
+                 COALESCE((SELECT SUM(da.amount_tetri) FROM debt_adjustments da WHERE da.sale_id = s.id), 0) AS written_off_tetri
+          FROM sales s
+          WHERE s.debt_amount_tetri > 0
+        ) b;
+      `);
+
+      // 6. PIN brute-force protection, persisted across restarts.
+      addColumnIfMissing(db, 'users', 'failed_pin_attempts', 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'users', 'locked_until', 'TEXT');
+
+      // 7. Indexes for history, debts and catalog lookups on thousands of rows.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_sale_items_sale ON sale_items(sale_id);
+        CREATE INDEX IF NOT EXISTS idx_sale_items_variant ON sale_items(variant_id);
+        CREATE INDEX IF NOT EXISTS idx_sales_customer ON sales(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_returns_sale ON returns(sale_id);
+        CREATE INDEX IF NOT EXISTS idx_returns_created_at ON returns(created_at);
+        CREATE INDEX IF NOT EXISTS idx_return_items_return ON return_items(return_id);
+        CREATE INDEX IF NOT EXISTS idx_return_items_sale_item ON return_items(sale_item_id);
+        CREATE INDEX IF NOT EXISTS idx_variants_product ON product_variants(product_id);
+        CREATE INDEX IF NOT EXISTS idx_codes_variant ON product_codes(variant_id);
+        CREATE INDEX IF NOT EXISTS idx_images_product ON product_images(product_id);
+        CREATE INDEX IF NOT EXISTS idx_lots_variant ON inventory_lots(variant_id, remaining_quantity);
+        CREATE INDEX IF NOT EXISTS idx_movements_variant ON inventory_movements(variant_id);
+        CREATE INDEX IF NOT EXISTS idx_repayments_customer ON debt_repayments(customer_id);
+        CREATE INDEX IF NOT EXISTS idx_repayments_created_at ON debt_repayments(created_at);
+        CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(expense_date);
+        CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs(created_at);
+      `);
+
+      // 8. Backfill existing rows so history keeps reporting correctly.
+      db.exec(`UPDATE sales SET subtotal_tetri = total_tetri WHERE subtotal_tetri IS NULL;`);
+      db.exec(`
+        UPDATE sales
+           SET exchange_credit_tetri = MAX(0, total_tetri - (cash_received_tetri - change_given_tetri) - debt_amount_tetri)
+         WHERE sale_type = 'exchange';
+      `);
+      // Earlier exchanges stored the whole credit as cash_refund_tetri although no cash left the till.
+      const oldExchangeReturns = db.prepare(`
+        SELECT r.id, r.total_refund_tetri, r.debt_deduction_tetri, COALESCE(s.exchange_credit_tetri, 0) AS sale_credit
+        FROM returns r LEFT JOIN sales s ON s.id = r.related_sale_id
+        WHERE r.return_type = 'exchange'
+      `).all() as Array<{ id: number; total_refund_tetri: number; debt_deduction_tetri: number; sale_credit: number }>;
+      for (const r of oldExchangeReturns) {
+        const available = Math.max(0, r.total_refund_tetri - r.debt_deduction_tetri);
+        const credit = Math.min(available, r.sale_credit);
+        db.prepare('UPDATE returns SET exchange_credit_tetri = ?, cash_refund_tetri = ? WHERE id = ?')
+          .run(credit, available - credit, r.id);
+      }
+      db.exec(`
+        UPDATE return_items SET
+          condition = COALESCE((SELECT r.condition FROM returns r WHERE r.id = return_items.return_id), 'resellable'),
+          cost_total_tetri = COALESCE((SELECT si.unit_cost_tetri FROM sale_items si WHERE si.id = return_items.sale_item_id), 0) * quantity,
+          unknown_cost_quantity = CASE
+            WHEN (SELECT si.unit_cost_tetri FROM sale_items si WHERE si.id = return_items.sale_item_id) IS NULL THEN quantity
+            ELSE 0 END;
+      `);
+      db.exec(`
+        INSERT INTO sale_item_lots (sale_item_id, lot_id, quantity, unit_cost_tetri, returned_quantity)
+        SELECT si.id, NULL, si.quantity, si.unit_cost_tetri, si.returned_quantity
+        FROM sale_items si
+        WHERE si.quantity > 0 AND NOT EXISTS (SELECT 1 FROM sale_item_lots sil WHERE sil.sale_item_id = si.id);
+      `);
+      // Lots re-created by earlier resellable returns were stored without cost; restore the sold cost.
+      db.exec(`
+        UPDATE inventory_lots SET unit_cost_tetri = (
+          SELECT si.unit_cost_tetri
+          FROM inventory_movements m
+          JOIN sales s ON s.receipt_number = m.reference_id
+          JOIN sale_items si ON si.sale_id = s.id AND si.variant_id = inventory_lots.variant_id
+          WHERE m.id = inventory_lots.movement_id
+          ORDER BY si.id LIMIT 1
+        )
+        WHERE unit_cost_tetri IS NULL
+          AND movement_id IN (SELECT id FROM inventory_movements WHERE movement_type = 'return');
+      `);
+
+      // 9. Reconcile stock counters with FIFO layers (earlier stock corrections left the lots untouched).
+      reconcileStockWithLots(db, now);
+
+      db.exec(`
+        INSERT OR IGNORE INTO app_settings (key, value) VALUES
+        ('backup_retention_count', '30'),
+        ('backup_mirror_directory', ''),
+        ('last_auto_backup_date', '');
+      `);
+    }
   }
 ];
+
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+  }
+}
+
+/**
+ * Makes SUM(inventory_lots.remaining_quantity) equal product_variants.stock_quantity for every
+ * variant. Surplus layers are consumed oldest first; a shortfall becomes a layer costed at the
+ * variant's configured purchase cost, or unknown (NULL) when none is configured.
+ * Returns the number of variants that had to be adjusted.
+ */
+export function reconcileStockWithLots(db: DatabaseSync, now: string = new Date().toISOString()): number {
+  const rows = db.prepare(`
+    SELECT pv.id, pv.stock_quantity, pv.cost_override_tetri, p.base_cost_tetri,
+           COALESCE((SELECT SUM(l.remaining_quantity) FROM inventory_lots l WHERE l.variant_id = pv.id), 0) AS lot_qty
+    FROM product_variants pv JOIN products p ON p.id = pv.product_id
+  `).all() as Array<{ id: number; stock_quantity: number; cost_override_tetri: number | null; base_cost_tetri: number | null; lot_qty: number }>;
+
+  let adjusted = 0;
+  for (const v of rows) {
+    if (v.lot_qty === v.stock_quantity) continue;
+    adjusted++;
+    if (v.lot_qty > v.stock_quantity) {
+      let excess = v.lot_qty - Math.max(0, v.stock_quantity);
+      const lots = db.prepare('SELECT id, remaining_quantity FROM inventory_lots WHERE variant_id = ? AND remaining_quantity > 0 ORDER BY id ASC')
+        .all(v.id) as Array<{ id: number; remaining_quantity: number }>;
+      for (const lot of lots) {
+        if (excess <= 0) break;
+        const take = Math.min(excess, lot.remaining_quantity);
+        db.prepare('UPDATE inventory_lots SET remaining_quantity = remaining_quantity - ? WHERE id = ?').run(take, lot.id);
+        excess -= take;
+      }
+    } else {
+      const missing = v.stock_quantity - v.lot_qty;
+      db.prepare('INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, movement_id, created_at) VALUES (?, ?, ?, ?, NULL, ?)')
+        .run(v.id, missing, missing, v.cost_override_tetri ?? v.base_cost_tetri ?? null, now);
+    }
+    db.prepare("INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (NULL, 'STOCK_LOT_RECONCILE', 'product_variants', ?, ?, ?)")
+      .run(String(v.id), `FIFO layers aligned with stock: lots ${v.lot_qty} -> stock ${v.stock_quantity}`, now);
+  }
+  return adjusted;
+}
 
 export function runMigrations(db: DatabaseSync, dbPath?: string): void {
   // Ensure schema_migrations table exists
@@ -415,8 +625,9 @@ export function runMigrations(db: DatabaseSync, dbPath?: string): void {
   const pending = migrations.filter(m => !appliedVersions.has(m.version));
   if (pending.length === 0) return;
 
-  // Pre-migration safety backup if operating on a physical database file
-  if (dbPath && dbPath !== ':memory:' && fs.existsSync(dbPath)) {
+  // Pre-migration safety backup when upgrading an existing store database
+  // (a brand-new, empty database has nothing worth backing up).
+  if (dbPath && dbPath !== ':memory:' && appliedVersions.size > 0 && fs.existsSync(dbPath)) {
     try {
       db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
       const backupPath = `${dbPath}.before_migration_v${pending[0].version}_${Date.now()}.bak`;
