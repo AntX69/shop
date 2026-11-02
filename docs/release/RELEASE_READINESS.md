@@ -4,7 +4,7 @@
 |---|---|
 | ვერსია | 1.0.0 — **Release Candidate 1** |
 | საწყისი კოდი | GitHub `main` = `1bfb98d` (Google AI Studio M12) |
-| სამუშაო branch | `claude/storepos-v1-final` (ლოკალურად; GitHub-ზე ჯერ არ არის ატვირთული) |
+| სამუშაო branch | `claude/storepos-v1-final` (ატვირთულია GitHub-ზე; `main` არ შეცვლილა) |
 | ინსტალერი აწყობილია commit-იდან | `c825b1b` |
 | ინსტალერი | `release/StorePOS-Setup-1.0.0.exe` — 124 096 027 ბაიტი |
 | SHA-256 | `eb7c761d17d6630356b94eab3a1e6016118a232d22ffb67a4dd0309ace6d9d08` |
@@ -137,5 +137,5 @@ a93b424 feat(security): server-side RBAC, seller data filtering, PIN lockout, El
 d59bfae chore: stop tracking local store data and build outputs
 ```
 
-- `main` არ შეცვლილა. branch ჯერ **არ** არის ატვირთული GitHub-ზე — ეს შენი გადაწყვეტილებაა.
+- `main` არ შეცვლილა. branch ატვირთულია GitHub-ზე (`origin/claude/storepos-v1-final`); `main`-ში შერწყმა (PR) — შენი გადაწყვეტილებაა.
 - Git ისტორიაში (M0–M12 commit-ებში) რჩება სატესტო `store.db` (Owner-ის PIN ჰეშით), backup ფაილები და ძველი build. მიმდინარე ხიდან ამოღებულია; ისტორიიდან წაშლა მოითხოვს force-push-ს — შენი ნებართვის გარეშე არ გამიკეთებია. თუ რეალურ მაღაზიაში იგივე PIN გამოიყენება, რაც AI Studio-ს ტესტებში, შეცვალე.
