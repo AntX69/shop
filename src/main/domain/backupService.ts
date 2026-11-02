@@ -7,8 +7,13 @@
  * - Consistent online snapshot of the live SQLite database (VACUUM INTO), never a raw file copy
  * - Product photos bundled with the database in one .posbackup file, with SHA-256 checksums
  * - PRAGMA integrity_check before backup and on the candidate before restore
- * - Atomic writes (temporary file + rename) so a power cut never leaves a half-written backup
- * - Configurable backup folder plus an optional mirror folder (e.g. a USB drive)
+ * - Atomic writes (temporary file + rename) so a power cut never leaves a half-written backup;
+ *   free space is checked first and a failed write leaves no partial file behind
+ * - Configurable backup folder plus an optional mirror folder (e.g. a USB drive); the mirror copy
+ *   of daily and manual backups is written in the background, so a slow or missing USB drive
+ *   never holds up the till
+ * - SHA-256 of the database and of every photo inside the backup (damaged photos are detected
+ *   and skipped on restore; a damaged database refuses the restore)
  * - Automatic daily backup run by the main-process scheduler, with retention of old auto backups
  * - Restore: verified candidate, emergency backup of the current state, the live database moved
  *   aside (not overwritten), automatic roll-back if anything fails, photos written only into the
@@ -32,7 +37,7 @@ export type BackupKind = 'manual' | 'auto' | 'prereset' | 'prerestore';
 
 export interface PosBackupBundle {
   format: 'StorePOS-Unified-Backup';
-  version: '1.0' | '1.1';
+  version: '1.0' | '1.1' | '1.2';
   kind?: BackupKind;
   created_at: string;
   schema_version?: number;
@@ -53,6 +58,7 @@ export interface PosBackupBundle {
     file_path: string;
     is_primary: number;
     data_base64?: string; // Real binary image content (data URL)
+    sha256?: string; // of the image bytes (format 1.2+)
   }>;
 }
 
@@ -107,10 +113,60 @@ function fileStamp(now: Date): string {
   return `${localDate(now)}_${time}-${String(now.getMilliseconds()).padStart(3, '0')}`;
 }
 
+/** Plain-language reason for a failed backup write. */
+export function describeWriteError(err: any): string {
+  switch (err?.code) {
+    case 'ENOSPC': return 'დისკზე ადგილი აღარ არის';
+    case 'EACCES':
+    case 'EPERM': return 'საქაღალდეში ჩაწერის უფლება არ არის';
+    case 'ENOENT':
+    case 'ENOTDIR': return 'საქაღალდე/დისკი ხელმისაწვდომი არ არის';
+    case 'EIO': return 'დისკის შეცდომა (შესაძლოა USB დისკი გამოძვრა)';
+    case 'EROFS': return 'დისკი მხოლოდ წასაკითხია';
+    default: return err?.message || String(err);
+  }
+}
+
+/** Free bytes for this user on the drive holding `dir`, or null when it cannot be told. */
+function freeBytes(dir: string): number | null {
+  try {
+    const s = fs.statfsSync(dir);
+    return Number(s.bavail) * Number(s.bsize);
+  } catch {
+    return null;
+  }
+}
+
+/** Refuses a write that cannot fit (with 5% / 1 MB to spare). */
+export function ensureFreeSpace(dir: string, bytes: number, free: number | null = freeBytes(dir)): void {
+  const needed = Math.ceil(bytes * 1.05) + 1024 * 1024;
+  if (free !== null && free < needed) {
+    const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
+    throw Object.assign(new Error(`დისკზე ადგილი არ არის: საჭიროა ${mb(needed)} MB, თავისუფალია ${mb(free)} MB (${dir})`), { code: 'ENOSPC_PRECHECK' });
+  }
+}
+
 function writeFileAtomic(target: string, data: Buffer): void {
   const partial = `${target}.partial`;
-  fs.writeFileSync(partial, data);
-  fs.renameSync(partial, target);
+  try {
+    fs.writeFileSync(partial, data);
+    fs.renameSync(partial, target);
+  } catch (err: any) {
+    // Never leave a half-written file behind (it would only fill the disk further).
+    try { fs.unlinkSync(partial); } catch {}
+    throw Object.assign(new Error(`${describeWriteError(err)}: ${target}`), { code: err?.code });
+  }
+}
+
+async function copyFileAtomic(source: string, target: string): Promise<void> {
+  const partial = `${target}.partial`;
+  try {
+    await fs.promises.copyFile(source, partial);
+    await fs.promises.rename(partial, target);
+  } catch (err) {
+    await fs.promises.unlink(partial).catch(() => {});
+    throw err;
+  }
 }
 
 /** Reads only the metadata at the start of a .posbackup (everything before the database blob). */
@@ -220,18 +276,21 @@ export class BackupService {
     const imagesDir = this.imagesDir();
     return rows.map((img) => {
       let dataUrl: string | undefined;
+      let hash: string | undefined;
       if (img.file_path.startsWith('data:')) {
         dataUrl = img.file_path;
       } else {
         const file = path.join(imagesDir, path.basename(img.file_path));
         if (fs.existsSync(file)) {
           const mime = IMAGE_MIME[path.extname(file).toLowerCase()] || 'image/jpeg';
-          dataUrl = `data:${mime};base64,${fs.readFileSync(file).toString('base64')}`;
+          const bytes = fs.readFileSync(file);
+          dataUrl = `data:${mime};base64,${bytes.toString('base64')}`;
+          hash = sha256(bytes);
         } else {
           this.logSystemError('backup:create', `Product photo missing on disk: ${path.basename(img.file_path)}`, undefined, 'warning');
         }
       }
-      return { product_id: img.product_id, file_path: img.file_path, is_primary: img.is_primary, data_base64: dataUrl };
+      return { product_id: img.product_id, file_path: img.file_path, is_primary: img.is_primary, data_base64: dataUrl, sha256: hash };
     });
   }
 
@@ -239,7 +298,13 @@ export class BackupService {
    * Creates a complete, verified .posbackup bundle.
    * Includes SQLite DB snapshot, real product image files, store settings, and SHA-256 checksums.
    */
-  createBackup(user: User, customTargetDir?: string, kind: BackupKind = 'manual', now: Date = new Date()): {
+  createBackup(
+    user: User,
+    customTargetDir?: string,
+    kind: BackupKind = 'manual',
+    now: Date = new Date(),
+    options: { mirror?: 'sync' | 'later' } = {}
+  ): {
     backup_filename: string;
     filepath: string;
     size_bytes: number;
@@ -271,7 +336,7 @@ export class BackupService {
     // Metadata first: listing backups reads only this header, not the whole file.
     const bundle: PosBackupBundle = {
       format: 'StorePOS-Unified-Backup',
-      version: '1.1',
+      version: '1.2',
       kind,
       created_at: createdAt,
       schema_version: LATEST_SCHEMA_VERSION,
@@ -289,15 +354,18 @@ export class BackupService {
     const targetDir = customTargetDir ? path.resolve(customTargetDir) : this.getEffectiveBackupDirectory();
     if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
     const savedFilePath = path.join(targetDir, filename);
+    ensureFreeSpace(targetDir, bundleBuffer.length);
     writeFileAtomic(savedFilePath, bundleBuffer);
 
-    // Mirror copy (e.g. USB drive). A missing drive never fails the main backup.
+    // Mirror copy (e.g. USB drive). A missing drive never fails the main backup. With
+    // mirror 'later' the caller writes it in the background (copyToMirror).
     let mirrorPath: string | null = null;
     let mirrorError: string | null = null;
     const mirrorDir = (this.getSettings().backup_mirror_directory || '').trim();
-    if (mirrorDir && !customTargetDir) {
+    if (mirrorDir && !customTargetDir && options.mirror !== 'later') {
       try {
         if (!fs.existsSync(mirrorDir)) throw new Error('საქაღალდე/დისკი ხელმისაწვდომი არ არის');
+        ensureFreeSpace(mirrorDir, bundleBuffer.length);
         mirrorPath = path.join(mirrorDir, filename);
         writeFileAtomic(mirrorPath, bundleBuffer);
       } catch (err: any) {
@@ -341,6 +409,48 @@ export class BackupService {
     };
   }
 
+  /**
+   * Copies a finished backup to the mirror folder (e.g. a USB drive) without blocking the main
+   * process: a slow stick or a disconnected network drive never holds up sales. Never throws.
+   */
+  async copyToMirror(sourceFile: string, kind: BackupKind): Promise<{ path: string | null; error: string | null }> {
+    const mirrorDir = (this.getSettings().backup_mirror_directory || '').trim();
+    if (!mirrorDir) return { path: null, error: null };
+    const target = path.join(mirrorDir, path.basename(sourceFile));
+    try {
+      try {
+        await fs.promises.access(mirrorDir, fs.constants.W_OK);
+      } catch {
+        throw new Error('საქაღალდე/დისკი ხელმისაწვდომი არ არის');
+      }
+      const size = (await fs.promises.stat(sourceFile)).size;
+      const free = await fs.promises.statfs(mirrorDir).then((s) => Number(s.bavail) * Number(s.bsize), () => null);
+      ensureFreeSpace(mirrorDir, size, free);
+      await copyFileAtomic(sourceFile, target);
+      if (kind === 'auto') this.applyRetention(mirrorDir);
+      try {
+        this.db.prepare(`
+          INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at)
+          VALUES (NULL, 'BACKUP_MIRROR', 'system', ?, ?, ?)
+        `).run(path.basename(sourceFile), `Mirror copy written: ${target}`, new Date().toISOString());
+      } catch {}
+      return { path: target, error: null };
+    } catch (err: any) {
+      const message = err?.code === 'ENOSPC_PRECHECK' || !err?.code ? (err?.message || String(err)) : describeWriteError(err);
+      try {
+        this.logSystemError('backup:mirror', `Mirror copy to ${mirrorDir} failed: ${message}`, undefined, 'warning');
+      } catch {}
+      return { path: null, error: message };
+    }
+  }
+
+  /** Manual backup: written to the backup folder now, the mirror copy awaited without blocking. */
+  async createBackupWithMirror(user: User, kind: BackupKind = 'manual', now: Date = new Date()) {
+    const result = this.createBackup(user, undefined, kind, now, { mirror: 'later' });
+    const mirror = await this.copyToMirror(result.filepath, kind);
+    return { ...result, mirror_filepath: mirror.path, mirror_error: mirror.error };
+  }
+
   /** Keeps the newest N automatic backups in a folder; manual and safety backups are never pruned. */
   private applyRetention(dir: string): void {
     const keep = Math.max(3, parseInt(this.getSettings().backup_retention_count || '30', 10) || 30);
@@ -378,6 +488,8 @@ export class BackupService {
     bundle?: PosBackupBundle;
     candidatePath?: string;
     stats?: any;
+    /** Photo files whose bytes no longer match their SHA-256 (format 1.2+). */
+    damagedImages?: string[];
   } {
     let bundle: PosBackupBundle;
     let dbBuffer: Buffer;
@@ -425,7 +537,14 @@ export class BackupService {
       candidateDb.close();
       candidateDb = null;
       if (!keepCandidate) fs.unlinkSync(candidatePath);
-      return { ok: true, bundle, candidatePath: keepCandidate ? candidatePath : undefined, stats };
+      const damagedImages = (bundle.images || [])
+        .filter((img) => img.sha256 && img.data_base64 && !img.file_path.startsWith('data:'))
+        .filter((img) => {
+          const m = img.data_base64!.match(/^data:image\/[A-Za-z0-9.+-]+;base64,(.+)$/);
+          return !m || sha256(Buffer.from(m[1], 'base64')) !== img.sha256;
+        })
+        .map((img) => path.basename(img.file_path));
+      return { ok: true, bundle, candidatePath: keepCandidate ? candidatePath : undefined, stats, damagedImages };
     } catch (err: any) {
       try { candidateDb?.close(); } catch {}
       try { fs.unlinkSync(candidatePath); } catch {}
@@ -470,7 +589,7 @@ export class BackupService {
     success: boolean;
     message: string;
     safety_backup?: string;
-    restored_stats?: { products_count: number; sales_count: number; customers_count: number; images_restored: number };
+    restored_stats?: { products_count: number; sales_count: number; customers_count: number; images_restored: number; images_damaged?: number };
   } {
     this.checkOwner(user);
     const dbPath = this.getTargetDbPath();
@@ -515,12 +634,14 @@ export class BackupService {
       }
       fs.renameSync(candidatePath, dbPath);
 
-      // 5. Photos: only into the app's photo folder, only under plain file names.
+      // 5. Photos: only into the app's photo folder, only under plain file names; a photo whose
+      //    checksum does not match is skipped (the sales and debts matter more than a picture).
       const imagesDir = this.imagesDir();
+      const damaged = new Set(inspection.damagedImages || []);
       for (const img of inspection.bundle!.images || []) {
         if (!img.data_base64 || img.file_path.startsWith('data:')) continue;
         const name = path.basename(img.file_path);
-        if (!SAFE_IMAGE_NAME.test(name)) continue;
+        if (!SAFE_IMAGE_NAME.test(name) || damaged.has(name)) continue;
         const m = img.data_base64.match(/^data:image\/[A-Za-z0-9.+-]+;base64,(.+)$/);
         if (!m) continue;
         writeFileAtomic(path.join(imagesDir, name), Buffer.from(m[1], 'base64'));
@@ -562,19 +683,23 @@ export class BackupService {
       `).run(
         sourceLabel,
         `Restored by ${user.name} (id ${user.id}) from ${sourceLabel}. Safety backup: ${path.basename(safetyBackup)}. ` +
-        `${stats.products_count} products, ${stats.sales_count} sales, ${stats.customers_count} customers, ${imagesRestored} photos.`,
+        `${stats.products_count} products, ${stats.sales_count} sales, ${stats.customers_count} customers, ${imagesRestored} photos` +
+        (damaged.size ? `, ${damaged.size} damaged photos skipped: ${[...damaged].join(', ')}.` : '.'),
         new Date().toISOString()
       );
 
       return {
         success: true,
-        message: 'ბაზა შემოწმდა (PRAGMA integrity_check: OK) და წარმატებით აღდგა. გთხოვთ ხელახლა შეხვიდეთ.',
+        message: 'ბაზა შემოწმდა (PRAGMA integrity_check: OK) და წარმატებით აღდგა.' +
+          (damaged.size ? ` ${damaged.size} ფოტო ასლში დაზიანებული იყო და არ აღდგა (ხელახლა დაამატეთ).` : '') +
+          ' გთხოვთ ხელახლა შეხვიდეთ.',
         safety_backup: safetyBackup,
         restored_stats: {
           products_count: stats.products_count,
           sales_count: stats.sales_count,
           customers_count: stats.customers_count,
-          images_restored: imagesRestored
+          images_restored: imagesRestored,
+          images_damaged: damaged.size
         }
       };
     } catch (err: any) {
@@ -666,9 +791,15 @@ export class BackupService {
       return { is_valid: false, integrity_status: 'მონაცემები არ არის მითითებული' };
     }
     const result = this.inspectBundle(raw);
-    return result.ok
-      ? { is_valid: true, integrity_status: 'მთლიანობა დადასტურებულია (SHA-256 + SQLite integrity_check)', stats: result.stats }
-      : { is_valid: false, integrity_status: result.error || 'შეცდომა' };
+    if (!result.ok) return { is_valid: false, integrity_status: result.error || 'შეცდომა' };
+    const damaged = result.damagedImages || [];
+    return {
+      is_valid: true,
+      integrity_status: damaged.length
+        ? `მონაცემთა ბაზა მთელია (SHA-256 + SQLite integrity_check), მაგრამ ${damaged.length} ფოტო დაზიანებულია და აღდგენისას გამოტოვდება`
+        : 'მთლიანობა დადასტურებულია (SHA-256 + SQLite integrity_check)',
+      stats: { ...result.stats, damaged_images: damaged.length }
+    };
   }
 
   /**
@@ -684,8 +815,9 @@ export class BackupService {
       const ownerRow = this.db.prepare("SELECT id, name, role, created_at FROM users WHERE role = 'owner' AND is_active = 1 ORDER BY id LIMIT 1").get() as any;
       if (!ownerRow) return false; // nothing to protect before the first owner exists
 
-      this.createBackup({ id: ownerRow.id, name: ownerRow.name, role: 'owner', is_active: 1, created_at: ownerRow.created_at }, undefined, 'auto', now);
+      const result = this.createBackup({ id: ownerRow.id, name: ownerRow.name, role: 'owner', is_active: 1, created_at: ownerRow.created_at }, undefined, 'auto', now, { mirror: 'later' });
       console.log('[BackupService] Automated daily backup executed successfully.');
+      void this.copyToMirror(result.filepath, 'auto');
       return true;
     } catch (err: any) {
       console.warn('[BackupService] Automated daily backup failed:', err);

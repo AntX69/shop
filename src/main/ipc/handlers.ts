@@ -185,7 +185,7 @@ const routes: Record<string, Route> = {
   'finance:exportSalesCSV': { access: 'owner', handler: (c) => finance().exportSalesCSV(c.user) },
 
   // 11. Backup, Settings & Logs (owner)
-  'backup:create': { access: 'owner', handler: (c) => backup().createBackup(c.user) },
+  'backup:create': { access: 'owner', handler: (c) => backup().createBackupWithMirror(c.user) },
   'backup:list': { access: 'owner', handler: (c) => backup().listBackups(c.user) },
   'backup:verify': { access: 'owner', handler: (c) => backup().verifyBackup(c.user, p(c).dataString, p(c).filename) },
   'backup:runDaily': { access: 'owner', handler: () => backup().checkAndRunDailyBackup() },
