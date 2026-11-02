@@ -53,7 +53,8 @@ export interface ProductVariant {
 export interface ProductImage {
   id: number;
   product_id: number;
-  file_path: string;
+  file_path: string;  // stored file name (legacy rows: data: URL)
+  url?: string;       // what the renderer puts in <img src>
   is_primary: number;
   created_at: string;
 }

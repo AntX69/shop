@@ -16,11 +16,12 @@
  * (the store data never leaves this computer), and IPC accepted only from the app's own page.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { initDatabase, closeDatabase } from './db/database.ts';
+import { initDatabase, closeDatabase, getDb } from './db/database.ts';
+import { migrateInlineImagesToFiles, SAFE_IMAGE_FILE } from './domain/productImages.ts';
 import { handleIpcMessage, setNativeHost } from './ipc/handlers.ts';
 import { startBackupScheduler } from './backupScheduler.ts';
 
@@ -29,6 +30,10 @@ let appPageUrl = '';
 let stopBackupScheduler: (() => void) | null = null;
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || '';
+
+// Product photos are served from the local photo folder through storepos-img://photo/<file>.
+protocol.registerSchemesAsPrivileged([{ scheme: 'storepos-img', privileges: { standard: true, secure: true, stream: true } }]);
+process.env.STOREPOS_IMAGE_URL_PREFIX = 'storepos-img://photo/';
 const allowDevTools = !app.isPackaged || process.env.STOREPOS_DEVTOOLS === '1';
 
 function stripHashAndQuery(url: string): string {
@@ -105,6 +110,8 @@ if (!gotTheLock) {
       }
       console.log(`[StorePOS Main] Initializing SQLite database at: ${dbPath}`);
       initDatabase(dbPath);
+      const moved = migrateInlineImagesToFiles(getDb());
+      if (moved > 0) console.log(`[StorePOS Main] Moved ${moved} inline product photos to files`);
     } catch (err: any) {
       console.error('[StorePOS Main] Database initialization failed:', err);
       dialog.showErrorBox(
@@ -116,6 +123,15 @@ if (!gotTheLock) {
       app.exit(1);
       return;
     }
+
+    const imagesDir = path.join(dataDir, 'images');
+    protocol.handle('storepos-img', (request) => {
+      const name = decodeURIComponent(new URL(request.url).pathname.replace(/^\/+/, ''));
+      if (!SAFE_IMAGE_FILE.test(name)) return new Response('Not found', { status: 404 });
+      const file = path.join(imagesDir, name);
+      if (path.dirname(file) !== imagesDir || !fs.existsSync(file)) return new Response('Not found', { status: 404 });
+      return net.fetch(pathToFileURL(file).href);
+    });
 
     // Native dialogs for the owner's backup settings (paths never come from the renderer).
     setNativeHost({

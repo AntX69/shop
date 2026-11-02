@@ -11,7 +11,9 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createViteServer } from 'vite';
-import { initDatabase } from './src/main/db/database.ts';
+import fs from 'node:fs';
+import { initDatabase, getDb, imagesDirectoryFor } from './src/main/db/database.ts';
+import { migrateInlineImagesToFiles, SAFE_IMAGE_FILE } from './src/main/domain/productImages.ts';
 import { handleIpcMessage } from './src/main/ipc/handlers.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -23,6 +25,8 @@ async function startServer() {
 
   // Initialize SQLite database
   initDatabase();
+  migrateInlineImagesToFiles(getDb());
+  process.env.STOREPOS_IMAGE_URL_PREFIX = '/storepos-img/';
 
   app.use(express.json({ limit: '50mb' }));
 
@@ -34,6 +38,17 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message || 'Internal Server Error' });
     }
+  });
+
+  // Product photos (file names chosen by the app; anything else is refused)
+  app.get('/storepos-img/:name', (req, res) => {
+    const name = String(req.params.name || '');
+    const file = path.join(imagesDirectoryFor(getDb()), name);
+    if (!SAFE_IMAGE_FILE.test(name) || !fs.existsSync(file)) {
+      res.status(404).end();
+      return;
+    }
+    res.sendFile(file);
   });
 
   // Health check

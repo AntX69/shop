@@ -102,12 +102,29 @@ const routes: Record<string, Route> = {
   'products:getCategories': { access: 'user', handler: () => products().getCategories() },
   'products:createCategory': { access: 'owner', handler: (c) => products().createCategory(c.user, p(c).name) },
   'products:deleteCategory': { access: 'owner', handler: (c) => { products().deleteCategory(c.user, p(c).categoryId); return { deleted: true }; } },
-  'products:list': { access: 'user', handler: (c) => products().listProducts(c.payload) },
-  'products:getById': { access: 'user', handler: (c) => products().getProductById(p(c).productId) },
+  'products:renameCategory': { access: 'owner', handler: (c) => products().renameCategory(c.user, p(c).categoryId, p(c).name) },
+  'products:list': {
+    access: 'user',
+    handler: (c) => {
+      const q = { ...p(c) };
+      if (c.user.role !== 'owner') { delete q.includeArchived; delete q.archivedOnly; }
+      return products().listProducts(q);
+    }
+  },
+  'products:getById': {
+    access: 'user',
+    handler: (c) => products().getProductById(p(c).productId, { includeArchived: c.user.role === 'owner' && !!p(c).includeArchived })
+  },
   'products:lookupCode': { access: 'user', handler: (c) => products().lookupByCode(String(p(c).code ?? '')) },
   'products:create': { access: 'owner', handler: (c) => products().createProduct(c.user, c.payload) },
   'products:addImage': { access: 'owner', handler: (c) => products().addImage(c.user, p(c).productId, p(c).filePath, p(c).isPrimary) },
   'products:deleteImage': { access: 'owner', handler: (c) => { products().deleteImage(c.user, p(c).imageId); return { deleted: true }; } },
+  'products:setPrimaryImage': { access: 'owner', handler: (c) => { products().setPrimaryImage(c.user, p(c).imageId); return { updated: true }; } },
+  'products:update': { access: 'owner', handler: (c) => products().updateProduct(c.user, c.payload) },
+  'products:setActive': { access: 'owner', handler: (c) => products().setProductActive(c.user, p(c).productId, !!p(c).isActive) },
+  'products:addVariant': { access: 'owner', handler: (c) => products().addVariant(c.user, p(c).productId, p(c).variant) },
+  'products:updateVariant': { access: 'owner', handler: (c) => products().updateVariant(c.user, c.payload) },
+  'products:setVariantActive': { access: 'owner', handler: (c) => products().setVariantActive(c.user, p(c).variantId, !!p(c).isActive) },
 
   // 5. OCR (offline ONNX)
   'ocr:isModelReady': {
