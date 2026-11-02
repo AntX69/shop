@@ -106,7 +106,8 @@ export function initDatabase(customPath?: string): DatabaseSync {
     db.exec('PRAGMA journal_mode = WAL;');
     // In desktop POS with financial transactions and cash drawers, synchronous = FULL
     // guarantees immediate fsync on WAL commit, eliminating transaction loss during sudden power outages.
-    const syncMode = process.env.SQLITE_SYNCHRONOUS || 'FULL';
+    // Only ever FULL or the even stricter EXTRA: durability cannot be weakened from outside.
+    const syncMode = process.env.SQLITE_SYNCHRONOUS === 'EXTRA' ? 'EXTRA' : 'FULL';
     db.exec(`PRAGMA synchronous = ${syncMode};`);
   }
 

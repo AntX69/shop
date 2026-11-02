@@ -29,12 +29,16 @@ let mainWindow: BrowserWindow | null = null;
 let appPageUrl = '';
 let stopBackupScheduler: (() => void) | null = null;
 
-const devServerUrl = process.env.VITE_DEV_SERVER_URL || '';
+// Development only: the installed app always loads its own bundled page. (Honouring this
+// variable in production would let anyone who can set an environment variable load a foreign
+// page with access to the store's IPC.)
+const devServerUrl = app.isPackaged ? '' : (process.env.VITE_DEV_SERVER_URL || '');
 
 // Product photos are served from the local photo folder through storepos-img://photo/<file>.
 protocol.registerSchemesAsPrivileged([{ scheme: 'storepos-img', privileges: { standard: true, secure: true, stream: true } }]);
 process.env.STOREPOS_IMAGE_URL_PREFIX = 'storepos-img://photo/';
-const allowDevTools = !app.isPackaged || process.env.STOREPOS_DEVTOOLS === '1';
+// DevTools exist only in development builds; the installed app has no switch to enable them.
+const allowDevTools = !app.isPackaged;
 
 function stripHashAndQuery(url: string): string {
   return url.split('#')[0].split('?')[0];
@@ -229,6 +233,25 @@ if (!gotTheLock) {
       console.log(`[StorePOS Main] Loading UI from: ${indexPath}`);
       mainWindow.loadFile(indexPath);
     }
+
+    // A crashed or killed page (e.g. out of memory after many hours) is reloaded instead of
+    // leaving a blank window. Saved data lives in the main process and is not affected; only an
+    // unfinished cart is lost. More than 3 crashes within 10 minutes stop the reloading.
+    const crashTimes: number[] = [];
+    mainWindow.webContents.on('render-process-gone', (_event, details) => {
+      console.error(`[StorePOS Main] Page process gone: ${details.reason} (exit code ${details.exitCode})`);
+      if (details.reason === 'clean-exit' || !mainWindow || mainWindow.isDestroyed()) return;
+      const now = Date.now();
+      while (crashTimes.length && now - crashTimes[0] > 10 * 60_000) crashTimes.shift();
+      crashTimes.push(now);
+      if (crashTimes.length > 3) {
+        dialog.showErrorBox('StorePOS', 'პროგრამის ფანჯარა რამდენჯერმე ავარიულად დაიხურა. დახურეთ StorePOS და გახსენით თავიდან. მონაცემები შენახულია.');
+        return;
+      }
+      if (devServerUrl) mainWindow.loadURL(devServerUrl);
+      else mainWindow.loadFile(indexPath);
+    });
+    mainWindow.on('unresponsive', () => console.warn('[StorePOS Main] Window is not responding'));
 
     mainWindow.on('closed', () => {
       mainWindow = null;
