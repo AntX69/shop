@@ -208,6 +208,16 @@ export interface CustomerLedgerEntry {
   notes?: string;
 }
 
+export interface DebtRepaymentAllocation {
+  id: number;
+  repayment_id: number;
+  sale_id: number;
+  customer_id: number;
+  allocated_tetri: number;
+  created_at: string;
+  receipt_number?: string;
+}
+
 export interface DebtRepayment {
   id: number;
   customer_id: number;
@@ -219,6 +229,7 @@ export interface DebtRepayment {
   notes?: string;
   idempotency_key?: string;
   created_at: string;
+  allocations?: DebtRepaymentAllocation[];
 }
 
 export interface BackupInfo {

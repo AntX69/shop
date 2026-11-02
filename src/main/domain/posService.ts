@@ -369,7 +369,7 @@ export class PosService {
     // Calculate remaining debt on this specific sale
     if (sale.debt_amount_tetri > 0) {
       const repaid = this.db.prepare(`
-        SELECT COALESCE(SUM(amount_tetri), 0) as total FROM debt_repayments WHERE sale_id = ?
+        SELECT COALESCE(SUM(allocated_tetri), 0) as total FROM debt_repayment_allocations WHERE sale_id = ?
       `).get(saleId) as { total: number };
 
       const returnedDebt = this.db.prepare(`
@@ -418,6 +418,7 @@ export class PosService {
     saleType?: string;
     hasDebt?: boolean;
     limit?: number;
+    offset?: number;
   }): Sale[] {
     let sql = `
       SELECT s.*, u.name as user_name,
@@ -460,8 +461,8 @@ export class PosService {
       sql += " AND s.debt_amount_tetri > 0";
     }
 
-    sql += " ORDER BY s.id DESC LIMIT ?";
-    args.push(params?.limit || 100);
+    sql += " ORDER BY s.id DESC LIMIT ? OFFSET ?";
+    args.push(params?.limit || 100, params?.offset || 0);
 
     const sales = this.db.prepare(sql).all(...args) as any[];
     for (const s of sales) {
@@ -470,7 +471,7 @@ export class PosService {
       // Calculate remaining debt on each sale
       if (s.debt_amount_tetri > 0) {
         const repaid = this.db.prepare(`
-          SELECT COALESCE(SUM(amount_tetri), 0) as total FROM debt_repayments WHERE sale_id = ?
+          SELECT COALESCE(SUM(allocated_tetri), 0) as total FROM debt_repayment_allocations WHERE sale_id = ?
         `).get(s.id) as { total: number };
         const returnedDebt = this.db.prepare(`
           SELECT COALESCE(SUM(debt_deduction_tetri), 0) as total FROM returns WHERE sale_id = ?

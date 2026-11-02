@@ -506,9 +506,13 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 length={5}
                 value={digitInputs.join('')}
                 autoFocus={true}
-                onChange={(code) => {
-                  const arr = code.padEnd(5, ' ').split('').map(c => c.trim());
-                  setDigitInputs(arr);
+                onChange={(code, slots) => {
+                  if (slots) {
+                    setDigitInputs(slots);
+                  } else {
+                    const arr = code.padEnd(5, ' ').split('').map(c => c.trim());
+                    setDigitInputs(arr);
+                  }
                   if (code.length === 5) {
                     checkProductLookup(code);
                   } else {

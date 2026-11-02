@@ -12,7 +12,7 @@
  * - Accessible search by receipt #, customer, or product code
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sale, User, ReturnRecord, Product, ProductVariant } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
@@ -49,6 +49,11 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedSaleId, setSelectedSaleId] = useState<number | null>(null);
+  const [salesLimit, setSalesLimit] = useState<number>(50);
+
+  // Stable Idempotency Keys across retries
+  const returnIdempotencyKeyRef = useRef<string | null>(null);
+  const exchangeIdempotencyKeyRef = useRef<string | null>(null);
 
   // Return Modal state
   const [isReturnModalOpen, setIsReturnModalOpen] = useState<boolean>(false);
@@ -66,22 +71,30 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
   const [exchangeSearch, setExchangeSearch] = useState<string>('');
   const [exchangeError, setExchangeError] = useState<string>('');
 
-  const loadData = async () => {
+  const loadData = async (limitToUse = salesLimit) => {
     try {
       setLoading(true);
       const [salesData, returnsData] = await Promise.all([
         invokeIpc<Sale[]>('pos:searchSales', {
           searchTerm: searchTerm || undefined,
-          limit: 150
+          limit: limitToUse
         }),
-        invokeIpc<ReturnRecord[]>('returns:list', { limit: 100 })
+        invokeIpc<ReturnRecord[]>('returns:list', {
+          searchTerm: searchTerm || undefined,
+          limit: 100
+        })
       ]);
 
       setSales(salesData);
       setReturnsList(returnsData);
 
-      if (salesData.length > 0 && !selectedSaleId) {
-        setSelectedSaleId(salesData[0].id);
+      // Stale selection check: if selected sale is not in current dataset, reset to first or null
+      if (salesData.length > 0) {
+        if (!selectedSaleId || !salesData.some(s => s.id === selectedSaleId)) {
+          setSelectedSaleId(salesData[0].id);
+        }
+      } else {
+        setSelectedSaleId(null);
       }
     } catch (err) {
       console.error('Failed to load sales history data:', err);
@@ -91,12 +104,20 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
   };
 
   useEffect(() => {
-    loadData();
+    setSalesLimit(50);
+    loadData(50);
   }, [searchTerm]);
+
+  const handleLoadMore = () => {
+    const newLimit = salesLimit + 50;
+    setSalesLimit(newLimit);
+    loadData(newLimit);
+  };
 
   // Load products catalogue for exchange modal when opened
   const openExchangeModal = async () => {
     if (!selectedSale) return;
+    exchangeIdempotencyKeyRef.current = crypto.randomUUID();
     setExchangeError('');
     setSelectedNewVariant(null);
     setNewVariantQty(1);
@@ -123,6 +144,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
 
   const openReturnModal = () => {
     if (!selectedSale) return;
+    returnIdempotencyKeyRef.current = crypto.randomUUID();
     setReturnError('');
     const initial: Record<number, { qty: number; condition: 'resellable' | 'damaged' }> = {};
     for (const item of selectedSale.items || []) {
@@ -161,13 +183,15 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
 
     try {
       setIsSubmitting(true);
+      const idempotencyKey = returnIdempotencyKeyRef.current || (returnIdempotencyKeyRef.current = crypto.randomUUID());
       const res = await invokeIpc('returns:process', {
         sale_id: selectedSale.id,
         items: payloadItems,
         reason: returnReason.trim() || undefined,
-        idempotency_key: `ret_${selectedSale.id}_${Date.now()}`
+        idempotency_key: idempotencyKey
       });
 
+      returnIdempotencyKeyRef.current = null;
       alert(
         `დაბრუნება წარმატებით გაფორმდა!\n` +
         `ჯამური დასაბრუნებელი თანხა: ${formatTetri(res.total_refund_tetri)}\n` +
@@ -217,6 +241,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
 
     try {
       setIsSubmitting(true);
+      const idempotencyKey = exchangeIdempotencyKeyRef.current || (exchangeIdempotencyKeyRef.current = crypto.randomUUID());
       const res = await invokeIpc('returns:exchange', {
         original_sale_id: selectedSale.id,
         return_items: payloadReturnItems,
@@ -225,8 +250,10 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
           quantity: newVariantQty,
           unit_price_tetri: newUnitPriceTetri
         }],
-        idempotency_key: `exch_${selectedSale.id}_${Date.now()}`
+        idempotency_key: idempotencyKey
       });
+
+      exchangeIdempotencyKeyRef.current = null;
 
       const diff = res.difference_tetri;
       let msg = 'გაცვლა წარმატებით განხორციელდა!\n';
@@ -482,6 +509,18 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                   );
                 })
               )
+            )}
+
+            {activeTab !== 'returns' && sales.length >= salesLimit && (
+              <div className="p-3 text-center border-t border-slate-800 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleLoadMore}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-colors cursor-pointer w-full"
+                >
+                  მაჩვენე მეტი (შემდეგი 50)
+                </button>
+              </div>
             )}
           </div>
         </div>

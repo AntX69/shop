@@ -127,6 +127,14 @@ export class CustomerService {
         if (existing.customer_id !== payload.customer_id || existing.amount_tetri !== payload.amount_tetri) {
           throw new Error('Idempotency key mismatch: ამ გასაღებით უკვე დაფიქსირებულია განსხვავებული გადახდა');
         }
+        const allocations = this.db.prepare(`
+          SELECT dra.*, s.receipt_number
+          FROM debt_repayment_allocations dra
+          JOIN sales s ON dra.sale_id = s.id
+          WHERE dra.repayment_id = ?
+          ORDER BY dra.id ASC
+        `).all(existing.id) as any[];
+
         return {
           id: existing.id,
           customer_id: existing.customer_id,
@@ -137,7 +145,8 @@ export class CustomerService {
           payment_method: 'cash',
           notes: existing.notes || undefined,
           idempotency_key: existing.idempotency_key,
-          created_at: existing.created_at
+          created_at: existing.created_at,
+          allocations
         };
       }
     }
@@ -160,6 +169,31 @@ export class CustomerService {
       }
 
       const now = new Date().toISOString();
+
+      // If specific sale is designated, validate that sale's open balance
+      if (payload.sale_id) {
+        const saleRow = db.prepare(`
+          SELECT s.id, s.customer_id, s.debt_amount_tetri, s.receipt_number,
+            COALESCE((SELECT SUM(allocated_tetri) FROM debt_repayment_allocations WHERE sale_id = s.id), 0) as allocated,
+            COALESCE((SELECT SUM(debt_deduction_tetri) FROM returns WHERE sale_id = s.id), 0) as ret_deducted
+          FROM sales s WHERE s.id = ?
+        `).get(payload.sale_id) as any;
+
+        if (!saleRow) {
+          throw new Error('მითითებული გაყიდვა ვერ მოიძებნა');
+        }
+        if (saleRow.customer_id !== customer.id) {
+          throw new Error('ეს გაყიდვა არ ეკუთვნის აღნიშნულ კლიენტს');
+        }
+        const saleRemaining = Math.max(0, saleRow.debt_amount_tetri - saleRow.allocated - saleRow.ret_deducted);
+        if (payload.amount_tetri > saleRemaining) {
+          throw new Error(
+            `შეტანილი თანხა (${(payload.amount_tetri / 100).toFixed(2)} ₾) აღემატება ამ ჩეკის დარჩენილ ვალს (${(saleRemaining / 100).toFixed(2)} ₾)`
+          );
+        }
+      }
+
+      // Insert primary repayment record
       const res = db.prepare(`
         INSERT INTO debt_repayments (customer_id, sale_id, amount_tetri, user_id, payment_method, notes, idempotency_key, created_at)
         VALUES (?, ?, ?, ?, 'cash', ?, ?, ?)
@@ -174,6 +208,59 @@ export class CustomerService {
       );
 
       const repaymentId = Number(res.lastInsertRowid);
+      const allocations: any[] = [];
+
+      // Allocate repayment:
+      if (payload.sale_id) {
+        // Direct allocation to targeted sale
+        const aRes = db.prepare(`
+          INSERT INTO debt_repayment_allocations (repayment_id, sale_id, customer_id, allocated_tetri, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `).run(repaymentId, payload.sale_id, customer.id, payload.amount_tetri, now);
+
+        allocations.push({
+          id: Number(aRes.lastInsertRowid),
+          repayment_id: repaymentId,
+          sale_id: payload.sale_id,
+          customer_id: customer.id,
+          allocated_tetri: payload.amount_tetri,
+          created_at: now
+        });
+      } else {
+        // General customer repayment -> Deterministic FIFO across customer's active debt sales (oldest first)
+        let unallocated = payload.amount_tetri;
+        const candidateSales = db.prepare(`
+          SELECT s.id, s.debt_amount_tetri, s.receipt_number,
+            COALESCE((SELECT SUM(allocated_tetri) FROM debt_repayment_allocations WHERE sale_id = s.id), 0) as allocated,
+            COALESCE((SELECT SUM(debt_deduction_tetri) FROM returns WHERE sale_id = s.id), 0) as ret_deducted
+          FROM sales s
+          WHERE s.customer_id = ? AND s.debt_amount_tetri > 0
+          ORDER BY s.id ASC
+        `).all(customer.id) as Array<{ id: number; debt_amount_tetri: number; allocated: number; ret_deducted: number; receipt_number: string }>;
+
+        for (const cs of candidateSales) {
+          const openDebt = Math.max(0, cs.debt_amount_tetri - cs.allocated - cs.ret_deducted);
+          if (openDebt > 0 && unallocated > 0) {
+            const portion = Math.min(openDebt, unallocated);
+            const aRes = db.prepare(`
+              INSERT INTO debt_repayment_allocations (repayment_id, sale_id, customer_id, allocated_tetri, created_at)
+              VALUES (?, ?, ?, ?, ?)
+            `).run(repaymentId, cs.id, customer.id, portion, now);
+
+            allocations.push({
+              id: Number(aRes.lastInsertRowid),
+              repayment_id: repaymentId,
+              sale_id: cs.id,
+              customer_id: customer.id,
+              allocated_tetri: portion,
+              created_at: now,
+              receipt_number: cs.receipt_number
+            });
+
+            unallocated -= portion;
+          }
+        }
+      }
 
       db.prepare(`
         INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at)
@@ -181,7 +268,7 @@ export class CustomerService {
       `).run(
         user.id,
         String(repaymentId),
-        `Repaid ${(payload.amount_tetri / 100).toFixed(2)} GEL for customer ${customer.first_name} by ${user.name}`,
+        `Repaid ${(payload.amount_tetri / 100).toFixed(2)} GEL for customer ${customer.first_name} by ${user.name}. Allocated across ${allocations.length} sales.`,
         now
       );
 
@@ -194,22 +281,35 @@ export class CustomerService {
         user_name: user.name,
         payment_method: 'cash',
         notes: payload.notes?.trim() || undefined,
-        created_at: now
+        created_at: now,
+        allocations
       };
     }, this.db);
   }
 
   /**
-   * Returns list of repayments for a customer.
+   * Returns list of repayments for a customer with allocation details.
    */
   getRepayments(customerId: number): DebtRepayment[] {
-    return this.db.prepare(`
+    const reps = this.db.prepare(`
       SELECT dr.*, u.name as user_name
       FROM debt_repayments dr
       JOIN users u ON dr.user_id = u.id
       WHERE dr.customer_id = ?
       ORDER BY dr.id DESC
     `).all(customerId) as any[];
+
+    for (const r of reps) {
+      r.allocations = this.db.prepare(`
+        SELECT dra.*, s.receipt_number
+        FROM debt_repayment_allocations dra
+        JOIN sales s ON dra.sale_id = s.id
+        WHERE dra.repayment_id = ?
+        ORDER BY dra.id ASC
+      `).all(r.id);
+    }
+
+    return reps;
   }
 
   /**
@@ -307,8 +407,23 @@ export class CustomerService {
       });
     }
 
-    // Sort ascending by date to compute accurate running balance
-    events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    // Deterministic tie-breaker sorting:
+    // 1. Date ascending (timestamp)
+    // 2. Type priority: sale_debt (1) -> repayment (2) -> return_credit (3)
+    // 3. Reference ID ascending
+    const typePriority: Record<string, number> = {
+      'sale_debt': 1,
+      'repayment': 2,
+      'return_credit': 3
+    };
+
+    events.sort((a, b) => {
+      const timeDiff = new Date(a.date).getTime() - new Date(b.date).getTime();
+      if (timeDiff !== 0) return timeDiff;
+      const prioDiff = (typePriority[a.type] || 99) - (typePriority[b.type] || 99);
+      if (prioDiff !== 0) return prioDiff;
+      return (a.reference_id || 0) - (b.reference_id || 0);
+    });
 
     let runningBalance = 0;
     const ledger = events.map(ev => {
@@ -338,11 +453,15 @@ export class CustomerService {
 
     for (const s of sales) {
       s.items = this.db.prepare("SELECT * FROM sale_items WHERE sale_id = ?").all(s.id);
-      const repaid = this.db.prepare("SELECT COALESCE(SUM(amount_tetri), 0) as total FROM debt_repayments WHERE sale_id = ?").get(s.id) as { total: number };
-      const returnedDebt = this.db.prepare("SELECT COALESCE(SUM(debt_deduction_tetri), 0) as total FROM returns WHERE sale_id = ?").get(s.id) as { total: number };
-      s.debt_remaining_tetri = Math.max(0, s.debt_amount_tetri - repaid.total - returnedDebt.total);
+      const allocated = this.db.prepare(`
+        SELECT COALESCE(SUM(allocated_tetri), 0) as total FROM debt_repayment_allocations WHERE sale_id = ?
+      `).get(s.id) as { total: number };
+      const returnedDebt = this.db.prepare(`
+        SELECT COALESCE(SUM(debt_deduction_tetri), 0) as total FROM returns WHERE sale_id = ?
+      `).get(s.id) as { total: number };
+      s.debt_remaining_tetri = Math.max(0, s.debt_amount_tetri - allocated.total - returnedDebt.total);
     }
 
-    return sales;
+    return sales.filter(s => (s.debt_remaining_tetri ?? 0) > 0);
   }
 }

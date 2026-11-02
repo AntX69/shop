@@ -335,6 +335,67 @@ export const migrations: Migration[] = [
         db.exec("ALTER TABLE sales ADD COLUMN discount_reason TEXT;");
       } catch {}
     }
+  },
+  {
+    version: 5,
+    name: 'debt_repayment_allocations',
+    up: (db: DatabaseSync) => {
+      // 1. Create repayment allocations table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS debt_repayment_allocations (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          repayment_id INTEGER NOT NULL REFERENCES debt_repayments(id) ON DELETE CASCADE,
+          sale_id INTEGER NOT NULL REFERENCES sales(id) ON DELETE CASCADE,
+          customer_id INTEGER NOT NULL REFERENCES customers(id),
+          allocated_tetri INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_repay_alloc_sale ON debt_repayment_allocations(sale_id);
+        CREATE INDEX IF NOT EXISTS idx_repay_alloc_repay ON debt_repayment_allocations(repayment_id);
+        CREATE INDEX IF NOT EXISTS idx_repay_alloc_cust ON debt_repayment_allocations(customer_id);
+      `);
+
+      // 2. Safe migration of existing debt_repayments that have a specific sale_id
+      db.exec(`
+        INSERT INTO debt_repayment_allocations (repayment_id, sale_id, customer_id, allocated_tetri, created_at)
+        SELECT id, sale_id, customer_id, amount_tetri, created_at
+        FROM debt_repayments
+        WHERE sale_id IS NOT NULL;
+      `);
+
+      // 3. Safe migration of existing unallocated repayments (sale_id IS NULL)
+      // Distribute FIFO across the customer's unpaid sales
+      const unallocatedRepayments = db.prepare(`
+        SELECT id, customer_id, amount_tetri, created_at
+        FROM debt_repayments
+        WHERE sale_id IS NULL
+        ORDER BY id ASC
+      `).all() as Array<{ id: number; customer_id: number; amount_tetri: number; created_at: string }>;
+
+      for (const rep of unallocatedRepayments) {
+        let remainingToAllocate = rep.amount_tetri;
+        const candidateSales = db.prepare(`
+          SELECT s.id, s.debt_amount_tetri,
+            COALESCE((SELECT SUM(allocated_tetri) FROM debt_repayment_allocations WHERE sale_id = s.id), 0) as already_allocated,
+            COALESCE((SELECT SUM(debt_deduction_tetri) FROM returns WHERE sale_id = s.id), 0) as returns_deducted
+          FROM sales s
+          WHERE s.customer_id = ? AND s.debt_amount_tetri > 0
+          ORDER BY s.id ASC
+        `).all(rep.customer_id) as Array<{ id: number; debt_amount_tetri: number; already_allocated: number; returns_deducted: number }>;
+
+        for (const cs of candidateSales) {
+          const openDebt = cs.debt_amount_tetri - cs.already_allocated - cs.returns_deducted;
+          if (openDebt > 0 && remainingToAllocate > 0) {
+            const allocPortion = Math.min(openDebt, remainingToAllocate);
+            db.prepare(`
+              INSERT INTO debt_repayment_allocations (repayment_id, sale_id, customer_id, allocated_tetri, created_at)
+              VALUES (?, ?, ?, ?, ?)
+            `).run(rep.id, cs.id, rep.customer_id, allocPortion, rep.created_at);
+            remainingToAllocate -= allocPortion;
+          }
+        }
+      }
+    }
   }
 ];
 

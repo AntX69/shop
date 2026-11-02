@@ -74,8 +74,8 @@ export class ReturnsService {
       `).get(sale.id) as { past_debt_deduction: number; past_cash_refund: number };
 
       const pastRepayments = db.prepare(`
-        SELECT COALESCE(SUM(amount_tetri), 0) as total_repaid
-        FROM debt_repayments WHERE sale_id = ?
+        SELECT COALESCE(SUM(allocated_tetri), 0) as total_repaid
+        FROM debt_repayment_allocations WHERE sale_id = ?
       `).get(sale.id) as { total_repaid: number };
 
       const remainingSaleDebt = Math.max(0, sale.debt_amount_tetri - pastReturns.past_debt_deduction - pastRepayments.total_repaid);
@@ -386,7 +386,11 @@ export class ReturnsService {
   listReturns(params?: {
     saleId?: number;
     returnType?: 'refund' | 'exchange';
+    searchTerm?: string;
+    startDate?: string;
+    endDate?: string;
     limit?: number;
+    offset?: number;
   }): ReturnRecord[] {
     let sql = `
       SELECT r.*, s.receipt_number, u.name as user_name,
@@ -408,9 +412,28 @@ export class ReturnsService {
       sql += " AND r.return_type = ?";
       args.push(params.returnType);
     }
+    if (params?.searchTerm) {
+      const term = `%${params.searchTerm.trim()}%`;
+      sql += ` AND (
+        s.receipt_number LIKE ? OR
+        c.first_name LIKE ? OR
+        c.last_name LIKE ? OR
+        r.reason LIKE ? OR
+        r.id IN (SELECT return_id FROM return_items WHERE code_snap LIKE ? OR product_name_snap LIKE ?)
+      )`;
+      args.push(term, term, term, term, term, term);
+    }
+    if (params?.startDate) {
+      sql += " AND r.created_at >= ?";
+      args.push(params.startDate);
+    }
+    if (params?.endDate) {
+      sql += " AND r.created_at <= ?";
+      args.push(params.endDate);
+    }
 
-    sql += " ORDER BY r.id DESC LIMIT ?";
-    args.push(params?.limit || 100);
+    sql += " ORDER BY r.id DESC LIMIT ? OFFSET ?";
+    args.push(params?.limit || 100, params?.offset || 0);
 
     const rows = this.db.prepare(sql).all(...args) as any[];
     for (const row of rows) {

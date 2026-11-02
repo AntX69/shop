@@ -81,6 +81,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   // Webcam OCR Modal (Experimental M6 placeholder)
   const [isWebcamModalOpen, setIsWebcamModalOpen] = useState<boolean>(false);
 
+  // Stable Idempotency Key per checkout operation (preserved across retries)
+  const checkoutIdempotencyKeyRef = useRef<string | null>(null);
+
   // Load catalogue and customers on mount
   useEffect(() => {
     loadCatalogue();
@@ -309,6 +312,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   // Open checkout modal
   const handleOpenCheckout = () => {
     if (cart.length === 0) return;
+    checkoutIdempotencyKeyRef.current = crypto.randomUUID();
     setPaymentMethod('cash');
     setCashReceivedInput((cartTotalTetri / 100).toFixed(2));
     setCheckoutError('');
@@ -339,7 +343,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
 
     try {
       setIsSubmitting(true);
-      const idempotencyKey = crypto.randomUUID();
+      // Stable key: preserved across retries of the same checkout attempt
+      const idempotencyKey = checkoutIdempotencyKeyRef.current || (checkoutIdempotencyKeyRef.current = crypto.randomUUID());
       const sale = await invokeIpc<Sale>('pos:checkout', {
         items: cart.map(c => ({
           variant_id: c.variant_id,
@@ -352,7 +357,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         idempotency_key: idempotencyKey
       });
 
-      // Clear cart, close checkout modal, show receipt
+      // Clear cart, reset idempotency key, close checkout modal, show receipt
+      checkoutIdempotencyKeyRef.current = null;
       setCart([]);
       setIsCheckoutModalOpen(false);
       setCompletedSale(sale);

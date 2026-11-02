@@ -8,7 +8,7 @@
  * and active sales breakdown.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Customer, DebtRepayment, CustomerLedgerEntry, Sale, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
@@ -53,6 +53,25 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
   const [repayNotes, setRepayNotes] = useState<string>('');
   const [repayError, setRepayError] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [selectedSaleIdForRepay, setSelectedSaleIdForRepay] = useState<number | null>(null);
+
+  // Stable Idempotency Key across retries of the same repayment session
+  const repayIdempotencyKeyRef = useRef<string | null>(null);
+
+  const openRepayModal = (saleId?: number | null) => {
+    repayIdempotencyKeyRef.current = crypto.randomUUID();
+    setSelectedSaleIdForRepay(saleId || null);
+    setRepayError('');
+    if (saleId) {
+      const targetSale = activeSales.find(s => s.id === saleId);
+      const remaining = targetSale?.debt_remaining_tetri ?? targetSale?.debt_amount_tetri ?? 0;
+      setRepayAmountInput((remaining / 100).toFixed(2));
+    } else {
+      const totalDebt = selectedCustomer?.total_debt_tetri ?? 0;
+      setRepayAmountInput((totalDebt / 100).toFixed(2));
+    }
+    setIsRepayOpen(true);
+  };
 
   // New Customer Modal
   const [isNewCustOpen, setIsNewCustOpen] = useState<boolean>(false);
@@ -161,17 +180,30 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
       return;
     }
 
+    if (selectedSaleIdForRepay) {
+      const targetSale = activeSales.find(s => s.id === selectedSaleIdForRepay);
+      const saleRemaining = targetSale?.debt_remaining_tetri ?? 0;
+      if (amountTetri > saleRemaining) {
+        setRepayError(`შეტანილი თანხა (${formatTetri(amountTetri)}) აღემატება ამ ჩეკის დარჩენილ ვალს (${formatTetri(saleRemaining)})`);
+        return;
+      }
+    }
+
     try {
       setIsSubmitting(true);
-      const idempotencyKey = crypto.randomUUID();
+      // Stable Idempotency Key: preserved across retries of the same repayment session
+      const idempotencyKey = repayIdempotencyKeyRef.current || (repayIdempotencyKeyRef.current = crypto.randomUUID());
       await invokeIpc('customers:repay', {
         customer_id: selectedCustomer.id,
+        sale_id: selectedSaleIdForRepay || undefined,
         amount_tetri: amountTetri,
         notes: repayNotes.trim() || undefined,
         idempotency_key: idempotencyKey
       });
 
+      repayIdempotencyKeyRef.current = null;
       setIsRepayOpen(false);
+      setSelectedSaleIdForRepay(null);
       setRepayAmountInput('');
       setRepayNotes('');
       await loadCustomers();
@@ -309,11 +341,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
 
                   {(selectedCustomer.total_debt_tetri || 0) > 0 && (
                     <button
-                      onClick={() => {
-                        setIsRepayOpen(true);
-                        setRepayAmountInput((((selectedCustomer.total_debt_tetri || 0)) / 100).toFixed(2));
-                        setRepayError('');
-                      }}
+                      onClick={() => openRepayModal(null)}
                       className="px-3.5 py-2 sm:px-4 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
                     >
                       <Banknote className="w-4 h-4" />
@@ -451,34 +479,49 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                           <th className="py-2.5 px-3">ჯამური თანხა</th>
                           <th className="py-2.5 px-3">გადახდილი ნაღდი</th>
                           <th className="py-2.5 px-3">დარჩენილი ვალი</th>
-                          <th className="py-2.5 px-3">სტატუსი</th>
+                          <th className="py-2.5 px-3 text-right">მოქმედება</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
-                        {activeSales.map((s) => (
-                          <tr key={s.id} className="hover:bg-slate-900/40">
-                            <td className="py-2.5 px-3">
-                              <div className="font-mono text-slate-200 font-bold">#{s.receipt_number}</div>
-                              <div className="text-[10px] text-slate-400 font-mono">
-                                {new Date(s.created_at).toLocaleString('ka-GE')}
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-3 font-bold text-slate-300 tabular-nums">
-                              {formatTetri(s.total_tetri)}
-                            </td>
-                            <td className="py-2.5 px-3 text-slate-400 tabular-nums">
-                              {formatTetri(s.cash_received_tetri)}
-                            </td>
-                            <td className="py-2.5 px-3 font-black text-amber-400 text-xs sm:text-sm tabular-nums">
-                              {formatTetri(s.debt_amount_tetri)}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/70 text-amber-300 border border-amber-800">
-                                დაუფარავი
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
+                        {activeSales.map((s) => {
+                          const remaining = s.debt_remaining_tetri ?? s.debt_amount_tetri;
+                          const isPartiallyPaid = remaining < s.debt_amount_tetri;
+
+                          return (
+                            <tr key={s.id} className="hover:bg-slate-900/40">
+                              <td className="py-2.5 px-3">
+                                <div className="font-mono text-slate-200 font-bold">#{s.receipt_number}</div>
+                                <div className="text-[10px] text-slate-400 font-mono">
+                                  {new Date(s.created_at).toLocaleString('ka-GE')}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3 font-bold text-slate-300 tabular-nums">
+                                {formatTetri(s.total_tetri)}
+                              </td>
+                              <td className="py-2.5 px-3 text-slate-400 tabular-nums">
+                                {formatTetri(s.cash_received_tetri)}
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-black text-amber-400 text-xs sm:text-sm tabular-nums">
+                                  {formatTetri(remaining)}
+                                </div>
+                                {isPartiallyPaid && (
+                                  <div className="text-[10px] text-slate-500 line-through tabular-nums">
+                                    საწყისი: {formatTetri(s.debt_amount_tetri)}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                <button
+                                  onClick={() => openRepayModal(s.id)}
+                                  className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-700/50 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+                                >
+                                  ამ ჩეკის დაფარვა
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   )
@@ -489,13 +532,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                       ნისიის დაფარვის ჩანაწერები ჯერ არ ფიქსირდება
                     </div>
                   ) : (
-                    <table className="w-full text-left text-xs min-w-[480px]">
+                    <table className="w-full text-left text-xs min-w-[540px]">
                       <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                         <tr>
                           <th className="py-2.5 px-3">თარიღი</th>
                           <th className="py-2.5 px-3">მიღებული თანხა</th>
+                          <th className="py-2.5 px-3">განაწილება ჩეკებზე</th>
                           <th className="py-2.5 px-3">შენიშვნა</th>
-                          <th className="py-2.5 px-3">მიიღო თანამშრომელმა</th>
+                          <th className="py-2.5 px-3">თანამშრომელი</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
@@ -506,6 +550,28 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                             </td>
                             <td className="py-2.5 px-3 font-bold text-emerald-400 text-xs sm:text-sm tabular-nums whitespace-nowrap">
                               +{formatTetri(r.amount_tetri)}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {r.allocations && r.allocations.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {r.allocations.map((a) => (
+                                    <span
+                                      key={a.id || `${a.repayment_id}-${a.sale_id}`}
+                                      className="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-[10px] text-slate-300 font-mono"
+                                    >
+                                      #{a.receipt_number || a.sale_id}: {formatTetri(a.allocated_tetri)}
+                                    </span>
+                                  ))}
+                                </div>
+                              ) : r.sale_id ? (
+                                <span className="text-[11px] text-slate-400 font-mono">
+                                  ჩეკი #{r.sale_id}
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-slate-500 italic">
+                                  ზოგადი (FIFO)
+                                </span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3 text-slate-300">
                               {r.notes || '-'}
@@ -559,67 +625,107 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 </div>
               )}
 
-              <form id="repay-form" onSubmit={handleRepaySubmit} className="space-y-3">
-                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-slate-400">კლიენტი:</span>
-                    <span className="font-bold text-white">{selectedCustomer.first_name} {selectedCustomer.last_name || ''}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">მიმდინარე ვალი:</span>
-                    <span className="font-black text-amber-400 tabular-nums text-sm">
-                      {formatTetri(selectedCustomer.total_debt_tetri)}
-                    </span>
-                  </div>
-                </div>
+              {(() => {
+                const targetSale = selectedSaleIdForRepay
+                  ? activeSales.find(s => s.id === selectedSaleIdForRepay)
+                  : null;
+                const maxRepayTetri = targetSale
+                  ? (targetSale.debt_remaining_tetri ?? targetSale.debt_amount_tetri)
+                  : (selectedCustomer.total_debt_tetri || 0);
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    შემოტანილი თანხა (₾) *
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    autoFocus
-                    value={repayAmountInput}
-                    onChange={(e) => setRepayAmountInput(e.target.value)}
-                    className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg font-bold tabular-nums focus:border-emerald-500 focus:outline-none"
-                  />
-                  {/* Quick amount buttons */}
-                  <div className="flex items-center gap-1.5 mt-2">
-                    <button
-                      type="button"
-                      onClick={() => setRepayAmountInput((((selectedCustomer.total_debt_tetri || 0)) / 100).toFixed(2))}
-                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
-                    >
-                      სრული დაფარვა
-                    </button>
-                    {[10, 20, 50, 100].map(amt => (
-                      <button
-                        key={amt}
-                        type="button"
-                        onClick={() => setRepayAmountInput(amt.toFixed(2))}
-                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
-                      >
-                        {amt} ₾
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                return (
+                  <form id="repay-form" onSubmit={handleRepaySubmit} className="space-y-3">
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="text-slate-400">კლიენტი:</span>
+                        <span className="font-bold text-white">{selectedCustomer.first_name} {selectedCustomer.last_name || ''}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-400">საერთო ვალი:</span>
+                        <span className="font-black text-amber-400 tabular-nums text-sm">
+                          {formatTetri(selectedCustomer.total_debt_tetri)}
+                        </span>
+                      </div>
+                    </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">შენიშვნა</label>
-                  <input
-                    type="text"
-                    value={repayNotes}
-                    onChange={(e) => setRepayNotes(e.target.value)}
-                    placeholder="მაგ. ნაწილობრივი გადახდა"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
-                  />
-                </div>
-              </form>
+                    {targetSale ? (
+                      <div className="bg-emerald-950/40 border border-emerald-800/80 rounded-xl p-2.5 text-xs">
+                        <div className="flex items-center justify-between">
+                          <span className="text-emerald-400 font-bold">კონკრეტული ჩეკი #{targetSale.receipt_number}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSaleIdForRepay(null);
+                              setRepayAmountInput((((selectedCustomer.total_debt_tetri || 0)) / 100).toFixed(2));
+                            }}
+                            className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer"
+                          >
+                            FIFO-ზე გადართვა
+                          </button>
+                        </div>
+                        <div className="text-slate-300 mt-1 flex justify-between">
+                          <span>ამ ჩეკის დარჩენილი ვალი:</span>
+                          <span className="font-bold text-amber-400 tabular-nums">
+                            {formatTetri(targetSale.debt_remaining_tetri ?? targetSale.debt_amount_tetri)}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                        <span>განაწილების ტიპი:</span>
+                        <span className="text-emerald-400 font-medium">ავტომატური FIFO (უძველესიდან)</span>
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">
+                        შემოტანილი თანხა (₾) *
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        required
+                        autoFocus
+                        value={repayAmountInput}
+                        onChange={(e) => setRepayAmountInput(e.target.value)}
+                        className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg font-bold tabular-nums focus:border-emerald-500 focus:outline-none"
+                      />
+                      {/* Quick amount buttons */}
+                      <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setRepayAmountInput((maxRepayTetri / 100).toFixed(2))}
+                          className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
+                        >
+                          სრული დაფარვა
+                        </button>
+                        {[10, 20, 50, 100].map(amt => (
+                          <button
+                            key={amt}
+                            type="button"
+                            onClick={() => setRepayAmountInput(amt.toFixed(2))}
+                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
+                          >
+                            {amt} ₾
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">შენიშვნა</label>
+                      <input
+                        type="text"
+                        value={repayNotes}
+                        onChange={(e) => setRepayNotes(e.target.value)}
+                        placeholder="მაგ. ნაწილობრივი გადახდა"
+                        className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                  </form>
+                );
+              })()}
             </div>
 
             <div className="flex space-x-2 p-4 border-t border-slate-800 shrink-0 bg-slate-900/90">
