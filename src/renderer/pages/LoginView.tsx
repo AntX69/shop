@@ -127,7 +127,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       setClientToken(session.token);
       onLoginSuccess(session);
     } catch (err: any) {
-      setError(err.message === 'არასწორი PIN კოდი' ? 'არასწორი PIN კოდი. (საწყისი PIN: 1234)' : (err.message || 'არასწორი PIN კოდი'));
+      setError(err.message || 'არასწორი PIN კოდი');
       setPinInput('');
     } finally {
       setLoading(false);
@@ -306,7 +306,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
 
               {/* PIN circles display */}
               <div className="flex justify-center space-x-3 sm:space-x-4 mb-2.5 sm:mb-3">
-                {[0, 1, 2, 3].map((index) => (
+                {Array.from({ length: Math.max(4, pinInput.length) }, (_, i) => i).map((index) => (
                   <div
                     key={index}
                     className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full border-2 transition-all ${
@@ -316,21 +316,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                     }`}
                   />
                 ))}
-              </div>
-
-              {/* Quick Helper for initial PIN */}
-              <div className="text-center mb-3 sm:mb-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPinInput('1234');
-                    setError('');
-                  }}
-                  className="inline-flex items-center space-x-1.5 px-2.5 sm:px-3 py-1 rounded-full bg-slate-950 hover:bg-slate-800 border border-emerald-600/40 text-emerald-400 text-[11px] sm:text-xs font-semibold cursor-pointer transition-colors"
-                >
-                  <KeyRound className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                  <span>საწყისი PIN: 1234</span>
-                </button>
               </div>
 
               {/* Virtual Keypad (3x4) */}
@@ -376,21 +361,6 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                 {loading ? 'შემოწმება...' : 'შესვლა (Enter)'}
               </button>
 
-              {/* Reset / Clean onboarding option */}
-              <div className="mt-3 text-center">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (confirm('ნამდვილად გსურთ ბაზის განულება და თავიდან რეგისტრაცია?')) {
-                      await invokeIpc('auth:resetStoreDatabase');
-                      window.location.reload();
-                    }
-                  }}
-                  className="text-[11px] text-slate-500 hover:text-red-400 underline transition-colors cursor-pointer"
-                >
-                  ბაზის განულება / ახალი მფლობელის რეგისტრაცია
-                </button>
-              </div>
             </div>
           )}
 

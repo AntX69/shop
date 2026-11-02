@@ -279,7 +279,7 @@ export interface ExchangePayload {
   new_items: Array<{
     variant_id: number;
     quantity: number;
-    unit_price_tetri: number;
+    unit_price_tetri?: number; // ignored: new goods are priced from the database
   }>;
   cash_adjusted_tetri?: number; // optional client hint, authoritative difference calculated server-side
   cash_received_tetri?: number;

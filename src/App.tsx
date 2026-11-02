@@ -19,12 +19,24 @@ import { SalesHistoryView } from './renderer/pages/SalesHistoryView.tsx';
 import { FinanceView } from './renderer/pages/FinanceView.tsx';
 import { StaffView } from './renderer/pages/StaffView.tsx';
 import { SettingsView } from './renderer/pages/SettingsView.tsx';
-import { setClientToken } from './renderer/api/ipcClient.ts';
+import { invokeIpc, setClientToken } from './renderer/api/ipcClient.ts';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState<NavTab>('pos');
   const [storeName, setStoreName] = useState<string>('ჩემი მაღაზია');
+  const [lockMinutes, setLockMinutes] = useState<number>(15);
+
+  // Store name and auto-lock interval (owner-configurable, readable before login)
+  useEffect(() => {
+    invokeIpc<Record<string, string>>('settings:getPublic')
+      .then((s) => {
+        if (s.store_name) setStoreName(s.store_name);
+        const minutes = parseInt(s.inactivity_lock_minutes || '', 10);
+        if (Number.isInteger(minutes) && minutes >= 1 && minutes <= 240) setLockMinutes(minutes);
+      })
+      .catch(() => {});
+  }, [currentUser]);
 
   // Handle Login
   const handleLoginSuccess = (session: UserSession) => {
@@ -32,23 +44,23 @@ export default function App() {
     setActiveTab('pos');
   };
 
-  // Lock session
+  // Lock session: the session is revoked in the main process, not only forgotten here
   const handleLockSession = () => {
+    invokeIpc('auth:logout').catch(() => {});
     setCurrentUser(null);
     setClientToken('');
   };
 
-  // Inactivity auto-lock (15 minutes of idle)
+  // Inactivity auto-lock (configurable, 15 minutes by default)
   useEffect(() => {
     if (!currentUser) return;
 
     let timeoutId: any;
     const resetTimer = () => {
       clearTimeout(timeoutId);
-      // 15 minutes = 15 * 60 * 1000 = 900,000 ms
       timeoutId = setTimeout(() => {
         handleLockSession();
-      }, 900000);
+      }, lockMinutes * 60 * 1000);
     };
 
     window.addEventListener('mousemove', resetTimer);
@@ -62,7 +74,7 @@ export default function App() {
       window.removeEventListener('keydown', resetTimer);
       window.removeEventListener('click', resetTimer);
     };
-  }, [currentUser]);
+  }, [currentUser, lockMinutes]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {

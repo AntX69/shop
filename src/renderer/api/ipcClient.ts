@@ -7,14 +7,32 @@
  * or via local /api/ipc endpoint in Web Dev mode.
  */
 
-let activeAuthToken: string = localStorage.getItem('storepos_session_token') || '';
+// The token is kept for the life of the window only (sessionStorage survives a reload,
+// not an app restart; the main process forgets all sessions on restart anyway).
+const TOKEN_KEY = 'storepos_session_token';
+
+function readStoredToken(): string {
+  try {
+    return globalThis.sessionStorage?.getItem(TOKEN_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+let activeAuthToken: string = readStoredToken();
 
 export function setClientToken(token: string): void {
   activeAuthToken = token;
-  if (token) {
-    localStorage.setItem('storepos_session_token', token);
-  } else {
-    localStorage.removeItem('storepos_session_token');
+  try {
+    if (token) {
+      globalThis.sessionStorage?.setItem(TOKEN_KEY, token);
+    } else {
+      globalThis.sessionStorage?.removeItem(TOKEN_KEY);
+    }
+    // Tokens written by earlier versions to persistent storage are removed.
+    globalThis.localStorage?.removeItem(TOKEN_KEY);
+  } catch {
+    // Storage unavailable (tests, locked-down profile): the in-memory token still works.
   }
 }
 

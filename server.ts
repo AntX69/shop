@@ -57,7 +57,13 @@ async function startServer() {
     });
   }
 
-  const HOST = process.env.HOST || '127.0.0.1';
+  // Development bridge only (the desktop app does not run this server). It exposes the
+  // whole store API without TLS, so it only ever listens on the loopback interface.
+  const LOOPBACK = new Set(['127.0.0.1', '::1', 'localhost']);
+  const HOST = process.env.HOST && LOOPBACK.has(process.env.HOST) ? process.env.HOST : '127.0.0.1';
+  if (process.env.HOST && HOST !== process.env.HOST) {
+    console.warn(`[StorePOS Server] HOST=${process.env.HOST} ignored: the dev bridge listens on 127.0.0.1 only.`);
+  }
   app.listen(PORT, HOST, () => {
     console.log(`[StorePOS Server] Running at http://${HOST}:${PORT}`);
   });
