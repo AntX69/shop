@@ -26,6 +26,9 @@ export interface DigitRecognitionResult {
   box: BoundingBox;
 }
 
+/** Matches MAX_OCR_PIXELS in the renderer (which scales larger photos down) with headroom. */
+export const OCR_MAX_PIXELS = 4_000_000;
+
 export interface OcrServiceResult {
   code: string;
   confidence: number;
@@ -379,8 +382,33 @@ export class OcrService {
   }
 
   /**
+   * Checks an image sent for recognition: integer size within limits and exactly
+   * width x height RGBA pixels (typed array from the desktop bridge, or a plain array).
+   */
+  public static validateImage(pixels: unknown, width: unknown, height: unknown): { pixels: Uint8Array | number[]; width: number; height: number } {
+    const w = Number(width);
+    const h = Number(height);
+    if (!Number.isInteger(w) || !Number.isInteger(h) || w < 10 || h < 10 || w > 8192 || h > 8192 || w * h > OCR_MAX_PIXELS) {
+      throw new Error(`OCR: სურათის ზომა არასწორია (${width}x${height})`);
+    }
+    let data: Uint8Array | number[];
+    if (pixels instanceof Uint8Array || pixels instanceof Uint8ClampedArray) {
+      data = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength);
+    } else if (Array.isArray(pixels)) {
+      data = pixels as number[];
+    } else {
+      throw new Error('OCR: სურათის მონაცემები არასწორია');
+    }
+    if (data.length !== w * h * 4) {
+      throw new Error('OCR: სურათის მონაცემები არ შეესაბამება ზომას');
+    }
+    return { pixels: data, width: w, height: h };
+  }
+
+  /**
    * End-to-end 5-digit handwritten recognition.
-   * Processes raw RGBA pixels from webcam/canvas ROI.
+   * Processes raw RGBA pixels from webcam/canvas ROI. A position with no ink at all is
+   * returned as '' with confidence 0 (never a guessed digit), so the seller types it.
    */
   public async recognize5Digits(
     rgbaPixels: Uint8Array | number[],
@@ -395,6 +423,10 @@ export class OcrService {
     for (let i = 0; i < 5; i++) {
       const box = boxes[i] || { x: (i * width) / 5, y: 0, width: width / 5, height };
       const float28 = this.normalizeTo28x28Float(binary, width, box);
+      if (!float28.some((v) => v > 0)) {
+        digits.push({ digit: '', confidence: 0, box });
+        continue;
+      }
       const prediction = await OcrService.predictDigit(float28);
 
       digits.push({

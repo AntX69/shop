@@ -1,27 +1,32 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * Webcam Offline OCR Modal Component (M6).
  * Recognizes 5-digit handwritten store codes strictly offline using a local trained ONNX model.
- * Handles webcam devices, headless environments (Pending Hardware Verification),
- * image upload testing, manual digit correction, and mandatory seller confirmation before cart addition.
+ * Handles one or several cameras (the choice is remembered on this computer), missing or busy
+ * cameras and blocked camera access with plain instructions, image upload testing, manual digit
+ * correction, and mandatory seller confirmation before cart addition.
+ *
+ * Camera lifecycle: a stream is opened only while the dialog is open and is stopped when it
+ * closes, when another camera is chosen, or when the stream arrives after the dialog was
+ * already closed (no camera is ever left switched on).
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Product, ProductVariant } from '../../shared/types.ts';
 import { formatTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { recognize5DigitsFromCanvas, OcrResult, BoundingBox } from '../utils/offlineOcr.ts';
 import { SmartDigitInput } from './SmartDigitInput.tsx';
-import { 
-  Camera, 
-  RotateCw, 
-  CheckCircle2, 
-  AlertCircle, 
-  X, 
-  Sparkles, 
-  Scan, 
+import {
+  Camera,
+  RotateCw,
+  CheckCircle2,
+  AlertCircle,
+  X,
+  Sparkles,
+  Scan,
   ShoppingBag,
   SlidersHorizontal,
   Upload,
@@ -34,23 +39,65 @@ interface WebcamModalProps {
   onConfirmProduct: (product: Product, variant: ProductVariant, code: string) => void;
 }
 
+/** Digits below this confidence are listed for the seller to check. */
+const LOW_DIGIT_CONFIDENCE = 70;
+const CAMERA_CHOICE_KEY = 'storepos_ocr_camera';
+const EMPTY_DIGITS = ['', '', '', '', ''];
+
+function readCameraChoice(): string {
+  try { return globalThis.localStorage?.getItem(CAMERA_CHOICE_KEY) || ''; } catch { return ''; }
+}
+
+function saveCameraChoice(deviceId: string): void {
+  try {
+    if (deviceId) globalThis.localStorage?.setItem(CAMERA_CHOICE_KEY, deviceId);
+    else globalThis.localStorage?.removeItem(CAMERA_CHOICE_KEY);
+  } catch {}
+}
+
+function stopStream(stream: MediaStream | null): void {
+  stream?.getTracks().forEach((t) => t.stop());
+}
+
+/** Turns a getUserMedia failure into an instruction the seller can act on. */
+export function describeCameraError(err: any): string {
+  const name = String(err?.name || '');
+  if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
+    return 'კამერაზე წვდომა დაბლოკილია. Windows-ის პარამეტრებში (Settings → Privacy & security → Camera) ჩართეთ „Camera access“ და „Let desktop apps access your camera“, შემდეგ დააჭირეთ „ხელახლა ცდა“.';
+  }
+  if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError') {
+    return 'კამერა ვერ ჩაირთო: სავარაუდოდ მას სხვა პროგრამა იყენებს (მაგ. Camera, Zoom, Skype, Teams). დახურეთ ის პროგრამა და დააჭირეთ „ხელახლა ცდა“.';
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
+    return 'კამერა ვერ მოიძებნა. შეაერთეთ კამერა და დააჭირეთ „ხელახლა ცდა“.';
+  }
+  return `კამერის ჩართვა ვერ მოხერხდა${name ? ` (${name})` : ''}. დააჭირეთ „ხელახლა ცდა“ ან შეიყვანეთ კოდი ხელით.`;
+}
+
 export const WebcamModal: React.FC<WebcamModalProps> = ({
   isOpen,
   onClose,
   onConfirmProduct,
 }) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  // The camera asked for ('' = system default) and the one actually streaming.
+  const [requestedDeviceId, setRequestedDeviceId] = useState<string>('');
+  const [activeDeviceId, setActiveDeviceId] = useState<string>('');
+  // One camera session per opening (and per "retry"); 0 while the dialog is closed.
+  const [cameraSession, setCameraSession] = useState<number>(0);
+  const sessionCounterRef = useRef<number>(0);
   const [cameraError, setCameraError] = useState<string>('');
+  const [cameraNotice, setCameraNotice] = useState<string>('');
   const [isRecognizing, setIsRecognizing] = useState<boolean>(false);
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
-  
-  // 5 editable digits
-  const [digitInputs, setDigitInputs] = useState<string[]>(['', '', '', '', '']);
+
+  // 5 editable digits ('' = not recognised yet, the seller types it)
+  const [digitInputs, setDigitInputs] = useState<string[]>(EMPTY_DIGITS);
 
   // Matched product lookup
   const [matchedItem, setMatchedItem] = useState<{
@@ -59,74 +106,108 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     code_used: string;
   } | null>(null);
   const [lookupError, setLookupError] = useState<string>('');
+  // Only the answer for the code currently in the boxes may be shown (older lookups are dropped).
+  const latestLookupRef = useRef<string>('');
 
   // Toggle binarized threshold preview
   const [showThresholdPreview, setShowThresholdPreview] = useState<boolean>(false);
 
-  // Initialize camera list
+  // A video element that (re)appears gets the running stream.
+  const setVideoElement = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    if (el && streamRef.current && el.srcObject !== streamRef.current) {
+      el.srcObject = streamRef.current;
+    }
+  }, []);
+
+  // Every opening starts clean: no code, product or message from the previous use.
   useEffect(() => {
-    if (!isOpen) return;
-
-    const getCameras = async () => {
-      try {
-        setCameraError('');
-        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-          setCameraError('ვებკამერა არ არის შეერთებული (Pending Hardware Verification)');
-          return;
-        }
-
-        const allDevices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevs = allDevices.filter(d => d.kind === 'videoinput');
-        setDevices(videoDevs);
-
-        if (videoDevs.length > 0) {
-          setSelectedDeviceId(videoDevs[0].deviceId);
-        } else {
-          setCameraError('ვებკამერა არ არის შეერთებული (Pending Hardware Verification)');
-        }
-      } catch (err: any) {
-        setCameraError('ვებკამერა არ არის შეერთებული (Pending Hardware Verification)');
-      }
-    };
-
-    getCameras();
+    if (!isOpen) {
+      setCameraSession(0);
+      return;
+    }
+    setOcrResult(null);
+    setDigitInputs(EMPTY_DIGITS);
+    setMatchedItem(null);
+    setLookupError('');
+    setCameraNotice('');
+    latestLookupRef.current = '';
+    setRequestedDeviceId(readCameraChoice());
+    setCameraSession(++sessionCounterRef.current);
   }, [isOpen]);
 
-  // Start video stream when selected camera changes
+  // Open the camera while the dialog is open; stop it on close, on camera change or on retry.
   useEffect(() => {
-    if (!isOpen || !selectedDeviceId) return;
+    if (!isOpen || cameraSession === 0) return;
+    let cancelled = false;
+    let stream: MediaStream | null = null;
 
-    let currentStream: MediaStream | null = null;
-
-    const startStream = async () => {
+    const refreshDevices = async () => {
       try {
-        setCameraError('');
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            deviceId: { exact: selectedDeviceId },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        });
-
-        currentStream = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-      } catch (err: any) {
-        setCameraError('ვებკამერის წვდომა ვერ მოხერხდა (Pending Hardware Verification)');
-      }
+        const list = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+        if (!cancelled) setDevices(list);
+      } catch {}
     };
 
-    startStream();
+    const start = async () => {
+      setCameraError('');
+      setCameraNotice('');
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError('ამ კომპიუტერზე კამერა მიუწვდომელია. შეიყვანეთ კოდი ხელით ან გამოიყენეთ შტრიხკოდის სკანერი.');
+        return;
+      }
+      const video: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 } };
+      if (requestedDeviceId) video.deviceId = { exact: requestedDeviceId };
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+      } catch (err: any) {
+        if (cancelled) return;
+        // The remembered camera is not connected now: use the default one this time (the
+        // choice stays saved, so it is used again once it is plugged back in).
+        if (requestedDeviceId && (err?.name === 'OverconstrainedError' || err?.name === 'NotFoundError')) {
+          setRequestedDeviceId('');
+          return;
+        }
+        setCameraError(describeCameraError(err));
+        await refreshDevices();
+        return;
+      }
+      if (cancelled) {
+        // The dialog was closed (or the camera changed) while the camera was starting.
+        stopStream(stream);
+        return;
+      }
+      streamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      const track = stream.getVideoTracks()[0];
+      track?.addEventListener('ended', () => {
+        if (!cancelled) setCameraError('კამერა გაითიშა. შეაერთეთ ის თავიდან და დააჭირეთ „ხელახლა ცდა“.');
+      });
+      setActiveDeviceId(track?.getSettings().deviceId || requestedDeviceId);
+      // Camera names are listed only once access has been granted.
+      await refreshDevices();
+    };
+
+    start();
+    const onDeviceChange = () => { refreshDevices(); };
+    navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
 
     return () => {
-      if (currentStream) {
-        currentStream.getTracks().forEach(t => t.stop());
-      }
+      cancelled = true;
+      navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
+      stopStream(stream);
+      if (streamRef.current === stream) streamRef.current = null;
+      if (videoRef.current) videoRef.current.srcObject = null;
     };
-  }, [isOpen, selectedDeviceId]);
+  }, [isOpen, requestedDeviceId, cameraSession]);
+
+  const chooseCamera = (deviceId: string) => {
+    saveCameraChoice(deviceId);
+    setActiveDeviceId(deviceId);
+    setRequestedDeviceId(deviceId);
+  };
+
+  const retryCamera = () => setCameraSession(++sessionCounterRef.current);
 
   // Process canvas through offline ONNX OCR pipeline
   const processCanvasImage = async (canvas: HTMLCanvasElement, roi: BoundingBox) => {
@@ -134,15 +215,22 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
       setIsRecognizing(true);
       setLookupError('');
       setMatchedItem(null);
+      setCameraNotice('');
 
       const result = await recognize5DigitsFromCanvas(canvas, roi);
       setOcrResult(result);
 
-      const digitsArr = result.code.split('').slice(0, 5);
-      while (digitsArr.length < 5) digitsArr.push('0');
+      // Unrecognised positions stay empty for the seller; a digit is never invented.
+      const digitsArr = EMPTY_DIGITS.map((_, i) => (/^\d$/.test(result.digits[i]?.digit || '') ? result.digits[i].digit : ''));
       setDigitInputs(digitsArr);
 
-      await checkProductLookup(result.code);
+      if (digitsArr.every((d) => d !== '')) {
+        await checkProductLookup(digitsArr.join(''));
+      } else {
+        latestLookupRef.current = '';
+        const missing = digitsArr.map((d, i) => (d ? null : `#${i + 1}`)).filter(Boolean).join(', ');
+        setLookupError(`ციფრ(ებ)ი ${missing} ვერ ამოიცნო. შეიყვანეთ ხელით ან გადაიღეთ თავიდან.`);
+      }
     } catch (err: any) {
       setLookupError('OCR ამოცნობის შეცდომა: ' + (err.message || ''));
     } finally {
@@ -157,7 +245,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     const canvas = canvasRef.current;
 
     if (video.videoWidth === 0 || video.videoHeight === 0) {
-      setCameraError('კამერა ჯერ არ არის მზად, გთხოვთ დაელოდოთ გამოსახულებას');
+      setCameraNotice('კამერა ჯერ არ არის მზად. დაელოდეთ გამოსახულებას და სცადეთ თავიდან.');
       return;
     }
 
@@ -230,6 +318,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
   // Upload an image file to test OCR on real user photos/scans
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file || !canvasRef.current) return;
 
     const reader = new FileReader();
@@ -251,12 +340,14 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
           height: Math.floor(img.height * 0.8),
         });
       };
+      img.onerror = () => setLookupError('ფოტოს გახსნა ვერ მოხერხდა');
       img.src = event.target?.result as string;
     };
     reader.readAsDataURL(file);
   };
 
   const checkProductLookup = async (code: string) => {
+    latestLookupRef.current = code;
     if (!/^\d{5}$/.test(code)) {
       setLookupError('კოდი უნდა იყოს ზუსტად 5-ნიშნა რიცხვი (10000-99999)');
       setMatchedItem(null);
@@ -266,6 +357,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     try {
       setLookupError('');
       const found = await invokeIpc<any>('products:lookupCode', { code });
+      if (latestLookupRef.current !== code) return; // the digits changed meanwhile
       if (found) {
         setMatchedItem(found);
       } else {
@@ -273,29 +365,23 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
         setLookupError(`კოდით "${code}" პროდუქტი ვერ მოიძებნა`);
       }
     } catch (err: any) {
+      if (latestLookupRef.current !== code) return;
       setLookupError(err.message || 'ძებნის შეცდომა');
     }
   };
 
-  // When seller edits a digit manually in the 5 boxes
-  const handleDigitChange = (index: number, val: string) => {
-    const clean = val.replace(/\D/g, '').slice(-1);
-    const updated = [...digitInputs];
-    updated[index] = clean;
-    setDigitInputs(updated);
-
-    const fullCode = updated.join('');
-    if (fullCode.length === 5) {
-      checkProductLookup(fullCode);
-    }
-  };
+  const currentCode = digitInputs.join('');
+  const doubtfulDigits = (ocrResult?.digits || [])
+    .map((d, i) => ({ position: i + 1, digit: d.digit, confidence: d.confidence }))
+    .filter((d) => d.digit !== '' && d.confidence < LOW_DIGIT_CONFIDENCE);
+  const canConfirm = !!matchedItem && digitInputs.every((d) => d !== '') && matchedItem.code_used === currentCode;
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-4 select-none">
       <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-2xl w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
-        
+
         {/* Hidden canvas & file inputs for offline OCR processing */}
         <canvas ref={canvasRef} className="hidden" />
         <input
@@ -318,7 +404,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
             </div>
           </div>
 
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors cursor-pointer">
+          <button onClick={onClose} aria-label="დახურვა" className="text-slate-400 hover:text-white transition-colors cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -328,13 +414,14 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
 
           {/* Camera Selector & Tools Bar */}
           <div className="flex items-center justify-between text-xs">
-            <div className="flex items-center space-x-2">
-              <span className="text-slate-400 font-medium">კამერა:</span>
+            <div className="flex items-center space-x-2 min-w-0">
+              <span className="text-slate-400 font-medium shrink-0">კამერა:</span>
               {devices.length > 0 ? (
                 <select
-                  value={selectedDeviceId}
-                  onChange={(e) => setSelectedDeviceId(e.target.value)}
-                  className="px-2.5 py-1 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
+                  value={activeDeviceId || requestedDeviceId || devices[0]?.deviceId || ''}
+                  onChange={(e) => chooseCamera(e.target.value)}
+                  aria-label="კამერის არჩევა"
+                  className="max-w-[16rem] truncate px-2.5 py-1 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
                 >
                   {devices.map((d, idx) => (
                     <option key={d.deviceId || idx} value={d.deviceId}>
@@ -344,12 +431,12 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 </select>
               ) : (
                 <span className="text-amber-400 font-mono text-[10px] sm:text-[11px] bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40">
-                  Pending Hardware Verification
+                  კამერა არ მოიძებნა
                 </span>
               )}
             </div>
 
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowThresholdPreview(!showThresholdPreview)}
@@ -372,9 +459,17 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 <AlertCircle className="w-8 h-8 sm:w-10 sm:h-10 text-amber-500 mx-auto mb-2" />
                 <p className="text-xs sm:text-sm font-semibold text-slate-200">{cameraError}</p>
                 <p className="text-[11px] sm:text-xs text-slate-400 mt-1 mb-3">
-                  ტესტირებისთვის შეგიძლიათ ატვირთოთ ფოტო ან გაუშვათ სატესტო 5-ნიშნა კოდის ამოცნობა:
+                  შეგიძლიათ ასევე ატვირთოთ კოდის ფოტო ან გაუშვათ სატესტო 5-ნიშნა კოდის ამოცნობა:
                 </p>
-                <div className="flex items-center justify-center space-x-2.5 sm:space-x-3">
+                <div className="flex items-center justify-center flex-wrap gap-2.5 sm:gap-3">
+                  <button
+                    type="button"
+                    onClick={retryCamera}
+                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-lg border border-slate-600 flex items-center space-x-1.5 cursor-pointer transition-colors"
+                  >
+                    <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>ხელახლა ცდა</span>
+                  </button>
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
@@ -396,7 +491,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
             ) : (
               <>
                 <video
-                  ref={videoRef}
+                  ref={setVideoElement}
                   autoPlay
                   playsInline
                   muted
@@ -474,6 +569,13 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 <span>{isRecognizing ? 'ამოცნობა მიმდინარეობს...' : 'სატესტო 5-ნიშნა კოდის გაშვება (ONNX)'}</span>
               </button>
             )}
+
+            {cameraNotice && (
+              <div className="mt-2 text-[11px] text-amber-300 flex items-center justify-center space-x-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{cameraNotice}</span>
+              </div>
+            )}
           </div>
 
           {/* 5 Recognized Editable Digits */}
@@ -484,7 +586,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               </span>
               {ocrResult && (
                 <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border tabular-nums ${
-                  ocrResult.confidence >= 75
+                  ocrResult.confidence >= 75 && doubtfulDigits.length === 0
                     ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
                     : 'bg-amber-950/60 text-amber-400 border-amber-800'
                 }`}>
@@ -493,34 +595,34 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               )}
             </div>
 
-            {/* Low confidence advisory alert */}
-            {ocrResult && ocrResult.confidence < 70 && (
+            {/* Low confidence advisory alert: per digit, so one doubtful digit is never hidden by an average */}
+            {ocrResult && (doubtfulDigits.length > 0 || ocrResult.confidence < LOW_DIGIT_CONFIDENCE) && (
               <div className="text-[10px] sm:text-[11px] text-amber-300 bg-amber-950/40 border border-amber-800/50 px-2.5 py-1 rounded-lg flex items-center space-x-2">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
-                <span>ამოცნობის სანდოობა დაბალია (&lt;70%). გთხოვთ გადაამოწმოთ და საჭიროების შემთხვევაში ხელით შეასწოროთ 5-ნიშნა კოდი.</span>
+                <span>
+                  {doubtfulDigits.length > 0
+                    ? `საეჭვო ციფრები: ${doubtfulDigits.map((d) => `#${d.position} („${d.digit}“, ${d.confidence}%)`).join(', ')}. გადაამოწმეთ და საჭიროების შემთხვევაში ხელით შეასწორეთ.`
+                    : `ამოცნობის სანდოობა დაბალია (<${LOW_DIGIT_CONFIDENCE}%). გთხოვთ გადაამოწმოთ და საჭიროების შემთხვევაში ხელით შეასწოროთ 5-ნიშნა კოდი.`}
+                </span>
               </div>
             )}
 
             <div className="flex justify-center py-1">
               <SmartDigitInput
                 length={5}
-                value={digitInputs.join('')}
+                value={currentCode}
+                slotValues={digitInputs}
                 autoFocus={true}
                 onChange={(code, slots) => {
-                  if (slots) {
-                    setDigitInputs(slots);
+                  const next = slots ? [...slots] : code.padEnd(5, ' ').split('').map(c => c.trim());
+                  setDigitInputs(next);
+                  if (next.every((d) => d !== '')) {
+                    checkProductLookup(next.join(''));
                   } else {
-                    const arr = code.padEnd(5, ' ').split('').map(c => c.trim());
-                    setDigitInputs(arr);
-                  }
-                  if (code.length === 5) {
-                    checkProductLookup(code);
-                  } else {
+                    latestLookupRef.current = '';
                     setMatchedItem(null);
+                    setLookupError('');
                   }
-                }}
-                onComplete={(code) => {
-                  checkProductLookup(code);
                 }}
               />
             </div>
@@ -534,7 +636,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
           </div>
 
           {/* Matched Product Preview & Confirmation Button */}
-          {matchedItem && (
+          {canConfirm && matchedItem && (
             <div className="bg-emerald-950/30 border border-emerald-800/60 p-3 sm:p-4 rounded-2xl flex items-center justify-between animate-in fade-in slide-in-from-bottom-2 gap-2">
               <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
                 <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-slate-950 border border-emerald-700/50 flex items-center justify-center text-emerald-400 shrink-0">
@@ -543,7 +645,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 <div className="min-w-0">
                   <div className="text-xs sm:text-sm font-extrabold text-white truncate">{matchedItem.product.name}</div>
                   <div className="text-[11px] sm:text-xs text-slate-300 truncate">
-                    ვარიანტი: <span className="text-emerald-300 font-bold">{matchedItem.variant.variant_name}</span> &bull; 
+                    ვარიანტი: <span className="text-emerald-300 font-bold">{matchedItem.variant.variant_name}</span> &bull;
                     მარაგი: <span className="font-bold text-white tabular-nums">{matchedItem.variant.stock_quantity} ც</span>
                   </div>
                   <div className="text-[11px] sm:text-xs font-extrabold text-emerald-400 mt-0.5 tabular-nums">

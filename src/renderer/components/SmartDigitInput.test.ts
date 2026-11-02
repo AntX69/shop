@@ -1,145 +1,83 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
- * Milestone M12 Test Suite: SmartDigitInput In-Place Slot Editing & Deletion UX
- * 
- * Tests:
- * 1. Middle-cell deletion preserves trailing slots (deleting middle '0' from '50001' leaves ['5','0','','0','1'])
- * 2. Backspace on empty cell retreats and clears previous cell
- * 3. Delete key clears current cell without shifting digits
- * 4. Paste 5 digits fills all slots cleanly
- * 5. Non-digit input is strictly rejected
+ *
+ * SmartDigitInput slot editing: these tests run the same functions the component uses
+ * (src/renderer/utils/digitSlots.ts), not a copy of them.
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { applyKey, applyPaste, isComplete, normalizeSlots, slotsFromValue, slotsKey } from '../utils/digitSlots.ts';
 
-/**
- * Pure slot state transition engine reflecting SmartDigitInput's logic
- */
-class SmartSlotEngine {
-  slots: string[];
-  focusedIndex: number;
+test('SmartDigitInput: Backspace on a filled middle cell clears only that cell, nothing shifts', () => {
+  const r = applyKey(['5', '0', '0', '0', '1'], 2, 'Backspace')!;
+  assert.deepEqual(r.slots, ['5', '0', '', '0', '1'], 'cells 3 and 4 stay where they are');
+  assert.equal(r.focus, 2, 'focus stays on the cleared cell');
+  assert.equal(r.changed, true);
+});
 
-  constructor(initial = ['', '', '', '', '']) {
-    this.slots = [...initial];
-    this.focusedIndex = 0;
+test('SmartDigitInput: Backspace on an empty cell clears the previous cell and moves there', () => {
+  const r = applyKey(['5', '0', '', '0', '1'], 2, 'Backspace')!;
+  assert.deepEqual(r.slots, ['5', '', '', '0', '1']);
+  assert.equal(r.focus, 1);
+});
+
+test('SmartDigitInput: Backspace on the first empty cell changes nothing', () => {
+  const r = applyKey(['', '2', '3', '4', '5'], 0, 'Backspace')!;
+  assert.deepEqual(r.slots, ['', '2', '3', '4', '5']);
+  assert.equal(r.changed, false);
+});
+
+test('SmartDigitInput: Delete clears the current cell without shifting or moving focus', () => {
+  const r = applyKey(['5', '0', '0', '0', '1'], 2, 'Delete')!;
+  assert.deepEqual(r.slots, ['5', '0', '', '0', '1']);
+  assert.equal(r.focus, 2);
+});
+
+test('SmartDigitInput: a corrected middle digit overwrites only that cell', () => {
+  // OCR read 12845, the seller fixes the third digit
+  const r = applyKey(['1', '2', '8', '4', '5'], 2, '3')!;
+  assert.deepEqual(r.slots, ['1', '2', '3', '4', '5']);
+  assert.equal(r.focus, 3, 'focus moves to the next cell');
+  const last = applyKey(r.slots, 4, '9')!;
+  assert.equal(last.focus, 4, 'the last cell keeps focus');
+});
+
+test('SmartDigitInput: arrows, Home and End only move the focus', () => {
+  const s = ['1', '2', '3', '4', '5'];
+  assert.equal(applyKey(s, 2, 'ArrowLeft')!.focus, 1);
+  assert.equal(applyKey(s, 2, 'ArrowRight')!.focus, 3);
+  assert.equal(applyKey(s, 0, 'ArrowLeft')!.focus, 0);
+  assert.equal(applyKey(s, 4, 'ArrowRight')!.focus, 4);
+  assert.equal(applyKey(s, 3, 'Home')!.focus, 0);
+  assert.equal(applyKey(s, 1, 'End')!.focus, 4);
+  for (const k of ['ArrowLeft', 'ArrowRight', 'Home', 'End']) assert.equal(applyKey(s, 2, k)!.changed, false);
+});
+
+test('SmartDigitInput: letters and symbols are not digits; Tab/Enter/Escape are left to the screen', () => {
+  for (const k of ['a', 'ა', '!', ' ', '-', 'Tab', 'Enter', 'Escape', 'F2']) {
+    assert.equal(applyKey(['', '', '', '', ''], 0, k), null, `key ${k}`);
   }
-
-  handleKeyDown(key: string, index: number): { nextFocus: number; value: string } {
-    this.focusedIndex = index;
-    const newSlots = [...this.slots];
-
-    if (key === 'Backspace') {
-      if (newSlots[index] !== '') {
-        // Clear current slot in place without shifting
-        newSlots[index] = '';
-        this.slots = newSlots;
-        return { nextFocus: Math.max(0, index - 1), value: newSlots.join('') };
-      } else if (index > 0) {
-        // Already empty, retreat to previous slot and clear it
-        newSlots[index - 1] = '';
-        this.slots = newSlots;
-        return { nextFocus: index - 1, value: newSlots.join('') };
-      }
-    } else if (key === 'Delete') {
-      // Clear cell in place, do not move focus, do not shift digits
-      newSlots[index] = '';
-      this.slots = newSlots;
-      return { nextFocus: index, value: newSlots.join('') };
-    } else if (key === 'ArrowLeft') {
-      return { nextFocus: Math.max(0, index - 1), value: newSlots.join('') };
-    } else if (key === 'ArrowRight') {
-      return { nextFocus: Math.min(4, index + 1), value: newSlots.join('') };
-    } else if (/^\d$/.test(key)) {
-      // Type digit into slot
-      newSlots[index] = key;
-      this.slots = newSlots;
-      return { nextFocus: Math.min(4, index + 1), value: newSlots.join('') };
-    }
-
-    return { nextFocus: index, value: newSlots.join('') };
-  }
-
-  handlePaste(pastedText: string, index: number): { nextFocus: number; value: string } {
-    const digits = pastedText.replace(/\D/g, '').slice(0, 5);
-    const newSlots = [...this.slots];
-
-    if (digits.length >= 5) {
-      for (let i = 0; i < 5; i++) {
-        newSlots[i] = digits[i];
-      }
-      this.slots = newSlots;
-      return { nextFocus: 4, value: newSlots.join('') };
-    } else {
-      let cur = index;
-      for (const d of digits) {
-        if (cur < 5) {
-          newSlots[cur] = d;
-          cur++;
-        }
-      }
-      this.slots = newSlots;
-      return { nextFocus: Math.min(4, cur), value: newSlots.join('') };
-    }
-  }
-}
-
-test('SmartDigitInput: Middle-cell Backspace clears cell without shifting trailing digits', () => {
-  const engine = new SmartSlotEngine(['5', '0', '0', '0', '1']);
-  
-  // User hits backspace on index 2 (the middle 0)
-  const res = engine.handleKeyDown('Backspace', 2);
-
-  // Crucial M12 invariant: slots 3 and 4 MUST NOT shift left!
-  assert.deepEqual(engine.slots, ['5', '0', '', '0', '1'], 'Slot 2 is cleared, slots 3 and 4 remain in place');
-  assert.equal(res.nextFocus, 1, 'Focus retreats to slot 1');
 });
 
-test('SmartDigitInput: Backspace on already-empty cell retreats and clears previous cell', () => {
-  const engine = new SmartSlotEngine(['5', '0', '', '0', '1']);
-
-  // Focus is on index 2 (which is empty) and user hits backspace again
-  const res = engine.handleKeyDown('Backspace', 2);
-
-  // Must clear slot 1 and move focus to slot 1
-  assert.deepEqual(engine.slots, ['5', '', '', '0', '1']);
-  assert.equal(res.nextFocus, 1);
+test('SmartDigitInput: a full-length paste fills every cell from the first', () => {
+  const r = applyPaste(['', '', '', '', ''], 3, '54321')!;
+  assert.deepEqual(r.slots, ['5', '4', '3', '2', '1']);
+  assert.equal(r.focus, 4);
 });
 
-test('SmartDigitInput: Delete key clears current cell without shifting and without moving focus', () => {
-  const engine = new SmartSlotEngine(['5', '0', '0', '0', '1']);
-
-  // User hits Delete on index 2
-  const res = engine.handleKeyDown('Delete', 2);
-
-  assert.deepEqual(engine.slots, ['5', '0', '', '0', '1']);
-  assert.equal(res.nextFocus, 2, 'Focus stays on deleted cell');
+test('SmartDigitInput: a short paste fills from the focused cell; non-digits are dropped', () => {
+  const r = applyPaste(['1', '', '', '', '5'], 1, '2-3')!;
+  assert.deepEqual(r.slots, ['1', '2', '3', '', '5']);
+  assert.equal(applyPaste(['', '', '', '', ''], 0, 'abc'), null);
 });
 
-test('SmartDigitInput: 5-digit Paste fills all slots without displacement', () => {
-  const engine = new SmartSlotEngine(['', '', '', '', '']);
-
-  const res = engine.handlePaste('54321', 0);
-
-  assert.deepEqual(engine.slots, ['5', '4', '3', '2', '1']);
-  assert.equal(res.value, '54321');
-  assert.equal(res.nextFocus, 4);
-});
-
-test('SmartDigitInput: Non-digit characters are rejected', () => {
-  const engine = new SmartSlotEngine(['', '', '', '', '']);
-
-  // Typing letters
-  const res1 = engine.handleKeyDown('a', 0);
-  assert.deepEqual(engine.slots, ['', '', '', '', '']);
-
-  const res2 = engine.handleKeyDown('!', 0);
-  assert.deepEqual(engine.slots, ['', '', '', '', '']);
-
-  // Typing valid digit
-  const res3 = engine.handleKeyDown('7', 0);
-  assert.deepEqual(engine.slots, ['7', '', '', '', '']);
-  assert.equal(res3.nextFocus, 1);
+test('SmartDigitInput: explicit cell values keep gaps; plain values fill from the left', () => {
+  assert.deepEqual(normalizeSlots(['1', '', '3', '4', '5'], 5), ['1', '', '3', '4', '5']);
+  assert.deepEqual(normalizeSlots(['1', 'x', '3'], 5), ['1', '', '3', '', '']);
+  assert.deepEqual(slotsFromValue('1345', 5), ['1', '3', '4', '5', '']);
+  assert.notEqual(slotsKey(['1', '', '3', '4', '5']), slotsKey(['1', '3', '4', '5', '']));
+  assert.equal(isComplete(['1', '2', '3', '4', '5']), true);
+  assert.equal(isComplete(['1', '', '3', '4', '5']), false);
 });

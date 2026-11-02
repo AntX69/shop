@@ -133,7 +133,10 @@ const routes: Record<string, Route> = {
   },
   'ocr:recognize': {
     access: 'user',
-    handler: (c) => new OcrService().recognize5Digits(p(c).pixels, p(c).width, p(c).height)
+    handler: (c) => {
+      const img = OcrService.validateImage(p(c).pixels, p(c).width, p(c).height);
+      return new OcrService().recognize5Digits(img.pixels, img.width, img.height);
+    }
   },
 
   // 6. Inventory

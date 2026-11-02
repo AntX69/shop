@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { binarizeGrayscale, normalizeTo28x28, classifyNormalizedDigit, find5DigitBoxes } from './offlineOcr.ts';
+import { binarizeGrayscale, normalizeTo28x28, classifyNormalizedDigit, find5DigitBoxes, ocrInputSize, MAX_OCR_PIXELS } from './offlineOcr.ts';
 
 test('binarizeGrayscale separates dark strokes from light background using Otsu threshold', () => {
   const width = 10;
@@ -63,4 +63,12 @@ test('classifyNormalizedDigit returns a valid digit from 0 to 9 with confidence 
   assert.equal(typeof res.digit, 'number');
   assert.ok(res.digit >= 0 && res.digit <= 9);
   assert.ok(res.confidence >= 0 && res.confidence <= 100);
+});
+
+test('ocrInputSize: webcam regions are sent unchanged, large photos are scaled down proportionally', () => {
+  assert.deepEqual(ocrInputSize(832, 201), { width: 832, height: 201 }, '1280x720 frame region');
+  assert.deepEqual(ocrInputSize(1248, 302), { width: 1248, height: 302 }, '1920x1080 frame region');
+  const photo = ocrInputSize(3200, 2400); // 80% of a 12-megapixel phone photo
+  assert.ok(photo.width * photo.height <= MAX_OCR_PIXELS, `${photo.width}x${photo.height}`);
+  assert.ok(Math.abs(photo.width / photo.height - 3200 / 2400) < 0.01, 'aspect ratio kept');
 });

@@ -118,3 +118,41 @@ describe('OcrService preprocessing keeps digit proportions', () => {
     assert.equal((await ocr.recognize5Digits(mixed, width, height)).code, '10101');
   });
 });
+
+describe('OcrService never invents a digit and checks its input', () => {
+  test('a position without ink is returned empty with confidence 0', async () => {
+    const width = 200;
+    const height = 60;
+    const rgba = new Uint8Array(width * height * 4).fill(255);
+    // strokes in positions 1, 2, 4 and 5; position 3 is blank
+    for (const slot of [0, 1, 3, 4]) {
+      const cx = slot * 40 + 20;
+      for (let y = 12; y < 48; y++) for (let x = cx - 2; x <= cx + 2; x++) {
+        const i = (y * width + x) * 4;
+        rgba[i] = rgba[i + 1] = rgba[i + 2] = 0;
+      }
+    }
+    const result = await new OcrService().recognize5Digits(rgba, width, height);
+    assert.equal(result.digits.length, 5);
+    assert.equal(result.digits[2].digit, '', 'blank position stays empty');
+    assert.equal(result.digits[2].confidence, 0);
+    assert.equal(result.code, '1111', 'code holds only the recognised digits');
+    assert.equal(result.isFiveDigits, false);
+    assert.ok(result.confidence <= 80, `average includes the missing digit (got ${result.confidence})`);
+  });
+
+  test('validateImage accepts typed arrays and plain arrays of exactly width x height x 4', () => {
+    const typed = OcrService.validateImage(new Uint8ClampedArray(20 * 10 * 4), 20, 10);
+    assert.ok(typed.pixels instanceof Uint8Array);
+    assert.equal(OcrService.validateImage(new Array(20 * 10 * 4).fill(0), 20, 10).width, 20);
+  });
+
+  test('validateImage refuses wrong sizes and oversized images before any memory is allocated', () => {
+    assert.throws(() => OcrService.validateImage(new Uint8Array(10), 20, 10), /არ შეესაბამება/);
+    assert.throws(() => OcrService.validateImage(new Uint8Array(0), 20.5, 10), /ზომა/);
+    assert.throws(() => OcrService.validateImage(new Uint8Array(0), 5, 10), /ზომა/);
+    assert.throws(() => OcrService.validateImage(new Uint8Array(0), 8000, 8000), /ზომა/);
+    assert.throws(() => OcrService.validateImage('not pixels', 20, 10), /მონაცემები/);
+    assert.throws(() => OcrService.validateImage({ length: 800 }, 20, 10), /მონაცემები/);
+  });
+});

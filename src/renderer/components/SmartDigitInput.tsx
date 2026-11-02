@@ -1,7 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * SmartDigitInput Component (M12 Production Hardened).
  * Bulletproof multi-cell numeric input:
  * - Local slot state guarantees middle cell deletion never shifts subsequent digits.
@@ -10,13 +10,17 @@
  * - ArrowLeft / ArrowRight / Home / End keyboard navigation.
  * - Single-stroke full code paste distribution.
  * - Unified across PIN (isMasked), 5-digit product codes, and OCR confirmation.
+ * The slot rules live in ../utils/digitSlots.ts (unit tested).
  */
 
 import React, { useRef, useState, useEffect } from 'react';
+import { applyKey, applyPaste, isComplete, normalizeSlots, slotsFromValue, slotsKey, SlotUpdate } from '../utils/digitSlots.ts';
 
 export interface SmartDigitInputProps {
   length: number;
   value: string;
+  /** Exact cells (with gaps), e.g. an OCR result with an unrecognised middle digit. Takes precedence over value. */
+  slotValues?: string[];
   onChange: (value: string, slots?: string[]) => void;
   onComplete?: (value: string) => void;
   autoFocus?: boolean;
@@ -30,6 +34,7 @@ export interface SmartDigitInputProps {
 export const SmartDigitInput: React.FC<SmartDigitInputProps> = ({
   length,
   value,
+  slotValues,
   onChange,
   onComplete,
   autoFocus = false,
@@ -40,32 +45,22 @@ export const SmartDigitInput: React.FC<SmartDigitInputProps> = ({
   ariaLabel = 'ციფრული კოდის შეყვანა'
 }) => {
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const fromProps = () => (slotValues ? normalizeSlots(slotValues, length) : slotsFromValue(value, length));
+  const externalKey = slotValues ? slotsKey(normalizeSlots(slotValues, length)) : String(value ?? '');
 
   // Internal slots state of exact length
-  const [slots, setSlots] = useState<string[]>(() => {
-    const initial = Array(length).fill('');
-    const clean = (value || '').replace(/\D/g, '').slice(0, length);
-    for (let i = 0; i < clean.length; i++) {
-      initial[i] = clean[i];
-    }
-    return initial;
-  });
+  const [slots, setSlots] = useState<string[]>(fromProps);
 
   // Track last value emitted from internal user interaction to avoid resetting slots on parent echo
   const lastEmittedValueRef = useRef<string | null>(null);
 
   // Sync with external prop only when changed externally (e.g. OCR scan result, reset)
   useEffect(() => {
-    if (value !== lastEmittedValueRef.current) {
-      lastEmittedValueRef.current = value;
-      const clean = (value || '').replace(/\D/g, '').slice(0, length);
-      const next = Array(length).fill('');
-      for (let i = 0; i < clean.length; i++) {
-        next[i] = clean[i];
-      }
-      setSlots(next);
+    if (externalKey !== lastEmittedValueRef.current) {
+      lastEmittedValueRef.current = externalKey;
+      setSlots(fromProps());
     }
-  }, [value, length]);
+  }, [externalKey, length]);
 
   // Handle auto-focus
   useEffect(() => {
@@ -76,99 +71,39 @@ export const SmartDigitInput: React.FC<SmartDigitInputProps> = ({
     }
   }, [autoFocus, disabled]);
 
-  const updateSlots = (newSlots: string[], focusIndex?: number) => {
-    setSlots(newSlots);
-    const fullCode = newSlots.join('');
-    lastEmittedValueRef.current = fullCode;
-    onChange(fullCode, newSlots);
-
-    // If completely filled without blanks
-    const isFullyFilled = newSlots.every(s => s !== '' && /^\d$/.test(s));
-    if (isFullyFilled && onComplete) {
-      onComplete(fullCode);
+  const focusCell = (index: number) => {
+    if (index < 0 || index >= length) return;
+    // Synchronous focus so rapid typing never drops a keystroke
+    const el = inputRefs.current[index];
+    if (el) {
+      el.focus();
+      el.select();
     }
+  };
 
-    if (focusIndex !== undefined && focusIndex >= 0 && focusIndex < length) {
-      // Synchronous attempt then fallback timeout to ensure focus isn't dropped during rapid typing
-      const el = inputRefs.current[focusIndex];
-      if (el) {
-        el.focus();
-        el.select();
+  const apply = (update: SlotUpdate) => {
+    if (update.changed) {
+      setSlots(update.slots);
+      const fullCode = update.slots.join('');
+      lastEmittedValueRef.current = slotValues ? slotsKey(update.slots) : fullCode;
+      onChange(fullCode, update.slots);
+
+      // If completely filled without blanks
+      if (isComplete(update.slots) && onComplete) {
+        onComplete(fullCode);
       }
     }
+    focusCell(update.focus);
   };
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
     // Isolate hotkey bubbling so global POS shortcuts (F1-F12) don't accidentally fire
     e.stopPropagation();
 
-    if (e.key === 'Backspace') {
+    const update = e.ctrlKey || e.metaKey || e.altKey ? null : applyKey(slots, index, e.key);
+    if (update) {
       e.preventDefault();
-      const nextSlots = [...slots];
-      if (nextSlots[index]) {
-        // Clear current cell only - NEVER shift other cells
-        nextSlots[index] = '';
-        updateSlots(nextSlots, index);
-      } else if (index > 0) {
-        // Current cell was already empty: retreat to previous cell and clear it
-        nextSlots[index - 1] = '';
-        updateSlots(nextSlots, index - 1);
-      }
-      return;
-    }
-
-    if (e.key === 'Delete') {
-      e.preventDefault();
-      const nextSlots = [...slots];
-      // Clear current cell only - NEVER shift other cells
-      nextSlots[index] = '';
-      updateSlots(nextSlots, index);
-      return;
-    }
-
-    if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      if (index > 0) {
-        const el = inputRefs.current[index - 1];
-        el?.focus();
-        el?.select();
-      }
-      return;
-    }
-
-    if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      if (index < length - 1) {
-        const el = inputRefs.current[index + 1];
-        el?.focus();
-        el?.select();
-      }
-      return;
-    }
-
-    if (e.key === 'Home') {
-      e.preventDefault();
-      const el = inputRefs.current[0];
-      el?.focus();
-      el?.select();
-      return;
-    }
-
-    if (e.key === 'End') {
-      e.preventDefault();
-      const el = inputRefs.current[length - 1];
-      el?.focus();
-      el?.select();
-      return;
-    }
-
-    // Single numeric digit entry (0-9)
-    if (/^\d$/.test(e.key)) {
-      e.preventDefault();
-      const nextSlots = [...slots];
-      nextSlots[index] = e.key; // Overwrite current slot precisely
-      const nextFocus = index < length - 1 ? index + 1 : index;
-      updateSlots(nextSlots, nextFocus);
+      apply(update);
       return;
     }
 
@@ -186,25 +121,8 @@ export const SmartDigitInput: React.FC<SmartDigitInputProps> = ({
   const handlePaste = (index: number, e: React.ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
     e.stopPropagation();
-
-    const pasted = e.clipboardData.getData('text');
-    const digitsOnly = pasted.replace(/\D/g, '');
-    if (!digitsOnly) return;
-
-    const nextSlots = [...slots];
-    let writeIdx = index;
-    // If user is pasting full length or starting from cell 0
-    if (digitsOnly.length === length) {
-      writeIdx = 0;
-    }
-
-    for (let i = 0; i < digitsOnly.length && writeIdx < length; i++) {
-      nextSlots[writeIdx] = digitsOnly[i];
-      writeIdx++;
-    }
-
-    const nextFocus = Math.min(length - 1, writeIdx);
-    updateSlots(nextSlots, nextFocus);
+    const update = applyPaste(slots, index, e.clipboardData.getData('text'));
+    if (update) apply(update);
   };
 
   return (

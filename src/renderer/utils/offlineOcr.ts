@@ -336,22 +336,54 @@ export function classifyNormalizedDigit(digit28: Uint8Array, originalBox: Boundi
 
 import { invokeIpc } from '../api/ipcClient.ts';
 
-export async function recognize5DigitsFromCanvas(
-  sourceCanvas: HTMLCanvasElement,
-  roi: BoundingBox
-): Promise<OcrResult> {
+/**
+ * Largest region sent for recognition. Webcam frames are far below it (1280x720 gives an
+ * 832x201 region, 1920x1080 gives 1248x302); only large uploaded photos are scaled down, so
+ * recognition never freezes the window or exhausts memory on a 12-megapixel picture.
+ */
+export const MAX_OCR_PIXELS = 2_000_000;
+
+/** Size a region is scaled to before recognition (unchanged when it is within MAX_OCR_PIXELS). */
+export function ocrInputSize(width: number, height: number, maxPixels = MAX_OCR_PIXELS): { width: number; height: number } {
+  const w = Math.max(10, Math.floor(width));
+  const h = Math.max(10, Math.floor(height));
+  if (w * h <= maxPixels) return { width: w, height: h };
+  const scale = Math.sqrt(maxPixels / (w * h));
+  return { width: Math.max(10, Math.floor(w * scale)), height: Math.max(10, Math.floor(h * scale)) };
+}
+
+function readRegion(sourceCanvas: HTMLCanvasElement, roi: BoundingBox): { data: Uint8ClampedArray; width: number; height: number } {
   const ctx = sourceCanvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) {
     throw new Error('Canvas 2D context-ის მიღება ვერ მოხერხდა');
   }
-
-  // Extract ROI ImageData
   const roiWidth = Math.max(10, Math.floor(roi.width));
   const roiHeight = Math.max(10, Math.floor(roi.height));
   const roiX = Math.max(0, Math.floor(roi.x));
   const roiY = Math.max(0, Math.floor(roi.y));
+  const target = ocrInputSize(roiWidth, roiHeight);
+  if (target.width === roiWidth && target.height === roiHeight) {
+    return { data: ctx.getImageData(roiX, roiY, roiWidth, roiHeight).data, width: roiWidth, height: roiHeight };
+  }
+  const scaled = document.createElement('canvas');
+  scaled.width = target.width;
+  scaled.height = target.height;
+  const sCtx = scaled.getContext('2d', { willReadFrequently: true });
+  if (!sCtx) throw new Error('Canvas 2D context-ის მიღება ვერ მოხერხდა');
+  sCtx.imageSmoothingQuality = 'high';
+  sCtx.drawImage(sourceCanvas, roiX, roiY, roiWidth, roiHeight, 0, 0, target.width, target.height);
+  return { data: sCtx.getImageData(0, 0, target.width, target.height).data, width: target.width, height: target.height };
+}
 
-  const imgData = ctx.getImageData(roiX, roiY, roiWidth, roiHeight);
+export async function recognize5DigitsFromCanvas(
+  sourceCanvas: HTMLCanvasElement,
+  roi: BoundingBox
+): Promise<OcrResult> {
+  // Extract ROI ImageData
+  const region = readRegion(sourceCanvas, roi);
+  const roiWidth = region.width;
+  const roiHeight = region.height;
+  const imgData = { data: region.data };
   const binary = binarizeGrayscale(imgData.data, roiWidth, roiHeight);
 
   // Create processed preview data URL for seller visual feedback
@@ -371,28 +403,32 @@ export async function recognize5DigitsFromCanvas(
     pCtx.putImageData(pImgData, 0, 0);
   }
 
-  // 1. Real ONNX inference via local IPC service
+  // 1. Real ONNX inference via local IPC service. The desktop bridge copies typed arrays
+  //    directly; the web dev server needs plain JSON.
+  const inElectron = typeof window !== 'undefined' && !!(window as any).electronAPI?.invoke;
+  let ipcRes: any;
   try {
-    const ipcRes = await invokeIpc<any>('ocr:recognize', {
-      pixels: Array.from(imgData.data),
+    ipcRes = await invokeIpc<any>('ocr:recognize', {
+      pixels: inElectron ? new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength) : Array.from(imgData.data),
       width: roiWidth,
       height: roiHeight,
     });
-
-    if (ipcRes && ipcRes.code && ipcRes.digits) {
-      return {
-        code: ipcRes.code,
-        confidence: ipcRes.confidence,
-        digits: ipcRes.digits,
-        processedImageUri: previewCanvas.toDataURL('image/png'),
-      };
-    }
-    throw new Error('ONNX მოდელმა ვერ დააბრუნა ვალიდური შედეგი');
   } catch (ipcErr: any) {
     console.error('[OCR] ONNX Inference error:', ipcErr);
     // Explicit error reporting without disguised fallback
     throw new Error(
-      `ONNX მოდელი მიუწვდომელია (${ipcErr?.message || 'შეცდომა'}). გთხოვთ შეიყვანოთ 5-ნიშნა კოდი ხელით ან გამოიყენოთ შტრიხკოდის სკანერი.`
+      `ამოცნობა ვერ შესრულდა (${ipcErr?.message || 'შეცდომა'}). გთხოვთ შეიყვანოთ 5-ნიშნა კოდი ხელით ან გამოიყენოთ შტრიხკოდის სკანერი.`
     );
   }
+
+  if (!ipcRes || !Array.isArray(ipcRes.digits)) {
+    throw new Error('ONNX მოდელმა ვერ დააბრუნა ვალიდური შედეგი. გთხოვთ შეიყვანოთ 5-ნიშნა კოდი ხელით.');
+  }
+  // Positions without ink come back as '' (unrecognised) and are typed by the seller.
+  return {
+    code: String(ipcRes.code || ''),
+    confidence: ipcRes.confidence,
+    digits: ipcRes.digits,
+    processedImageUri: previewCanvas.toDataURL('image/png'),
+  };
 }
