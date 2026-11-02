@@ -11,6 +11,9 @@ import { User, UserSession } from '../../shared/types.ts';
 import { invokeIpc, setClientToken } from '../api/ipcClient.ts';
 import { ShieldCheck, User as UserIcon, Delete, KeyRound, AlertCircle } from 'lucide-react';
 
+/** package.json version, set by Vite at build time (vite.config.ts). */
+declare const __APP_VERSION__: string;
+
 interface LoginViewProps {
   onLoginSuccess: (session: UserSession) => void;
 }
@@ -169,6 +172,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         </div>
         <h1 className="text-xl sm:text-2xl font-bold text-white tracking-wide">StorePOS Windows Desktop</h1>
         <p className="text-xs sm:text-sm text-slate-400 mt-0.5">ოფლაინ მაღაზიის მართვა და სალარო სისტემა</p>
+        <p className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5 font-mono" data-testid="app-version">ვერსია {__APP_VERSION__}</p>
       </div>
 
       {error && (

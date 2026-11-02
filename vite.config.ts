@@ -1,7 +1,11 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import fs from 'fs';
 import path from 'path';
 import {defineConfig, type Plugin} from 'vite';
+
+// Shown on the sign-in screen, so everyone can tell which build is running.
+const APP_VERSION = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')).version as string;
 
 // Production Content-Security-Policy for the packaged desktop app: only the app's own
 // scripts run, nothing is fetched from the network, images come from the app, data/blob
@@ -35,6 +39,9 @@ export default defineConfig(() => {
   return {
     base: './',
     plugins: [react(), tailwindcss(), contentSecurityPolicy()],
+    define: {
+      __APP_VERSION__: JSON.stringify(APP_VERSION),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
