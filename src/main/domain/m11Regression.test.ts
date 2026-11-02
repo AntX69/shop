@@ -16,6 +16,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import os from 'node:os';
+import path from 'node:path';
 import { runMigrations } from '../db/migrations.ts';
 import { AuthService } from './authService.ts';
 import { ProductsService } from './productsService.ts';
@@ -36,7 +38,7 @@ function createM11TestEnv() {
   const customerService = new CustomerService(db);
   const returnsService = new ReturnsService(db);
   const financeService = new FinanceService(db);
-  const backupService = new BackupService(db, '/tmp/storepos-test-backups');
+  const backupService = new BackupService(db, path.join(os.tmpdir(), 'storepos-test-backups', 'store.db'));
 
   // Setup owner and seller
   const ownerSession = authService.setupInitialOwner('დავით მფლობელი', '1111');

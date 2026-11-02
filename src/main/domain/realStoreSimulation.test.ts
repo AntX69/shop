@@ -33,9 +33,11 @@ import { FinanceService } from './financeService.ts';
 import { BackupService } from './backupService.ts';
 
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 test('M12 - Comprehensive Real Store Simulation (200 Products, 50 Cash Sales, 20 Debts, 15 Repayments, Returns & Exchanges)', () => {
-  const testDbPath = '/tmp/storepos_m12_sim.db';
+  const testDbPath = path.join(os.tmpdir(), `storepos_m12_sim_${process.pid}.db`);
   if (fs.existsSync(testDbPath)) {
     fs.unlinkSync(testDbPath);
   }
