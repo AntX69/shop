@@ -59,6 +59,29 @@ export function getDatabasePath(): string {
   return path.join(getDataDirectory(), 'store.db');
 }
 
+/** File behind a connection, or ':memory:' for an in-memory database. */
+export function databaseFileOf(db: DatabaseSync): string {
+  try {
+    const row = db.prepare("SELECT file FROM pragma_database_list WHERE name = 'main'").get() as { file?: string } | undefined;
+    return row?.file ? row.file : ':memory:';
+  } catch {
+    return ':memory:';
+  }
+}
+
+/** Data folder that belongs to a connection: next to its database file (photos, backups). */
+export function dataDirectoryFor(db: DatabaseSync): string {
+  const file = databaseFileOf(db);
+  if (file === ':memory:') return getDataDirectory();
+  return path.dirname(file);
+}
+
+export function imagesDirectoryFor(db: DatabaseSync): string {
+  const dir = path.join(dataDirectoryFor(db), 'images');
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 export function initDatabase(customPath?: string): DatabaseSync {
   if (dbInstance) {
     return dbInstance;

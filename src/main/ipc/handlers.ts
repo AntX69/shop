@@ -51,6 +51,7 @@ interface Route {
 export interface NativeHost {
   chooseDirectory?: (title: string) => Promise<string | null>;
   chooseBackupFile?: () => Promise<string | null>;
+  openFolder?: (dir: string) => Promise<void>;
 }
 let nativeHost: NativeHost = {};
 export function setNativeHost(host: NativeHost): void {
@@ -169,6 +170,33 @@ const routes: Record<string, Route> = {
   'backup:verify': { access: 'owner', handler: (c) => backup().verifyBackup(c.user, p(c).dataString, p(c).filename) },
   'backup:runDaily': { access: 'owner', handler: () => backup().checkAndRunDailyBackup() },
   'backup:restore': { access: 'owner', handler: (c) => backup().restoreBackup(c.user, p(c).base64Data, p(c).expectedChecksum) },
+  'backup:restoreFromList': { access: 'owner', handler: (c) => backup().restoreFromList(c.user, p(c).filename) },
+  'backup:restoreFromFile': {
+    access: 'owner',
+    handler: async (c) => {
+      if (!nativeHost.chooseBackupFile) throw new Error('ფაილის არჩევა ხელმისაწვდომია მხოლოდ დესკტოპ პროგრამაში');
+      const file = await nativeHost.chooseBackupFile();
+      if (!file) return { cancelled: true };
+      return backup().restoreFromFile(c.user, file);
+    }
+  },
+  'backup:chooseDirectory': {
+    access: 'owner',
+    handler: async (c) => {
+      if (!nativeHost.chooseDirectory) throw new Error('საქაღალდის არჩევა ხელმისაწვდომია მხოლოდ დესკტოპ პროგრამაში');
+      const title = p(c).purpose === 'mirror' ? 'აირჩიეთ სარეზერვო ასლის დამატებითი საქაღალდე (მაგ. USB დისკი)' : 'აირჩიეთ სარეზერვო ასლების საქაღალდე';
+      const dir = await nativeHost.chooseDirectory(title);
+      return { path: dir };
+    }
+  },
+  'backup:openFolder': {
+    access: 'owner',
+    handler: async () => {
+      if (!nativeHost.openFolder) throw new Error('ხელმისაწვდომია მხოლოდ დესკტოპ პროგრამაში');
+      await nativeHost.openFolder(backup().getEffectiveBackupDirectory());
+      return { opened: true };
+    }
+  },
   'backup:getLogs': { access: 'owner', handler: (c) => backup().getAuditLogs(p(c).limit) },
   'backup:getSettings': { access: 'owner', handler: () => backup().getSettings() },
   'backup:updateSettings': { access: 'owner', handler: (c) => { backup().updateSettings(c.user, p(c).settings); return { updated: true }; } },

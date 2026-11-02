@@ -16,15 +16,17 @@
  * (the store data never leaves this computer), and IPC accepted only from the app's own page.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { initDatabase, closeDatabase } from './db/database.ts';
-import { handleIpcMessage } from './ipc/handlers.ts';
+import { handleIpcMessage, setNativeHost } from './ipc/handlers.ts';
+import { startBackupScheduler } from './backupScheduler.ts';
 
 let mainWindow: BrowserWindow | null = null;
 let appPageUrl = '';
+let stopBackupScheduler: (() => void) | null = null;
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || '';
 const allowDevTools = !app.isPackaged || process.env.STOREPOS_DEVTOOLS === '1';
@@ -115,6 +117,29 @@ if (!gotTheLock) {
       return;
     }
 
+    // Native dialogs for the owner's backup settings (paths never come from the renderer).
+    setNativeHost({
+      chooseDirectory: async (title) => {
+        const res = await dialog.showOpenDialog(mainWindow!, { title, properties: ['openDirectory', 'createDirectory'] });
+        return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
+      },
+      chooseBackupFile: async () => {
+        const res = await dialog.showOpenDialog(mainWindow!, {
+          title: 'აირჩიეთ StorePOS-ის სარეზერვო ასლი',
+          properties: ['openFile'],
+          filters: [{ name: 'StorePOS Backup', extensions: ['posbackup'] }]
+        });
+        return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0];
+      },
+      openFolder: async (dir) => {
+        const err = await shell.openPath(dir);
+        if (err) throw new Error(err);
+      }
+    });
+
+    // Daily automatic backup, independent of the screens in use.
+    stopBackupScheduler = startBackupScheduler();
+
     // 3. Resolve preload script path
     const candidatePreloadPaths = [
       path.join(__dirname, 'preload.cjs'),
@@ -202,6 +227,7 @@ if (!gotTheLock) {
   });
 
   app.on('before-quit', () => {
+    stopBackupScheduler?.();
     closeDatabase();
   });
 }

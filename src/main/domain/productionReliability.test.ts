@@ -284,14 +284,16 @@ test('M8 Test 4 & 5: Full backup creation, real image bundling, and clean restor
   `);
   assert.equal((db.prepare('SELECT COUNT(*) as cnt FROM products').get() as any).cnt, 0);
 
-  // 6. Restore from backup
-  const restoreRes = backupService.restoreBackup(owner, backupResult.data_base64);
+  // 6. Restore from backup (the live file is closed, moved aside and replaced, as on Windows)
+  const restoreRes = backupService.restoreBackup(owner, fs.readFileSync(backupResult.filepath, 'utf-8'));
   assert.equal(restoreRes.success, true);
   assert.equal(restoreRes.restored_stats?.products_count, 1);
   assert.equal(restoreRes.restored_stats?.sales_count, 1);
+  assert.ok(restoreRes.safety_backup && fs.existsSync(restoreRes.safety_backup), 'current state is backed up before restoring');
 
-  // Verify DB state restored
-  const restoredProd = productsService.getProductById(product.id)!;
+  // Verify DB state restored, through the reopened connection
+  const reopened = backupService.getConnection();
+  const restoredProd = new ProductsService(reopened).getProductById(product.id)!;
   assert.equal(restoredProd.name, 'ტყავის ქურთუკი');
   assert.equal(restoredProd.variants![0].stock_quantity, 5); // 7 - 2 = 5
 
@@ -299,8 +301,9 @@ test('M8 Test 4 & 5: Full backup creation, real image bundling, and clean restor
   const restoredImgPath = path.join(imagesDir, 'jacket_test.jpg');
   assert.ok(fs.existsSync(restoredImgPath));
   assert.equal(fs.readFileSync(restoredImgPath).toString(), sampleImageData.toString());
+  void db;
 
-  db.close();
+  reopened.close();
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 });
 
@@ -323,7 +326,7 @@ test('M8 Test 6: Corrupted or tampered backup is rejected without modifying data
   const validBackup = backupService.createBackup(owner, tmpDir);
 
   // Tamper with the backup data: change db_base64 content so checksum mismatches
-  const bundle: PosBackupBundle = JSON.parse(Buffer.from(validBackup.data_base64, 'base64').toString('utf-8'));
+  const bundle: PosBackupBundle = JSON.parse(fs.readFileSync(validBackup.filepath, 'utf-8'));
   bundle.db_base64 = Buffer.from('CORRUPTED_GARBAGE_DATA').toString('base64');
   const corruptedDataString = JSON.stringify(bundle);
 

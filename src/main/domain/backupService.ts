@@ -1,47 +1,143 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
- * Production-Grade Backup, Restore, and Data Protection Service (M8).
+ *
+ * Production-Grade Backup, Restore, and Data Protection Service.
  * Features:
- * - SQLite Online Snapshot & WAL flush (PRAGMA wal_checkpoint(TRUNCATE))
- * - Real product photo file bundling (base64 binary preservation)
- * - PRAGMA integrity_check verification before backup & before restore
- * - Zero-connection file replacement: closes active SQLite connection before overwriting
- * - Safety snapshot before restore and emergency backup before wipe
- * - Configurable backup directory (supports external drives & USB)
- * - Automatic daily backups with last_backup_date tracking
+ * - Consistent online snapshot of the live SQLite database (VACUUM INTO), never a raw file copy
+ * - Product photos bundled with the database in one .posbackup file, with SHA-256 checksums
+ * - PRAGMA integrity_check before backup and on the candidate before restore
+ * - Atomic writes (temporary file + rename) so a power cut never leaves a half-written backup
+ * - Configurable backup folder plus an optional mirror folder (e.g. a USB drive)
+ * - Automatic daily backup run by the main-process scheduler, with retention of old auto backups
+ * - Restore: verified candidate, emergency backup of the current state, the live database moved
+ *   aside (not overwritten), automatic roll-back if anything fails, photos written only into the
+ *   app's own photo folder under sanitized names
  * - Log sanitization (never logs PINs or session tokens)
  */
 
 import { DatabaseSync } from 'node:sqlite';
-import { getDb, getDatabasePath, getDataDirectory, getImagesDirectory, getBackupsDirectory, closeDatabase, initDatabase, runInTransaction } from '../db/database.ts';
+import {
+  getDb, getDatabasePath, closeDatabase, initDatabase, runInTransaction, databaseFileOf, dataDirectoryFor,
+} from '../db/database.ts';
+import { LATEST_SCHEMA_VERSION, runMigrations } from '../db/migrations.ts';
 import { AuditLog, SystemErrorLog, User, BackupInfo } from '../../shared/types.ts';
+import { localDate, STORE_TIME_ZONE } from '../../shared/time.ts';
+import { revokeAllSessions } from './sessions.ts';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
+export type BackupKind = 'manual' | 'auto' | 'prereset' | 'prerestore';
+
 export interface PosBackupBundle {
   format: 'StorePOS-Unified-Backup';
-  version: '1.0';
+  version: '1.0' | '1.1';
+  kind?: BackupKind;
   created_at: string;
-  created_by_user_id: number;
-  db_checksum_sha256: string;
-  db_size_bytes: number;
-  db_base64: string;
-  images: Array<{
-    product_id: number;
-    file_path: string;
-    is_primary: number;
-    data_base64?: string; // Real binary image content
-  }>;
-  settings: Record<string, string>;
+  schema_version?: number;
+  created_by_user_id: number | null;
   stats: {
     products_count: number;
     sales_count: number;
     customers_count: number;
     total_debt_tetri: number;
+    images_count?: number;
   };
+  db_checksum_sha256: string;
+  db_size_bytes: number;
+  settings: Record<string, string>;
+  db_base64: string;
+  images: Array<{
+    product_id: number;
+    file_path: string;
+    is_primary: number;
+    data_base64?: string; // Real binary image content (data URL)
+  }>;
+}
+
+const SAFE_IMAGE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,150}$/;
+const IMAGE_MIME: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
+const SETTINGS_RULES: Record<string, (v: string) => string> = {
+  store_name: (v) => {
+    const t = v.trim();
+    if (!t || t.length > 80) throw new Error('მაღაზიის სახელი უნდა იყოს 1–80 სიმბოლო');
+    return t;
+  },
+  inactivity_lock_minutes: (v) => {
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 1 || n > 240) throw new Error('ავტომატური ჩაკეტვის დრო უნდა იყოს 1–240 წუთი');
+    return String(n);
+  },
+  auto_backup_enabled: (v) => {
+    if (v !== '0' && v !== '1') throw new Error('ავტომატური სარეზერვო ასლის პარამეტრი არასწორია');
+    return v;
+  },
+  backup_retention_count: (v) => {
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 3 || n > 365) throw new Error('შესანახი ავტომატური ასლების რაოდენობა უნდა იყოს 3–365');
+    return String(n);
+  },
+  backup_directory: (v) => validateFolderSetting(v),
+  backup_mirror_directory: (v) => validateFolderSetting(v),
+};
+
+function validateFolderSetting(value: string): string {
+  const v = value.trim();
+  if (!v) return '';
+  if (!path.isAbsolute(v)) throw new Error('საქაღალდის სრული მისამართი სავალდებულოა (მაგ. E:\\StorePOS-Backups)');
+  try {
+    fs.mkdirSync(v, { recursive: true });
+    const probe = path.join(v, `.storepos-write-test-${process.pid}`);
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+  } catch (err: any) {
+    throw new Error(`საქაღალდეში ჩაწერა ვერ ხერხდება: ${v} (${err?.code || err?.message})`);
+  }
+  return path.resolve(v);
+}
+
+function sha256(buf: Buffer | string): string {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/** Local (Tbilisi) timestamp safe for file names: 2026-11-02_20-15-30-123 */
+function fileStamp(now: Date): string {
+  const time = now.toLocaleTimeString('en-GB', { timeZone: STORE_TIME_ZONE, hour12: false }).replace(/:/g, '-');
+  return `${localDate(now)}_${time}-${String(now.getMilliseconds()).padStart(3, '0')}`;
+}
+
+function writeFileAtomic(target: string, data: Buffer): void {
+  const partial = `${target}.partial`;
+  fs.writeFileSync(partial, data);
+  fs.renameSync(partial, target);
+}
+
+/** Reads only the metadata at the start of a .posbackup (everything before the database blob). */
+function readBundleHeader(filePath: string): Partial<PosBackupBundle> | null {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(64 * 1024);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    const text = buf.subarray(0, n).toString('utf-8');
+    const idx = text.indexOf('"db_base64"');
+    if (idx > 0) {
+      const head = text.slice(0, idx).replace(/,\s*$/, '');
+      return JSON.parse(`${head}}`);
+    }
+  } catch {
+    // fall through to a full parse
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    const full = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    delete full.db_base64;
+    delete full.images;
+    return full;
+  } catch {
+    return null;
+  }
 }
 
 export class BackupService {
@@ -53,44 +149,105 @@ export class BackupService {
     this.customDbPath = customDbPath;
   }
 
+  /** The database file this service backs up and restores (the one it is connected to). */
   public getTargetDbPath(): string {
-    return this.customDbPath || getDatabasePath();
+    return this.customDbPath || databaseFileOf(this.db);
+  }
+
+  private dataDir(): string {
+    return this.customDbPath ? path.dirname(this.customDbPath) : dataDirectoryFor(this.db);
+  }
+
+  private imagesDir(): string {
+    const dir = path.join(this.dataDir(), 'images');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
   }
 
   private checkOwner(user: User): void {
-    if (user.role !== 'owner') {
+    if (!user || user.role !== 'owner') {
       throw new Error('სარეზერვო ასლების მართვის უფლება აქვს მხოლოდ მფლობელს (Owner)');
     }
   }
 
   /**
-   * Resolves the configured backup directory or falls back to data/backups.
+   * Resolves the configured backup directory or falls back to <data>/backups.
    */
   getEffectiveBackupDirectory(): string {
     try {
-      const settings = this.getSettings();
-      if (settings.backup_directory && settings.backup_directory.trim()) {
-        const customDir = path.resolve(settings.backup_directory.trim());
-        if (!fs.existsSync(customDir)) {
-          fs.mkdirSync(customDir, { recursive: true });
-        }
-        return customDir;
+      const dir = (this.getSettings().backup_directory || '').trim();
+      if (dir) {
+        const resolved = path.resolve(dir);
+        if (!fs.existsSync(resolved)) fs.mkdirSync(resolved, { recursive: true });
+        return resolved;
       }
+    } catch (err: any) {
+      this.logSystemError('backup:directory', `Configured backup folder unavailable, using default: ${err?.message}`, undefined, 'warning');
+    }
+    const fallback = path.join(this.dataDir(), 'backups');
+    if (!fs.existsSync(fallback)) fs.mkdirSync(fallback, { recursive: true });
+    return fallback;
+  }
+
+  /** Consistent snapshot of the live database as a standalone SQLite file. */
+  private snapshotDatabase(): Buffer {
+    const tmp = path.join(this.dataDir(), `.snapshot-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
+    try {
+      this.db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+      return fs.readFileSync(tmp);
+    } finally {
+      try { fs.unlinkSync(tmp); } catch {}
+    }
+  }
+
+  private collectStats(db: DatabaseSync) {
+    const count = (table: string) => (db.prepare(`SELECT COUNT(*) as cnt FROM ${table}`).get() as any)?.cnt || 0;
+    let totalDebt = 0;
+    try {
+      totalDebt = (db.prepare('SELECT COALESCE(SUM(remaining_tetri), 0) AS t FROM sale_debt_balances').get() as any).t;
     } catch {}
-    return getBackupsDirectory();
+    return {
+      products_count: count('products'),
+      sales_count: count('sales'),
+      customers_count: count('customers'),
+      total_debt_tetri: totalDebt,
+      images_count: count('product_images'),
+    };
+  }
+
+  private collectImages(): PosBackupBundle['images'] {
+    const rows = this.db.prepare("SELECT product_id, file_path, is_primary FROM product_images").all() as Array<{ product_id: number; file_path: string; is_primary: number }>;
+    const imagesDir = this.imagesDir();
+    return rows.map((img) => {
+      let dataUrl: string | undefined;
+      if (img.file_path.startsWith('data:')) {
+        dataUrl = img.file_path;
+      } else {
+        const file = path.join(imagesDir, path.basename(img.file_path));
+        if (fs.existsSync(file)) {
+          const mime = IMAGE_MIME[path.extname(file).toLowerCase()] || 'image/jpeg';
+          dataUrl = `data:${mime};base64,${fs.readFileSync(file).toString('base64')}`;
+        } else {
+          this.logSystemError('backup:create', `Product photo missing on disk: ${path.basename(img.file_path)}`, undefined, 'warning');
+        }
+      }
+      return { product_id: img.product_id, file_path: img.file_path, is_primary: img.is_primary, data_base64: dataUrl };
+    });
   }
 
   /**
    * Creates a complete, verified .posbackup bundle.
    * Includes SQLite DB snapshot, real product image files, store settings, and SHA-256 checksums.
    */
-  createBackup(user: User, customTargetDir?: string): {
+  createBackup(user: User, customTargetDir?: string, kind: BackupKind = 'manual', now: Date = new Date()): {
     backup_filename: string;
     filepath: string;
     size_bytes: number;
     checksum_sha256: string;
     created_at: string;
-    data_base64: string;
+    kind: BackupKind;
+    mirror_filepath?: string | null;
+    mirror_error?: string | null;
   } {
     this.checkOwner(user);
 
@@ -105,120 +262,71 @@ export class BackupService {
       throw new Error(`ბაზის მთლიანობის შეცდომა: PRAGMA integrity_check = ${checkRow?.integrity_check || 'fail'}`);
     }
 
-    // 2. Flush WAL into database file safely
-    if (dbPath !== ':memory:') {
-      this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
-    }
+    const dbBuffer = this.snapshotDatabase();
+    const createdAt = now.toISOString();
+    const filename = `storepos_${kind}_${fileStamp(now)}.posbackup`;
+    const images = this.collectImages();
+    const stats = this.collectStats(this.db);
 
-    let fileBuffer: Buffer;
-    if (dbPath === ':memory:') {
-      // In-memory test environment: synthesize clean SQLite snapshot
-      fileBuffer = Buffer.from('SQLite format 3\0test_snapshot');
-    } else {
-      fileBuffer = fs.readFileSync(dbPath);
-    }
-
-    const dbHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
-    const now = new Date().toISOString();
-    const timestamp = now.replace(/[:.]/g, '-');
-    const filename = `store_backup_${timestamp}.posbackup`;
-
-    // 3. Collect real image data (both local files and base64 data URLs)
-    const imagesRows = this.db.prepare(
-      "SELECT product_id, file_path, is_primary FROM product_images"
-    ).all() as Array<{ product_id: number; file_path: string; is_primary: number }>;
-
-    const imagesBundle = imagesRows.map(img => {
-      let dataBase64 = '';
-      if (img.file_path.startsWith('data:')) {
-        dataBase64 = img.file_path;
-      } else {
-        // Try reading real image file from disk
-        const candidatePaths = [
-          path.resolve(img.file_path),
-          path.join(getImagesDirectory(), path.basename(img.file_path)),
-          path.join(getDataDirectory(), img.file_path)
-        ];
-        for (const cp of candidatePaths) {
-          if (fs.existsSync(cp)) {
-            try {
-              dataBase64 = `data:image/jpeg;base64,${fs.readFileSync(cp).toString('base64')}`;
-              break;
-            } catch {}
-          }
-        }
-      }
-
-      return {
-        product_id: img.product_id,
-        file_path: img.file_path,
-        is_primary: img.is_primary,
-        data_base64: dataBase64 || undefined
-      };
-    });
-
-    // 4. Fetch store settings and statistics
-    const settings = this.getSettings();
-    const productsCount = (this.db.prepare("SELECT COUNT(*) as cnt FROM products").get() as any)?.cnt || 0;
-    const salesCount = (this.db.prepare("SELECT COUNT(*) as cnt FROM sales").get() as any)?.cnt || 0;
-    const customersCount = (this.db.prepare("SELECT COUNT(*) as cnt FROM customers").get() as any)?.cnt || 0;
-    
-    let totalDebt = 0;
-    try {
-      const debtRow = this.db.prepare(`
-        SELECT (
-          COALESCE((SELECT SUM(debt_amount_tetri) FROM sales), 0)
-          - COALESCE((SELECT SUM(amount_tetri) FROM debt_repayments), 0)
-          - COALESCE((SELECT SUM(debt_deduction_tetri) FROM returns), 0)
-        ) as total_debt
-      `).get() as any;
-      totalDebt = Math.max(0, debtRow?.total_debt || 0);
-    } catch {}
-
+    // Metadata first: listing backups reads only this header, not the whole file.
     const bundle: PosBackupBundle = {
       format: 'StorePOS-Unified-Backup',
-      version: '1.0',
-      created_at: now,
-      created_by_user_id: user.id,
-      db_checksum_sha256: dbHash,
-      db_size_bytes: fileBuffer.length,
-      db_base64: fileBuffer.toString('base64'),
-      images: imagesBundle,
-      settings,
-      stats: {
-        products_count: productsCount,
-        sales_count: salesCount,
-        customers_count: customersCount,
-        total_debt_tetri: totalDebt
-      }
+      version: '1.1',
+      kind,
+      created_at: createdAt,
+      schema_version: LATEST_SCHEMA_VERSION,
+      created_by_user_id: user.id ?? null,
+      stats,
+      db_checksum_sha256: sha256(dbBuffer),
+      db_size_bytes: dbBuffer.length,
+      settings: this.getSettings(),
+      db_base64: dbBuffer.toString('base64'),
+      images,
     };
+    const bundleBuffer = Buffer.from(JSON.stringify(bundle, null, 2), 'utf-8');
+    const bundleHash = sha256(bundleBuffer);
 
-    const bundleJson = JSON.stringify(bundle, null, 2);
-    const bundleBuffer = Buffer.from(bundleJson, 'utf-8');
-    const bundleHash = crypto.createHash('sha256').update(bundleBuffer).digest('hex');
-
-    // 5. Save copy to the target backup directory on disk
     const targetDir = customTargetDir ? path.resolve(customTargetDir) : this.getEffectiveBackupDirectory();
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
+    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
     const savedFilePath = path.join(targetDir, filename);
-    fs.writeFileSync(savedFilePath, bundleBuffer);
+    writeFileAtomic(savedFilePath, bundleBuffer);
 
-    // 6. Update last_backup_date in settings
+    // Mirror copy (e.g. USB drive). A missing drive never fails the main backup.
+    let mirrorPath: string | null = null;
+    let mirrorError: string | null = null;
+    const mirrorDir = (this.getSettings().backup_mirror_directory || '').trim();
+    if (mirrorDir && !customTargetDir) {
+      try {
+        if (!fs.existsSync(mirrorDir)) throw new Error('საქაღალდე/დისკი ხელმისაწვდომი არ არის');
+        mirrorPath = path.join(mirrorDir, filename);
+        writeFileAtomic(mirrorPath, bundleBuffer);
+      } catch (err: any) {
+        mirrorPath = null;
+        mirrorError = err?.message || String(err);
+        this.logSystemError('backup:mirror', `Mirror copy to ${mirrorDir} failed: ${mirrorError}`, undefined, 'warning');
+      }
+    }
+
+    if (kind === 'auto') {
+      this.applyRetention(targetDir);
+      if (mirrorPath) this.applyRetention(mirrorDir);
+    }
+
     try {
-      this.db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('last_backup_date', ?)").run(now);
+      const stmt = this.db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)");
+      stmt.run('last_backup_date', createdAt);
+      if (kind === 'auto') stmt.run('last_auto_backup_date', localDate(now));
     } catch {}
 
-    // 7. Audit log the creation
     this.db.prepare(`
       INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at)
       VALUES (?, 'BACKUP_CREATE', 'system', ?, ?, ?)
     `).run(
-      user.id,
+      kind === 'auto' ? null : user.id,
       filename,
-      `Created verified backup: ${bundleBuffer.length} bytes, SHA256: ${bundleHash.substring(0, 16)}..., images: ${imagesBundle.length}, products: ${productsCount}`,
-      now
+      `${kind} backup: ${bundleBuffer.length} bytes, SHA256 ${bundleHash.substring(0, 16)}…, images ${images.length}, products ${stats.products_count}` +
+      (mirrorPath ? `, mirror: ${mirrorPath}` : mirrorError ? `, mirror failed: ${mirrorError}` : ''),
+      createdAt
     );
 
     return {
@@ -226,9 +334,24 @@ export class BackupService {
       filepath: savedFilePath,
       size_bytes: bundleBuffer.length,
       checksum_sha256: bundleHash,
-      created_at: now,
-      data_base64: bundleBuffer.toString('base64')
+      created_at: createdAt,
+      kind,
+      mirror_filepath: mirrorPath,
+      mirror_error: mirrorError,
     };
+  }
+
+  /** Keeps the newest N automatic backups in a folder; manual and safety backups are never pruned. */
+  private applyRetention(dir: string): void {
+    const keep = Math.max(3, parseInt(this.getSettings().backup_retention_count || '30', 10) || 30);
+    try {
+      const autos = fs.readdirSync(dir).filter((f) => /^storepos_auto_.*\.posbackup$/.test(f)).sort().reverse();
+      for (const old of autos.slice(keep)) {
+        fs.unlinkSync(path.join(dir, old));
+      }
+    } catch (err: any) {
+      this.logSystemError('backup:retention', `Retention cleanup failed in ${dir}: ${err?.message}`, undefined, 'warning');
+    }
   }
 
   /**
@@ -236,227 +359,249 @@ export class BackupService {
    * Strictly verifies integrity and throws if backup creation or validation fails.
    */
   createEmergencyPreResetBackup(user: User): string {
-    const emergencyDir = this.getEffectiveBackupDirectory();
-    const res = this.createBackup(user, emergencyDir);
-    
-    // Strict integrity verification of the emergency backup
-    const verification = this.verifyBackup(user, undefined, res.backup_filename);
-    if (!verification.is_valid) {
-      throw new Error(`ავარიული ასლის შექმნისას დაფიქსირდა შეცდომა: ${verification.integrity_status}`);
+    const res = this.createBackup(user, undefined, 'prereset');
+    const verification = this.inspectBundle(fs.readFileSync(res.filepath));
+    if (!verification.ok) {
+      throw new Error(`ავარიული ასლის შექმნისას დაფიქსირდა შეცდომა: ${verification.error}`);
     }
-    
     return res.filepath;
   }
 
   /**
-   * Restores database from a verified backup.
-   * Steps:
-   * 1. Validates integrity and schema of candidate backup.
-   * 2. Takes safety backup of current active DB.
-   * 3. Safely closes active SQLite connection.
-   * 4. Replaces database file on disk and writes real product images.
-   * 5. Reopens connection and verifies data.
-   * 6. Automatically rolls back if anything fails.
+   * Full verification of a backup: format, checksums, SQLite header, integrity_check,
+   * required tables and schema version. With keepCandidate the verified database file is
+   * left on disk for restore; otherwise it is deleted.
    */
-  restoreBackup(user: User, dataString: string, expectedChecksum?: string): {
-    success: boolean;
-    message: string;
-    restored_stats?: {
-      products_count: number;
-      sales_count: number;
-      customers_count: number;
-      images_restored: number;
-    };
+  private inspectBundle(raw: Buffer, keepCandidate = false): {
+    ok: boolean;
+    error?: string;
+    bundle?: PosBackupBundle;
+    candidatePath?: string;
+    stats?: any;
   } {
-    this.checkOwner(user);
-
-    let rawBuffer: Buffer;
-    const trimmed = dataString.trim();
-    if (trimmed.startsWith('{')) {
-      rawBuffer = Buffer.from(trimmed, 'utf-8');
-    } else {
-      rawBuffer = Buffer.from(trimmed, 'base64');
-    }
-
-    const calculatedBundleHash = crypto.createHash('sha256').update(rawBuffer).digest('hex');
-
+    let bundle: PosBackupBundle;
     let dbBuffer: Buffer;
-    let bundleImages: Array<{ product_id: number; file_path: string; is_primary: number; data_base64?: string }> = [];
-    let bundleSettings: Record<string, string> | null = null;
-    let isUnifiedBundle = false;
-
-    // Parse backup bundle
     try {
-      const decodedText = rawBuffer.toString('utf-8');
-      if (decodedText.includes('StorePOS-Unified-Backup')) {
-        const bundle: PosBackupBundle = JSON.parse(decodedText);
-        if (bundle.format !== 'StorePOS-Unified-Backup') {
-          throw new Error('არათავსებადი სარეზერვო ასლის ფორმატი');
-        }
-        dbBuffer = Buffer.from(bundle.db_base64, 'base64');
-        const calculatedDbHash = crypto.createHash('sha256').update(dbBuffer).digest('hex');
-        if (bundle.db_checksum_sha256 && bundle.db_checksum_sha256 !== calculatedDbHash) {
-          throw new Error('სარეზერვო ასლის შემოწმების შეცდომა: მონაცემთა ბაზის შიდა Checksum არ ემთხვევა (დაზიანებული მონაცემები)');
-        }
-        bundleImages = bundle.images || [];
-        bundleSettings = bundle.settings || null;
-        isUnifiedBundle = true;
-      } else {
-        dbBuffer = rawBuffer;
+      const text = raw.toString('utf-8').trim();
+      const parsed = text.startsWith('{') ? JSON.parse(text) : JSON.parse(Buffer.from(text, 'base64').toString('utf-8'));
+      if (!parsed || parsed.format !== 'StorePOS-Unified-Backup') {
+        return { ok: false, error: 'არათავსებადი სარეზერვო ასლის ფორმატი' };
       }
-    } catch (parseErr: any) {
-      if (parseErr.message.includes('Checksum')) throw parseErr;
-      dbBuffer = rawBuffer;
+      bundle = parsed;
+      dbBuffer = Buffer.from(bundle.db_base64 || '', 'base64');
+    } catch {
+      return { ok: false, error: 'ფაილი არ არის StorePOS-ის სარეზერვო ასლი ან დაზიანებულია' };
     }
 
-    // Check optional expected checksum
-    if (expectedChecksum) {
-      const dbHash = crypto.createHash('sha256').update(dbBuffer).digest('hex');
-      if (expectedChecksum !== calculatedBundleHash && expectedChecksum !== dbHash) {
-        throw new Error('სარეზერვო ასლის შემოწმების შეცდომა: ფაილის Checksum არ ემთხვევა (დაზიანებული ფაილი)');
-      }
+    if (!bundle.db_checksum_sha256 || bundle.db_checksum_sha256 !== sha256(dbBuffer)) {
+      return { ok: false, error: 'სარეზერვო ასლის შემოწმების შეცდომა: მონაცემთა ბაზის შიდა Checksum არ ემთხვევა (დაზიანებული მონაცემები)' };
+    }
+    if (!dbBuffer.subarray(0, 16).toString('latin1').startsWith('SQLite format 3')) {
+      return { ok: false, error: 'არავალიდური SQLite ბაზა' };
+    }
+    if ((bundle.schema_version || 0) > LATEST_SCHEMA_VERSION) {
+      return { ok: false, error: `ასლი შექმნილია StorePOS-ის უფრო ახალი ვერსიით (სქემა v${bundle.schema_version}); ჯერ განაახლეთ პროგრამა` };
     }
 
-    const dbPath = this.getTargetDbPath();
-
-    // In-memory test handling
-    if (dbPath === ':memory:') {
-      return {
-        success: true,
-        message: 'ტესტურ მეხსიერებაში აღდგენა წარმატებით შემოწმდა',
-        restored_stats: {
-          products_count: bundleImages.length,
-          sales_count: 0,
-          customers_count: 0,
-          images_restored: bundleImages.length
-        }
-      };
-    }
-
-    const candidatePath = `${dbPath}.candidate_${Date.now()}.db`;
-    const safetyBackupPath = `${dbPath}.before_restore_${Date.now()}.bak`;
-
-    // 1. Write candidate database file to disk
+    const candidatePath = path.join(this.dataDir(), `.restore-candidate-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`);
     fs.writeFileSync(candidatePath, dbBuffer);
-
-    // 2. Perform PRAGMA integrity_check and table validation on candidate
+    let candidateDb: DatabaseSync | null = null;
     try {
-      const candidateDb = new DatabaseSync(candidatePath);
+      candidateDb = new DatabaseSync(candidatePath);
       const row = candidateDb.prepare("PRAGMA integrity_check;").get() as any;
-
       if (!row || row.integrity_check !== 'ok') {
-        candidateDb.close();
-        if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
         throw new Error(`ბაზის ფაილი დაზიანებულია: PRAGMA integrity_check = ${row?.integrity_check || 'fail'}`);
       }
-
-      // Verify essential tables exist
-      const requiredTables = ['users', 'products', 'product_variants', 'sales', 'customers'];
-      for (const t of requiredTables) {
-        const tRow = candidateDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(t);
-        if (!tRow) {
-          candidateDb.close();
-          if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
+      for (const t of ['users', 'products', 'product_variants', 'sales', 'customers']) {
+        if (!candidateDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(t)) {
           throw new Error(`სარეზერვო ასლი არათავსებადია: ცხრილი "${t}" ვერ მოიძებნა`);
         }
       }
-
+      const stats = {
+        products_count: (candidateDb.prepare('SELECT COUNT(*) AS c FROM products').get() as any).c,
+        sales_count: (candidateDb.prepare('SELECT COUNT(*) AS c FROM sales').get() as any).c,
+        customers_count: (candidateDb.prepare('SELECT COUNT(*) AS c FROM customers').get() as any).c,
+      };
       candidateDb.close();
-    } catch (checkErr: any) {
-      if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
-      throw new Error(`სარეზერვო ასლის ვალიდაცია ჩაიშალა: ${checkErr.message}`);
+      candidateDb = null;
+      if (!keepCandidate) fs.unlinkSync(candidatePath);
+      return { ok: true, bundle, candidatePath: keepCandidate ? candidatePath : undefined, stats };
+    } catch (err: any) {
+      try { candidateDb?.close(); } catch {}
+      try { fs.unlinkSync(candidatePath); } catch {}
+      return { ok: false, error: err?.message || String(err) };
+    }
+  }
+
+  /** Restores from a file chosen in a native dialog or listed in the backup folder. */
+  restoreFromFile(user: User, filePath: string) {
+    this.checkOwner(user);
+    if (!filePath || !fs.existsSync(filePath)) {
+      throw new Error('სარეზერვო ფაილი ვერ მოიძებნა');
+    }
+    return this.restoreFromBuffer(user, fs.readFileSync(filePath), path.basename(filePath));
+  }
+
+  /** Restores a backup from the configured backup folder by file name. */
+  restoreFromList(user: User, filename: string) {
+    this.checkOwner(user);
+    const name = path.basename(String(filename || ''));
+    if (!name.endsWith('.posbackup')) throw new Error('არასწორი ფაილის სახელი');
+    return this.restoreFromFile(user, path.join(this.getEffectiveBackupDirectory(), name));
+  }
+
+  /**
+   * Restores database from an uploaded backup (JSON text or base64 of it).
+   */
+  restoreBackup(user: User, dataString: string, expectedChecksum?: string) {
+    this.checkOwner(user);
+    if (typeof dataString !== 'string' || !dataString.trim()) {
+      throw new Error('სარეზერვო ასლის მონაცემები ცარიელია');
+    }
+    const trimmed = dataString.trim();
+    const raw = trimmed.startsWith('{') ? Buffer.from(trimmed, 'utf-8') : Buffer.from(trimmed, 'base64');
+    if (expectedChecksum && expectedChecksum !== sha256(raw)) {
+      throw new Error('სარეზერვო ასლის შემოწმების შეცდომა: ფაილის Checksum არ ემთხვევა (დაზიანებული ფაილი)');
+    }
+    return this.restoreFromBuffer(user, raw, 'uploaded file');
+  }
+
+  private restoreFromBuffer(user: User, raw: Buffer, sourceLabel: string): {
+    success: boolean;
+    message: string;
+    safety_backup?: string;
+    restored_stats?: { products_count: number; sales_count: number; customers_count: number; images_restored: number };
+  } {
+    this.checkOwner(user);
+    const dbPath = this.getTargetDbPath();
+
+    // 1. Verify the candidate completely before touching anything.
+    const inspection = this.inspectBundle(raw, true);
+    if (!inspection.ok) {
+      throw new Error(inspection.error);
+    }
+    const candidatePath = inspection.candidatePath!;
+    if (dbPath === ':memory:') {
+      fs.unlinkSync(candidatePath);
+      throw new Error('აღდგენა შესაძლებელია მხოლოდ დისკზე შენახულ ბაზაზე');
     }
 
-    // 3. Create safety snapshot of current active database
-    if (fs.existsSync(dbPath)) {
-      try {
-        this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
-      } catch {}
-      fs.copyFileSync(dbPath, safetyBackupPath);
-    }
-
-    // 4. CRITICAL: Safely close active connection before file overwrite
-    closeDatabase();
-
-    // 5. Overwrite database file and restore real image files
-    let imagesRestoredCount = 0;
+    // 2. Emergency backup of the current state; without it no restore happens.
+    let safetyBackup: string;
     try {
-      fs.copyFileSync(candidatePath, dbPath);
-      if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
+      safetyBackup = this.createBackup(user, undefined, 'prerestore').filepath;
+    } catch (err: any) {
+      fs.unlinkSync(candidatePath);
+      throw new Error(`აღდგენა შეჩერდა: მიმდინარე მონაცემების სარეზერვო ასლი ვერ შეიქმნა (${err?.message})`);
+    }
 
-      // Clean WAL and SHM files to prevent state conflicts
-      const walPath = `${dbPath}-wal`;
-      const shmPath = `${dbPath}-shm`;
-      if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
-      if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+    // 3. Close every connection to the live file (Windows refuses to move open files).
+    const isSingleton = path.resolve(dbPath) === path.resolve(getDatabasePath());
+    closeDatabase();
+    try { this.db.close(); } catch {}
 
-      // Restore real product photos to disk
-      const imagesDir = this.customDbPath ? path.join(path.dirname(this.customDbPath), 'images') : getImagesDirectory();
-      if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
-
-      for (const img of bundleImages) {
-        if (img.data_base64 && img.data_base64.startsWith('data:')) {
-          try {
-            const matches = img.data_base64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-            if (matches && matches[2]) {
-              const imgBuffer = Buffer.from(matches[2], 'base64');
-              const targetImgPath = path.join(imagesDir, path.basename(img.file_path));
-              fs.writeFileSync(targetImgPath, imgBuffer);
-              if (path.isAbsolute(img.file_path) && img.file_path !== targetImgPath) {
-                const parent = path.dirname(img.file_path);
-                if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true });
-                fs.writeFileSync(img.file_path, imgBuffer);
-              }
-              imagesRestoredCount++;
-            }
-          } catch {}
+    // 4. Move the live files aside, put the verified candidate in place.
+    const stamp = Date.now();
+    const aside = (suffix: string) => `${dbPath}${suffix}.replaced-${stamp}`;
+    const moved: Array<[string, string]> = [];
+    let newDb: DatabaseSync | null = null;
+    let imagesRestored = 0;
+    try {
+      for (const suffix of ['', '-wal', '-shm']) {
+        if (fs.existsSync(dbPath + suffix)) {
+          fs.renameSync(dbPath + suffix, aside(suffix));
+          moved.push([dbPath + suffix, aside(suffix)]);
         }
       }
+      fs.renameSync(candidatePath, dbPath);
 
-      // 6. Safely reopen database and verify active state
-      const newDb = initDatabase(dbPath);
-      this.db = newDb;
+      // 5. Photos: only into the app's photo folder, only under plain file names.
+      const imagesDir = this.imagesDir();
+      for (const img of inspection.bundle!.images || []) {
+        if (!img.data_base64 || img.file_path.startsWith('data:')) continue;
+        const name = path.basename(img.file_path);
+        if (!SAFE_IMAGE_NAME.test(name)) continue;
+        const m = img.data_base64.match(/^data:image\/[A-Za-z0-9.+-]+;base64,(.+)$/);
+        if (!m) continue;
+        writeFileAtomic(path.join(imagesDir, name), Buffer.from(m[1], 'base64'));
+        imagesRestored++;
+      }
 
+      // 6. Reopen (older backups are migrated forward) and verify.
+      if (isSingleton) {
+        newDb = initDatabase(dbPath);
+      } else {
+        newDb = new DatabaseSync(dbPath);
+        newDb.exec('PRAGMA foreign_keys = ON;');
+        newDb.exec('PRAGMA journal_mode = WAL;');
+        runMigrations(newDb, dbPath);
+      }
       const postRow = newDb.prepare("PRAGMA integrity_check;").get() as any;
       if (!postRow || postRow.integrity_check !== 'ok') {
         throw new Error('აღდგენის შემდგომი შემოწმება ჩაიშალა');
       }
+      this.db = newDb;
+      const stats = this.collectStats(newDb);
 
-      const productsCount = (newDb.prepare("SELECT COUNT(*) as cnt FROM products").get() as any)?.cnt || 0;
-      const salesCount = (newDb.prepare("SELECT COUNT(*) as cnt FROM sales").get() as any)?.cnt || 0;
-      const customersCount = (newDb.prepare("SELECT COUNT(*) as cnt FROM customers").get() as any)?.cnt || 0;
+      // The restored database has its own users: everyone signs in again.
+      revokeAllSessions();
 
-      // 7. Audit log the restore
+      // Keep the replaced database once more next to the live one, drop the rest.
+      for (const [, asideFile] of moved) {
+        if (asideFile === aside('')) {
+          const keepAs = `${dbPath}.before-restore.bak`;
+          try { if (fs.existsSync(keepAs)) fs.unlinkSync(keepAs); fs.renameSync(asideFile, keepAs); } catch {}
+        } else {
+          try { fs.unlinkSync(asideFile); } catch {}
+        }
+      }
+
       newDb.prepare(`
         INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at)
-        VALUES (?, 'BACKUP_RESTORE', 'system', ?, ?, ?)
+        VALUES (NULL, 'BACKUP_RESTORE', 'system', ?, ?, ?)
       `).run(
-        user.id,
-        'store.db',
-        `Restored database snapshot successfully. Safety backup: ${path.basename(safetyBackupPath)}. Restored ${productsCount} products, ${salesCount} sales, ${customersCount} customers.`,
+        sourceLabel,
+        `Restored by ${user.name} (id ${user.id}) from ${sourceLabel}. Safety backup: ${path.basename(safetyBackup)}. ` +
+        `${stats.products_count} products, ${stats.sales_count} sales, ${stats.customers_count} customers, ${imagesRestored} photos.`,
         new Date().toISOString()
       );
 
       return {
         success: true,
-        message: 'ბაზა წარმატებით შემოწმდა (PRAGMA integrity_check: OK) და აღდგა.',
+        message: 'ბაზა შემოწმდა (PRAGMA integrity_check: OK) და წარმატებით აღდგა. გთხოვთ ხელახლა შეხვიდეთ.',
+        safety_backup: safetyBackup,
         restored_stats: {
-          products_count: productsCount,
-          sales_count: salesCount,
-          customers_count: customersCount,
-          images_restored: imagesRestoredCount
+          products_count: stats.products_count,
+          sales_count: stats.sales_count,
+          customers_count: stats.customers_count,
+          images_restored: imagesRestored
         }
       };
-    } catch (writeErr: any) {
-      // Automatic rollback to safety backup on error
-      if (fs.existsSync(safetyBackupPath)) {
-        try {
-          fs.copyFileSync(safetyBackupPath, dbPath);
-          this.db = initDatabase(dbPath);
-        } catch {}
+    } catch (err: any) {
+      // Roll back: put the previous files back exactly as they were.
+      try { newDb?.close(); } catch {}
+      if (isSingleton) closeDatabase();
+      try { if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath); } catch {}
+      if (moved.length > 0) {
+        try { if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath); } catch {}
+        for (const suffix of ['-wal', '-shm']) {
+          try { if (fs.existsSync(dbPath + suffix)) fs.unlinkSync(dbPath + suffix); } catch {}
+        }
+        for (const [original, asideFile] of moved) {
+          try { fs.renameSync(asideFile, original); } catch {}
+        }
       }
-      throw new Error(`აღდგენის შეცდომა: ${writeErr.message}`);
+      try {
+        this.db = isSingleton ? initDatabase(dbPath) : new DatabaseSync(dbPath);
+      } catch {}
+      this.logSystemError('backup:restore', `Restore failed and was rolled back: ${err?.message}`, err?.stack, 'critical', user.id);
+      throw new Error(`აღდგენის შეცდომა (მიმდინარე მონაცემები უცვლელია): ${err?.message}`);
     }
+  }
+
+  /** Current connection (changes after a restore). */
+  getConnection(): DatabaseSync {
+    return this.db;
   }
 
   /**
@@ -468,35 +613,31 @@ export class BackupService {
     const backupDir = this.getEffectiveBackupDirectory();
     if (!fs.existsSync(backupDir)) return [];
 
-    const files = fs.readdirSync(backupDir).filter(f => f.endsWith('.posbackup'));
     const results: BackupInfo[] = [];
-
-    for (const f of files) {
+    for (const f of fs.readdirSync(backupDir).filter((name) => name.endsWith('.posbackup'))) {
       const fullPath = path.join(backupDir, f);
       try {
         const stats = fs.statSync(fullPath);
-        const fileContent = fs.readFileSync(fullPath, 'utf-8');
-        const bundle: PosBackupBundle = JSON.parse(fileContent);
-
-        const calculatedHash = crypto.createHash('sha256').update(fileContent).digest('hex');
-        const isValid = bundle.format === 'StorePOS-Unified-Backup' && !!bundle.db_base64;
-
+        const header = readBundleHeader(fullPath);
+        const isValid = header?.format === 'StorePOS-Unified-Backup';
         results.push({
           filename: f,
           filepath: fullPath,
           size_bytes: stats.size,
-          created_at: bundle.created_at || stats.mtime.toISOString(),
-          checksum_sha256: calculatedHash,
+          created_at: header?.created_at || stats.mtime.toISOString(),
+          checksum_sha256: header?.db_checksum_sha256 || '',
           is_valid: isValid,
-          integrity_status: isValid ? 'OK' : 'INVALID_FORMAT',
-          stats: bundle.stats
-        });
-      } catch (err) {
+          integrity_status: isValid ? 'OK (სრული შემოწმება აღდგენისას)' : 'INVALID_FORMAT',
+          kind: header?.kind || (f.startsWith('store_backup_') ? 'manual' : undefined),
+          schema_version: header?.schema_version,
+          stats: header?.stats as any
+        } as BackupInfo);
+      } catch {
         results.push({
           filename: f,
           filepath: fullPath,
           size_bytes: 0,
-          created_at: new Date().toISOString(),
+          created_at: new Date(0).toISOString(),
           checksum_sha256: '',
           is_valid: false,
           integrity_status: 'CORRUPTED'
@@ -512,91 +653,50 @@ export class BackupService {
    */
   verifyBackup(user: User, dataString?: string, filename?: string): { is_valid: boolean; integrity_status: string; stats?: any } {
     this.checkOwner(user);
-
-    try {
-      let rawBuffer: Buffer;
-      if (filename) {
-        const targetPath = path.join(this.getEffectiveBackupDirectory(), path.basename(filename));
-        if (!fs.existsSync(targetPath)) {
-          return { is_valid: false, integrity_status: `ფაილი "${filename}" ვერ მოიძებნა` };
-        }
-        rawBuffer = fs.readFileSync(targetPath);
-      } else if (dataString) {
-        const trimmed = dataString.trim();
-        if (trimmed.startsWith('{')) {
-          rawBuffer = Buffer.from(trimmed, 'utf-8');
-        } else {
-          rawBuffer = Buffer.from(trimmed, 'base64');
-        }
-      } else {
-        return { is_valid: false, integrity_status: 'მონაცემები არ არის მითითებული' };
+    let raw: Buffer;
+    if (filename) {
+      const targetPath = path.join(this.getEffectiveBackupDirectory(), path.basename(filename));
+      if (!fs.existsSync(targetPath)) {
+        return { is_valid: false, integrity_status: `ფაილი "${filename}" ვერ მოიძებნა` };
       }
-
-      const decodedText = rawBuffer.toString('utf-8');
-      const bundle: PosBackupBundle = JSON.parse(decodedText);
-
-      if (bundle.format !== 'StorePOS-Unified-Backup') {
-        return { is_valid: false, integrity_status: 'უცნობი ფორმატი' };
-      }
-
-      const dbBuffer = Buffer.from(bundle.db_base64, 'base64');
-      const calculatedDbHash = crypto.createHash('sha256').update(dbBuffer).digest('hex');
-      if (bundle.db_checksum_sha256 && bundle.db_checksum_sha256 !== calculatedDbHash) {
-        return { is_valid: false, integrity_status: 'მონაცემთა ბაზის შიდა ჰეში დაზიანებულია' };
-      }
-
-      // Check candidate SQLite header
-      if (!dbBuffer.subarray(0, 16).toString('utf-8').startsWith('SQLite format 3')) {
-        return { is_valid: false, integrity_status: 'არავალიდური SQLite ბაზა' };
-      }
-
-      return {
-        is_valid: true,
-        integrity_status: 'მთლიანობა დადასტურებულია (SHA-256 + SQLite Valid)',
-        stats: bundle.stats
-      };
-    } catch (err: any) {
-      return { is_valid: false, integrity_status: `შეცდომა: ${err.message}` };
+      raw = fs.readFileSync(targetPath);
+    } else if (dataString) {
+      raw = Buffer.from(dataString.trim(), 'utf-8');
+    } else {
+      return { is_valid: false, integrity_status: 'მონაცემები არ არის მითითებული' };
     }
+    const result = this.inspectBundle(raw);
+    return result.ok
+      ? { is_valid: true, integrity_status: 'მთლიანობა დადასტურებულია (SHA-256 + SQLite integrity_check)', stats: result.stats }
+      : { is_valid: false, integrity_status: result.error || 'შეცდომა' };
   }
 
   /**
-   * Checks if an automated daily backup is due (> 24 hours) and creates it.
+   * Automatic daily backup, run by the main-process scheduler (independently of who is logged
+   * in or which screen is open). One per Tbilisi calendar day.
    */
-  checkAndRunDailyBackup(user?: User): boolean {
+  runScheduledBackupIfDue(now: Date = new Date()): boolean {
     try {
       const settings = this.getSettings();
       if (settings.auto_backup_enabled === '0') return false;
+      if ((settings.last_auto_backup_date || '') === localDate(now)) return false;
 
-      const lastBackup = settings.last_backup_date;
-      if (lastBackup) {
-        const lastDate = new Date(lastBackup).getTime();
-        const now = Date.now();
-        const diffHours = (now - lastDate) / (1000 * 60 * 60);
-        if (diffHours < 24) {
-          return false; // Already backed up within last 24 hours
-        }
-      }
+      const ownerRow = this.db.prepare("SELECT id, name, role, created_at FROM users WHERE role = 'owner' AND is_active = 1 ORDER BY id LIMIT 1").get() as any;
+      if (!ownerRow) return false; // nothing to protect before the first owner exists
 
-      // Get system owner user
-      const ownerRow = this.db.prepare("SELECT id, name, role FROM users WHERE role = 'owner' LIMIT 1").get() as any;
-      if (!ownerRow) return false;
-
-      const ownerUser: User = user || {
-        id: ownerRow.id,
-        name: ownerRow.name,
-        role: 'owner',
-        is_active: 1,
-        created_at: new Date().toISOString()
-      };
-
-      this.createBackup(ownerUser);
+      this.createBackup({ id: ownerRow.id, name: ownerRow.name, role: 'owner', is_active: 1, created_at: ownerRow.created_at }, undefined, 'auto', now);
       console.log('[BackupService] Automated daily backup executed successfully.');
       return true;
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[BackupService] Automated daily backup failed:', err);
+      this.logSystemError('backup:auto', `Automatic daily backup failed: ${err?.message}`, err?.stack, 'critical');
       return false;
     }
+  }
+
+  /** Kept for the Settings screen's "run daily backup now" action. */
+  checkAndRunDailyBackup(_user?: User): boolean {
+    return this.runScheduledBackupIfDue();
   }
 
   /**
@@ -610,15 +710,12 @@ export class BackupService {
     userId?: number
   ): void {
     try {
-      // Sanitize message and stack trace to scrub PINs and tokens
-      const sanitizedMsg = this.sanitizeSensitiveText(errorMessage);
+      const sanitizedMsg = this.sanitizeSensitiveText(String(errorMessage || ''));
       const sanitizedStack = stackTrace ? this.sanitizeSensitiveText(stackTrace) : null;
-      const now = new Date().toISOString();
-
       this.db.prepare(`
         INSERT INTO system_error_logs (user_id, error_source, error_message, stack_trace, severity, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
-      `).run(userId || null, errorSource, sanitizedMsg, sanitizedStack, severity, now);
+      `).run(userId || null, errorSource, sanitizedMsg, sanitizedStack, severity, new Date().toISOString());
     } catch (e) {
       console.error('Failed to write to system_error_logs table:', e);
     }
@@ -639,7 +736,7 @@ export class BackupService {
         LEFT JOIN users u ON sel.user_id = u.id
         ORDER BY sel.id DESC
         LIMIT ?
-      `).all(limit) as any[];
+      `).all(Math.min(Math.max(1, Math.floor(Number(limit)) || 100), 1000)) as any[];
     } catch {
       return [];
     }
@@ -648,6 +745,8 @@ export class BackupService {
   clearErrorLogs(user: User): void {
     this.checkOwner(user);
     this.db.prepare("DELETE FROM system_error_logs").run();
+    this.db.prepare("INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (?, 'ERROR_LOG_CLEAR', 'system', NULL, 'System error log cleared', ?)")
+      .run(user.id, new Date().toISOString());
   }
 
   getAuditLogs(limit: number = 100): AuditLog[] {
@@ -657,7 +756,7 @@ export class BackupService {
       LEFT JOIN users u ON al.user_id = u.id
       ORDER BY al.id DESC
       LIMIT ?
-    `).all(limit) as any[];
+    `).all(Math.min(Math.max(1, Math.floor(Number(limit)) || 100), 1000)) as any[];
   }
 
   getSettings(): Record<string, string> {
@@ -669,13 +768,21 @@ export class BackupService {
     return result;
   }
 
+  /** Owner changes settings; only known keys with validated values are accepted. */
   updateSettings(user: User, settings: Record<string, string>): void {
     this.checkOwner(user);
+    if (!settings || typeof settings !== 'object') throw new Error('პარამეტრები არასწორია');
+    const clean: Array<[string, string]> = [];
+    for (const [k, v] of Object.entries(settings)) {
+      const rule = SETTINGS_RULES[k];
+      if (!rule) throw new Error(`უცნობი პარამეტრი: "${k}"`);
+      clean.push([k, rule(String(v ?? ''))]);
+    }
     runInTransaction((db) => {
       const stmt = db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)");
-      for (const [k, v] of Object.entries(settings)) {
-        stmt.run(k, String(v));
-      }
+      for (const [k, v] of clean) stmt.run(k, v);
+      db.prepare("INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (?, 'SETTINGS_UPDATE', 'app_settings', NULL, ?, ?)")
+        .run(user.id, `Updated: ${clean.map(([k]) => k).join(', ')}`, new Date().toISOString());
     }, this.db);
   }
 }

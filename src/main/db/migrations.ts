@@ -564,6 +564,9 @@ export const migrations: Migration[] = [
   }
 ];
 
+/** Schema version written by this build; backups from a newer schema are refused. */
+export const LATEST_SCHEMA_VERSION = Math.max(...migrations.map((m) => m.version));
+
 function addColumnIfMissing(db: DatabaseSync, table: string, column: string, definition: string): void {
   const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!columns.some((c) => c.name === column)) {

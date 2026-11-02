@@ -19,62 +19,16 @@ import { User, UserRole, UserSession } from '../../shared/types.ts';
 import { generateSalt, hashPin, isValidPin, pinHashNeedsUpgrade, verifyPin } from '../../shared/auth.ts';
 import { BackupService } from './backupService.ts';
 import { oneOf, requireId, requireString } from './validation.ts';
-import crypto from 'node:crypto';
+import {
+  createSession, getActiveSession, refreshSessionUser, revokeAllSessions, revokeSession, revokeUserSessions,
+  SESSION_IDLE_MS, SESSION_MAX_AGE_MS,
+} from './sessions.ts';
 
-interface SessionRecord {
-  user: User;
-  createdAt: number;
-  lastSeenAt: number;
-}
+export { createSession, getActiveSession, revokeAllSessions, revokeSession, revokeUserSessions, SESSION_IDLE_MS, SESSION_MAX_AGE_MS };
 
-/** A session unused for this long is dropped (the UI locks itself much earlier). */
-export const SESSION_IDLE_MS = 60 * 60 * 1000;
-/** No session outlives a working day. */
-export const SESSION_MAX_AGE_MS = 16 * 60 * 60 * 1000;
 /** Failures allowed before the first temporary lock. */
 export const PIN_FREE_ATTEMPTS = 4;
 const LOCK_STEPS_SECONDS = [30, 60, 120, 300, 900];
-
-// In-memory active sessions map: token -> session
-const activeSessions = new Map<string, SessionRecord>();
-
-export function getActiveSession(token: string, now: number = Date.now()): User | null {
-  if (!token || typeof token !== 'string') return null;
-  const s = activeSessions.get(token);
-  if (!s) return null;
-  if (now - s.lastSeenAt > SESSION_IDLE_MS || now - s.createdAt > SESSION_MAX_AGE_MS) {
-    activeSessions.delete(token);
-    return null;
-  }
-  s.lastSeenAt = now;
-  return s.user;
-}
-
-export function createSession(user: User): UserSession {
-  const token = crypto.randomBytes(32).toString('hex');
-  const now = Date.now();
-  activeSessions.set(token, { user, createdAt: now, lastSeenAt: now });
-  return { user, token };
-}
-
-export function revokeSession(token: string): void {
-  activeSessions.delete(token);
-}
-
-export function revokeUserSessions(userId: number, exceptToken?: string): number {
-  let n = 0;
-  for (const [token, s] of activeSessions) {
-    if (s.user.id === userId && token !== exceptToken) {
-      activeSessions.delete(token);
-      n++;
-    }
-  }
-  return n;
-}
-
-export function revokeAllSessions(): void {
-  activeSessions.clear();
-}
 
 function lockDurationMs(failures: number): number {
   if (failures <= PIN_FREE_ATTEMPTS) return 0;
@@ -174,8 +128,7 @@ export class AuthService {
       return null;
     }
     const user = this.toUser(row);
-    const record = activeSessions.get(token);
-    if (record) record.user = user;
+    refreshSessionUser(token, user);
     return user;
   }
 

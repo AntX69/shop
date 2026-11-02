@@ -250,6 +250,8 @@ export interface BackupInfo {
   checksum_sha256: string;
   is_valid: boolean;
   integrity_status: string;
+  kind?: 'manual' | 'auto' | 'prereset' | 'prerestore';
+  schema_version?: number;
   stats?: {
     products_count: number;
     sales_count: number;
