@@ -24,6 +24,18 @@ files:
 
 asar: true
 
+# Electron fuses (baked into StorePOS.exe): the executable cannot be run as a plain Node.js
+# (ELECTRON_RUN_AS_NODE), NODE_OPTIONS and --inspect are ignored, and only an app.asar whose
+# integrity matches the hash embedded at build time is loaded. file:// keeps Electron's default
+# privileges because the UI is loaded from file:// as ES modules.
+electronFuses:
+  runAsNode: false
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  enableCookieEncryption: true
+
 extraResources:
   - from: public/models
     to: models
