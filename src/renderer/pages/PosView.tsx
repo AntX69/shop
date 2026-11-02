@@ -4,8 +4,10 @@
  * 
  * POS / Cashier & Checkout Screen (სალარო).
  * Implements:
- * - Barcode scanner & 5-digit manual lookup
- * - Mandatory Product Confirmation Modal before adding to cart
+ * - Barcode scanner & 5-digit manual lookup (a USB scanner is recognised by its typing speed,
+ *   wherever the focus is; see utils/scannerInput.ts)
+ * - Mandatory Product Confirmation Modal before adding to cart; scanning the same product again
+ *   while it is open raises its quantity, another product waits in a queue (never replaced)
  * - Cart quantity controls with remaining stock validation
  * - 3 Payment Methods: ნაღდი, ნისია, შერეული (No bank cards!)
  * - Change calculation & Customer debt integration
@@ -18,6 +20,7 @@ import { CartItem, Customer, Product, ProductVariant, Sale, User } from '../../s
 import { formatTetri, safeParseTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { photoSrc } from '../utils/imageResize.ts';
+import { ScanDetector, SCAN_NO_SUFFIX_FLUSH_MS } from '../utils/scannerInput.ts';
 import { WebcamModal } from '../components/WebcamModal.tsx';
 import { 
   Barcode, 
@@ -40,6 +43,23 @@ interface PosViewProps {
   currentUser: User;
 }
 
+interface ConfirmData {
+  product: Product;
+  variant: ProductVariant;
+  codeUsed: string;
+  quantityToAdd: number;
+  /** Shown when a scan changed the quantity of the open confirmation. */
+  scanNote?: string;
+}
+
+/** Puts back what a scanner burst typed into a field before it was recognised as a scan. */
+function restoreFieldValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  if (!el.isConnected || el.value === value) return;
+  const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(el, value);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   // Search & input
   const [searchInput, setSearchInput] = useState<string>('');
@@ -51,12 +71,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   const [filteredVariants, setFilteredVariants] = useState<Array<{ variant: ProductVariant; product: Product }>>([]);
 
   // Product confirmation modal (MANDATORY per specification)
-  const [confirmModalData, setConfirmModalData] = useState<{
-    product: Product;
-    variant: ProductVariant;
-    codeUsed: string;
-    quantityToAdd: number;
-  } | null>(null);
+  const [confirmModalData, setConfirmModalData] = useState<ConfirmData | null>(null);
+  // The open confirmation, readable at once by scans arriving in quick succession
+  const confirmRef = useRef<ConfirmData | null>(null);
+  // Products scanned while a confirmation was open; each gets its own confirmation in turn
+  // (the same product scanned several times waits once, with its count)
+  const confirmQueueRef = useRef<Array<{ product: Product; variant: ProductVariant; codeUsed: string; quantity: number }>>([]);
+  const [queuedCount, setQueuedCount] = useState<number>(0);
 
   // Cart
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -154,8 +175,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           setIsWebcamModalOpen(false);
           focusSearch();
         } else if (confirmModalData) {
-          setConfirmModalData(null);
-          focusSearch();
+          closeConfirmModal();
         } else if (isNewCustomerModalOpen) {
           setIsNewCustomerModalOpen(false);
         } else if (isCheckoutModalOpen) {
@@ -221,15 +241,144 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
     }
   };
 
+  const showConfirm = (data: ConfirmData | null) => {
+    confirmRef.current = data;
+    setConfirmModalData(data);
+  };
+
+  // Quantity changes inside the dialog go through setConfirmModalData; keep the ref current.
+  useEffect(() => {
+    confirmRef.current = confirmModalData;
+  }, [confirmModalData]);
+
   const openConfirmationModal = (product: Product, variant: ProductVariant, codeUsed: string) => {
     setSearchError('');
-    setConfirmModalData({
-      product,
-      variant,
-      codeUsed,
-      quantityToAdd: 1
-    });
+    const current = confirmRef.current;
+    if (!current) {
+      showConfirm({ product, variant, codeUsed, quantityToAdd: 1 });
+      return;
+    }
+    if (current.variant.id === variant.id) {
+      // Same product scanned again: one more unit, still to be confirmed by the seller.
+      const next = Math.min(variant.stock_quantity, current.quantityToAdd + 1);
+      showConfirm({
+        ...current,
+        quantityToAdd: next,
+        scanNote: next > current.quantityToAdd
+          ? `იგივე პროდუქტი კიდევ ერთხელ: რაოდენობა ${next}`
+          : `მარაგში მეტი არ არის (${variant.stock_quantity} ცალი)`
+      });
+      return;
+    }
+    // Another product: never replaces the open one, it waits for its own confirmation.
+    const queued = confirmQueueRef.current.find((q) => q.variant.id === variant.id);
+    if (queued) queued.quantity += 1;
+    else confirmQueueRef.current.push({ product, variant, codeUsed, quantity: 1 });
+    setQueuedCount(confirmQueueRef.current.length);
   };
+
+  /** Closes the confirmation (added or cancelled) and opens the next queued product, if any. */
+  const closeConfirmModal = () => {
+    const next = confirmQueueRef.current.shift();
+    setQueuedCount(confirmQueueRef.current.length);
+    if (next) {
+      const quantityToAdd = Math.max(1, Math.min(next.variant.stock_quantity, next.quantity));
+      showConfirm({
+        product: next.product,
+        variant: next.variant,
+        codeUsed: next.codeUsed,
+        quantityToAdd,
+        scanNote: next.quantity > 1 ? `დასკანერდა ${next.quantity}-ჯერ: რაოდენობა ${quantityToAdd}` : undefined
+      });
+    } else {
+      showConfirm(null);
+      focusSearch();
+    }
+  };
+
+  // Latest modal state for scan handling (scans arrive outside React's event flow)
+  const modalStateRef = useRef({ checkout: false, newCustomer: false, receipt: false, webcam: false });
+  modalStateRef.current = {
+    checkout: isCheckoutModalOpen,
+    newCustomer: isNewCustomerModalOpen,
+    receipt: !!completedSale,
+    webcam: isWebcamModalOpen
+  };
+
+  /** A code read by the USB scanner: exact lookup only (no partial name matches). */
+  const handleScannedCode = async (code: string) => {
+    const open = modalStateRef.current;
+    if (open.checkout || open.newCustomer) {
+      setCheckoutError(`დასკანერებული კოდი ${code} არ დამუშავდა: ჯერ დაასრულეთ გადახდა ან დახურეთ ეს ფანჯარა (Esc) და დაასკანერეთ თავიდან.`);
+      return;
+    }
+    if (open.receipt) setCompletedSale(null); // the next customer's first item
+    if (open.webcam) setIsWebcamModalOpen(false); // the scanner replaces the camera
+    setSearchError('');
+    try {
+      const found = await invokeIpc<{
+        variant: ProductVariant;
+        product: Product;
+        code_used: string;
+      } | null>('products:lookupCode', { code });
+      if (!found) {
+        setSearchError(`დასკანერებული კოდი "${code}" ბაზაში ვერ მოიძებნა`);
+        focusSearch();
+        return;
+      }
+      openConfirmationModal(found.product, found.variant, found.code_used);
+    } catch (err: any) {
+      setSearchError(err.message || 'ძებნის შეცდომა');
+    }
+  };
+
+  // USB barcode scanner: recognised on the whole screen (capture phase, before any field or
+  // button sees the keys), handled one scan after another in the order scanned.
+  const scanHandlerRef = useRef(handleScannedCode);
+  scanHandlerRef.current = handleScannedCode;
+  useEffect(() => {
+    const detector = new ScanDetector();
+    let chain: Promise<void> = Promise.resolve();
+    let field: { el: HTMLInputElement | HTMLTextAreaElement; value: string } | null = null;
+    let timer: number | undefined;
+    const deliver = (code: string) => {
+      chain = chain.then(() => scanHandlerRef.current(code)).catch(() => {});
+    };
+    const armFlush = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        const code = detector.flush(performance.now());
+        if (code) deliver(code);
+      }, SCAN_NO_SUFFIX_FLUSH_MS + 10);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      const action = detector.feed({
+        key: e.key, code: e.code, time: e.timeStamp, repeat: e.repeat,
+        shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, altKey: e.altKey, metaKey: e.metaKey
+      });
+      if (action.type === 'pass') {
+        if (action.sequenceStart) {
+          const t = e.target;
+          field = t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement ? { el: t, value: t.value } : null;
+        }
+        return;
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (action.burstStart && field) restoreFieldValue(field.el, field.value);
+      if (action.type === 'scan') {
+        window.clearTimeout(timer);
+        deliver(action.code);
+      } else {
+        armFlush();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   // Add confirmed product to cart
   const confirmAddToCart = () => {
@@ -269,8 +418,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       ]);
     }
 
-    setConfirmModalData(null);
-    focusSearch();
+    closeConfirmModal();
   };
 
   // Cart operations
@@ -619,6 +767,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   <div className="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
                     <button
                       onClick={() => updateCartQuantity(item.variant_id, -1)}
+                      aria-label="რაოდენობის შემცირება"
                       className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors cursor-pointer"
                     >
                       <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -628,12 +777,14 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     </span>
                     <button
                       onClick={() => updateCartQuantity(item.variant_id, 1)}
+                      aria-label="რაოდენობის გაზრდა"
                       className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors cursor-pointer"
                     >
                       <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                     </button>
                     <button
                       onClick={() => removeFromCart(item.variant_id)}
+                      aria-label="კალათიდან ამოღება"
                       className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-400 flex items-center justify-center transition-colors ml-0.5 cursor-pointer"
                     >
                       <X className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -679,15 +830,23 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         <div 
           className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
           onKeyDown={(e) => {
-            if (e.key === 'Escape') setConfirmModalData(null);
+            if (e.key === 'Escape') closeConfirmModal();
             e.stopPropagation();
           }}
         >
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl animate-in fade-in zoom-in-95 overflow-hidden">
             <div className="flex justify-between items-start border-b border-slate-800 pb-3 mb-3 shrink-0">
-              <h3 className="text-base sm:text-lg font-bold text-white">პროდუქტის დადასტურება</h3>
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-white">პროდუქტის დადასტურება</h3>
+                {queuedCount > 0 && (
+                  <div className="text-[11px] font-semibold text-amber-300 mt-0.5">
+                    რიგში კიდევ {queuedCount} დასკანერებული პროდუქტი
+                  </div>
+                )}
+              </div>
               <button
-                onClick={() => setConfirmModalData(null)}
+                onClick={closeConfirmModal}
+                aria-label="დახურვა"
                 className="text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -725,6 +884,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">
                   რაოდენობა
                 </label>
+                {confirmModalData.scanNote && (
+                  <div className="text-[11px] font-semibold text-emerald-300 mb-2">{confirmModalData.scanNote}</div>
+                )}
                 <div className="flex items-center space-x-3">
                   <button
                     onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.max(1, prev.quantityToAdd - 1) })}
@@ -757,7 +919,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
               <div className="pt-2 flex space-x-3">
                 <button
                   type="button"
-                  onClick={() => setConfirmModalData(null)}
+                  onClick={closeConfirmModal}
                   className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-colors cursor-pointer"
                 >
                   გაუქმება (Esc)

@@ -747,6 +747,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                               updated[i].barcode = e.target.value.replace(/\D/g, '');
                               setVariantsList(updated);
                             }}
+                            // A USB scanner ends with Enter: it must not submit the half-filled form.
+                            onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
                             placeholder="სკანირება / ციფრები"
                             className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono text-white"
                           />
