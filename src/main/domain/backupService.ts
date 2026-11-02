@@ -806,12 +806,17 @@ export class BackupService {
    * Automatic daily backup, run by the main-process scheduler (independently of who is logged
    * in or which screen is open). One per Tbilisi calendar day.
    */
+  /** True when today's automatic backup has not been made yet (and there is a store to protect). */
+  isScheduledBackupDue(now: Date = new Date()): boolean {
+    const settings = this.getSettings();
+    if (settings.auto_backup_enabled === '0') return false;
+    if ((settings.last_auto_backup_date || '') === localDate(now)) return false;
+    return !!this.db.prepare("SELECT 1 FROM users WHERE role = 'owner' AND is_active = 1 LIMIT 1").get();
+  }
+
   runScheduledBackupIfDue(now: Date = new Date()): boolean {
     try {
-      const settings = this.getSettings();
-      if (settings.auto_backup_enabled === '0') return false;
-      if ((settings.last_auto_backup_date || '') === localDate(now)) return false;
-
+      if (!this.isScheduledBackupDue(now)) return false;
       const ownerRow = this.db.prepare("SELECT id, name, role, created_at FROM users WHERE role = 'owner' AND is_active = 1 ORDER BY id LIMIT 1").get() as any;
       if (!ownerRow) return false; // nothing to protect before the first owner exists
 

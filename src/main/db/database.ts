@@ -99,23 +99,57 @@ export function initDatabase(customPath?: string): DatabaseSync {
 
   const db = new DatabaseSync(dbPath);
 
-  // Set production reliability and integrity PRAGMAs
-  db.exec('PRAGMA foreign_keys = ON;');
-  db.exec('PRAGMA busy_timeout = 5000;');
-  if (dbPath !== ':memory:') {
-    db.exec('PRAGMA journal_mode = WAL;');
-    // In desktop POS with financial transactions and cash drawers, synchronous = FULL
-    // guarantees immediate fsync on WAL commit, eliminating transaction loss during sudden power outages.
-    // Only ever FULL or the even stricter EXTRA: durability cannot be weakened from outside.
-    const syncMode = process.env.SQLITE_SYNCHRONOUS === 'EXTRA' ? 'EXTRA' : 'FULL';
-    db.exec(`PRAGMA synchronous = ${syncMode};`);
-  }
+  try {
+    // Set production reliability and integrity PRAGMAs
+    db.exec('PRAGMA foreign_keys = ON;');
+    db.exec('PRAGMA busy_timeout = 5000;');
+    if (dbPath !== ':memory:') {
+      db.exec('PRAGMA journal_mode = WAL;');
+      // In desktop POS with financial transactions and cash drawers, synchronous = FULL
+      // guarantees immediate fsync on WAL commit, eliminating transaction loss during sudden power outages.
+      // Only ever FULL or the even stricter EXTRA: durability cannot be weakened from outside.
+      const syncMode = process.env.SQLITE_SYNCHRONOUS === 'EXTRA' ? 'EXTRA' : 'FULL';
+      db.exec(`PRAGMA synchronous = ${syncMode};`);
+    }
 
-  // Run schema migrations with safety pre-backup
-  runMigrations(db, dbPath);
+    // Run schema migrations with safety pre-backup
+    runMigrations(db, dbPath);
+  } catch (err) {
+    // Never keep a half-opened connection (it would block the next attempt).
+    try { db.close(); } catch {}
+    throw err;
+  }
 
   dbInstance = db;
   return dbInstance;
+}
+
+/**
+ * True for failures that usually pass within seconds on Windows: the file is still held by a
+ * process that is shutting down (e.g. right after a crash or a forced close) or briefly by an
+ * antivirus scan. A damaged or foreign file (SQLITE_CORRUPT / SQLITE_NOTADB) is not transient.
+ */
+export function isTransientOpenError(err: any): boolean {
+  const code = Number(err?.errcode);
+  if (Number.isInteger(code) && code > 0) {
+    const primary = code & 0xff;
+    return primary === 5 /* BUSY */ || primary === 6 /* LOCKED */ || primary === 10 /* IOERR */ || primary === 14 /* CANTOPEN */;
+  }
+  return /disk I\/O error|database is locked|database table is locked|unable to open database file/i.test(String(err?.message || ''));
+}
+
+/** Opens the store database, retrying transient Windows file errors for up to `maxWaitMs`. */
+export async function initDatabaseWithRetry(dbPath: string, maxWaitMs = 15000): Promise<DatabaseSync> {
+  const started = Date.now();
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return initDatabase(dbPath);
+    } catch (err) {
+      if (!isTransientOpenError(err) || Date.now() - started > maxWaitMs) throw err;
+      console.warn(`[DB] Opening the database failed (attempt ${attempt}), retrying: ${(err as Error)?.message}`);
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
+  }
 }
 
 export function getDb(): DatabaseSync {

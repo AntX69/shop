@@ -20,7 +20,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shel
 import path from 'node:path';
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
-import { initDatabase, closeDatabase, getDb } from './db/database.ts';
+import { initDatabaseWithRetry, closeDatabase, getDb } from './db/database.ts';
 import { migrateInlineImagesToFiles, SAFE_IMAGE_FILE } from './domain/productImages.ts';
 import { handleIpcMessage, setNativeHost } from './ipc/handlers.ts';
 import { startBackupScheduler } from './backupScheduler.ts';
@@ -95,7 +95,7 @@ if (!gotTheLock) {
     }
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     applySessionHardening();
 
@@ -113,7 +113,9 @@ if (!gotTheLock) {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       }
       console.log(`[StorePOS Main] Initializing SQLite database at: ${dbPath}`);
-      initDatabase(dbPath);
+      // A file still held for a moment (previous run shutting down, antivirus) is retried
+      // for a few seconds before the error is shown.
+      await initDatabaseWithRetry(dbPath);
       const moved = migrateInlineImagesToFiles(getDb());
       if (moved > 0) console.log(`[StorePOS Main] Moved ${moved} inline product photos to files`);
     } catch (err: any) {

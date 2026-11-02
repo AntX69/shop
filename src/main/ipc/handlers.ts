@@ -20,6 +20,7 @@ import { ReturnsService } from '../domain/returnsService.ts';
 import { FinanceService } from '../domain/financeService.ts';
 import { BackupService } from '../domain/backupService.ts';
 import { OcrService } from '../domain/ocrService.ts';
+import { noteActivity } from '../activity.ts';
 import { User } from '../../shared/types.ts';
 
 export interface IpcRequest {
@@ -251,6 +252,7 @@ const VALIDATION_HINTS = ['PIN', 'მარაგი', 'ფორმატი', 
 export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
   const channel = req && typeof req.channel === 'string' ? req.channel : '';
   let currentUser: User | null = null;
+  noteActivity();
   try {
     if (!req || typeof req !== 'object' || !channel) {
       return { success: false, error: 'არასწორი მოთხოვნა' };
