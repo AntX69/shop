@@ -75,3 +75,46 @@ describe('OcrService (Offline ONNX Handwritten Recognition)', () => {
     assert.ok(result.confidence > 0, 'Confidence score must be positive');
   });
 });
+
+describe('OcrService preprocessing keeps digit proportions', () => {
+  function drawCode(width: number, height: number, draw: (set: (x: number, y: number) => void, slot: number) => void) {
+    const rgba = new Uint8Array(width * height * 4).fill(255);
+    const set = (x: number, y: number) => {
+      if (x < 0 || y < 0 || x >= width || y >= height) return;
+      const i = (y * width + x) * 4;
+      rgba[i] = rgba[i + 1] = rgba[i + 2] = 0;
+    };
+    for (let slot = 0; slot < 5; slot++) draw(set, slot);
+    return rgba;
+  }
+
+  test('a thin vertical stroke stays thin and centred (not stretched into a block)', () => {
+    const ocr = new OcrService();
+    const width = 40;
+    const binary = new Uint8Array(width * 40);
+    for (let y = 5; y < 35; y++) binary[y * width + 20] = 1;
+    const out = ocr.normalizeTo28x28Float(binary, width, { x: 0, y: 0, width: 40, height: 40 });
+    const inkColumns = new Set<number>();
+    for (let i = 0; i < out.length; i++) if (out[i] > 0) inkColumns.add(i % 28);
+    assert.ok(inkColumns.size <= 2, `a 1-px stroke must not fill the 20-px box (columns with ink: ${inkColumns.size})`);
+    assert.ok([...inkColumns].every((c) => c >= 12 && c <= 15), 'stroke is centred');
+  });
+
+  test('recognize5Digits reads 11111 and 10101 drawn as strokes and loops', async () => {
+    const ocr = new OcrService();
+    const width = 200;
+    const height = 60;
+    const stroke = (set: (x: number, y: number) => void, cx: number) => {
+      for (let y = 12; y < 48; y++) for (let x = cx - 2; x <= cx + 2; x++) set(x, y);
+    };
+    const loop = (set: (x: number, y: number) => void, cx: number) => {
+      for (let a = 0; a < Math.PI * 2; a += 0.01) {
+        for (let r = 0; r < 4; r++) set(Math.round(cx + (10 - r * 0.5) * Math.cos(a)), Math.round(30 + (17 - r * 0.5) * Math.sin(a)));
+      }
+    };
+    const ones = drawCode(width, height, (set, slot) => stroke(set, slot * 40 + 20));
+    assert.equal((await ocr.recognize5Digits(ones, width, height)).code, '11111');
+    const mixed = drawCode(width, height, (set, slot) => (slot % 2 === 0 ? stroke(set, slot * 40 + 20) : loop(set, slot * 40 + 20)));
+    assert.equal((await ocr.recognize5Digits(mixed, width, height)).code, '10101');
+  });
+});

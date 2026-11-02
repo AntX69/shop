@@ -82,8 +82,13 @@ export class OcrService {
           return null;
         }
 
+        // Single-threaded WASM: no worker threads to spawn from inside the packaged app.
+        ort.env.wasm.numThreads = 1;
         const modelBuffer = fs.readFileSync(modelPath);
-        const session = await ort.InferenceSession.create(modelBuffer.buffer);
+        // Pass exactly the file's bytes. Buffer.buffer is Node's shared allocation pool
+        // (64 KB in Electron), so passing it made protobuf parsing of the model fail.
+        const modelBytes = new Uint8Array(modelBuffer.buffer, modelBuffer.byteOffset, modelBuffer.byteLength);
+        const session = await ort.InferenceSession.create(modelBytes);
         OcrService.session = session;
         return session;
       } catch (err) {
@@ -292,7 +297,10 @@ export class OcrService {
   }
 
   /**
-   * Resamples and centers digit into a standard 28x28 normalized Float32Array (MNIST format).
+   * Converts one digit into the 28x28 MNIST input: the ink's tight bounding box is scaled so
+   * its longer side is 20 px (aspect ratio kept, as in MNIST), resampled with area averaging
+   * (grey levels instead of jagged nearest-neighbour pixels) and placed so that its centre of
+   * mass sits at the centre of the 28x28 field. Background 0.0, ink 1.0.
    */
   public normalizeTo28x28Float(
     binary: Uint8Array,
@@ -302,18 +310,68 @@ export class OcrService {
     const target = new Float32Array(28 * 28);
     if (box.width <= 0 || box.height <= 0) return target;
 
-    // Center digit within 20x20 area with 4px border (standard MNIST bounding)
-    const scaleX = box.width / 20;
-    const scaleY = box.height / 20;
-    const offsetX = 4;
-    const offsetY = 4;
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = -1;
+    let maxY = -1;
+    const fullHeight = Math.floor(binary.length / fullWidth);
+    const x0 = Math.max(0, Math.floor(box.x));
+    const y0 = Math.max(0, Math.floor(box.y));
+    const x1 = Math.min(fullWidth, Math.ceil(box.x + box.width));
+    const y1 = Math.min(fullHeight, Math.ceil(box.y + box.height));
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        if (binary[y * fullWidth + x] === 1) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) return target;
 
-    for (let ty = 0; ty < 20; ty++) {
-      const srcY = Math.min(box.y + box.height - 1, Math.floor(box.y + ty * scaleY));
-      for (let tx = 0; tx < 20; tx++) {
-        const srcX = Math.min(box.x + box.width - 1, Math.floor(box.x + tx * scaleX));
-        const val = binary[srcY * fullWidth + srcX];
-        target[(offsetY + ty) * 28 + (offsetX + tx)] = val === 1 ? 1.0 : 0.0;
+    const w = maxX - minX + 1;
+    const h = maxY - minY + 1;
+    const scale = 20 / Math.max(w, h);
+    const tw = Math.max(1, Math.min(20, Math.round(w * scale)));
+    const th = Math.max(1, Math.min(20, Math.round(h * scale)));
+
+    const SUB = 4;
+    const small = new Float32Array(tw * th);
+    for (let ty = 0; ty < th; ty++) {
+      for (let tx = 0; tx < tw; tx++) {
+        let ink = 0;
+        for (let sy = 0; sy < SUB; sy++) {
+          const iy = Math.min(maxY, Math.floor(minY + (ty + (sy + 0.5) / SUB) * (h / th)));
+          for (let sx = 0; sx < SUB; sx++) {
+            const ix = Math.min(maxX, Math.floor(minX + (tx + (sx + 0.5) / SUB) * (w / tw)));
+            ink += binary[iy * fullWidth + ix];
+          }
+        }
+        small[ty * tw + tx] = ink / (SUB * SUB);
+      }
+    }
+
+    let mass = 0;
+    let mx = 0;
+    let my = 0;
+    for (let ty = 0; ty < th; ty++) {
+      for (let tx = 0; tx < tw; tx++) {
+        const v = small[ty * tw + tx];
+        mass += v;
+        mx += v * (tx + 0.5);
+        my += v * (ty + 0.5);
+      }
+    }
+    const cx = mass > 0 ? mx / mass : tw / 2;
+    const cy = mass > 0 ? my / mass : th / 2;
+    const ox = Math.min(28 - tw, Math.max(0, Math.round(14 - cx)));
+    const oy = Math.min(28 - th, Math.max(0, Math.round(14 - cy)));
+
+    for (let ty = 0; ty < th; ty++) {
+      for (let tx = 0; tx < tw; tx++) {
+        target[(oy + ty) * 28 + (ox + tx)] = small[ty * tw + tx];
       }
     }
 
