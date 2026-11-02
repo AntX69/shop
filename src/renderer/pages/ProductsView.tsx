@@ -473,7 +473,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             <div key={v.id} className="flex items-center space-x-2 text-[11px]">
                               <span className="text-slate-300 font-semibold">{v.variant_name}:</span>
                               {v.codes?.map(c => (
-                                <span key={c.id} className="font-mono bg-slate-950 px-1.5 py-0.5 rounded text-emerald-400 border border-slate-800">
+                                <span key={c.id} className="font-mono bg-slate-950 px-1.5 py-0.5 rounded text-emerald-400 border border-slate-800 whitespace-nowrap">
                                   {c.code_value} ({c.code_type === 'manual_5digit' ? '5-ნიშნა' : 'შტრიხკოდი'})
                                 </span>
                               ))}
@@ -491,7 +491,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                         </td>
                       )}
                       <td className="py-3 px-4 text-right">
-                        <span className={`px-2.5 py-1 rounded-full font-bold text-[11px] ${
+                        <span className={`px-2.5 py-1 rounded-full font-bold text-[11px] whitespace-nowrap ${
                           totalStock > 5
                             ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/40'
                             : totalStock > 0

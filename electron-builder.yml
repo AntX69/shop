@@ -1,16 +1,28 @@
 appId: com.storepos.offline
 productName: StorePOS
 artifactName: StorePOS-Setup-${version}.${ext}
+copyright: StorePOS
 
 directories:
   output: release
   buildResources: resources
 
+# Only the built app is packaged. Production node_modules are added by electron-builder
+# from "dependencies" (onnxruntime-web only); React, Vite, Tailwind, Express etc. are
+# bundled or dev-only and never shipped.
 files:
   - dist/**/*
   - dist-electron/**/*
-  - node_modules/**/*
   - package.json
+  - "!**/*.map"
+  # onnxruntime-web: the main process only needs the Node entry (ort.node.min.*) and the
+  # plain SIMD WASM runtime; browser/WebGPU/WebGL builds and TS sources are ~110 MB.
+  - "!node_modules/onnxruntime-web/dist/ort.{all,webgl,webgpu,jspi,wasm,bundle}*"
+  - "!node_modules/onnxruntime-web/dist/ort.{js,mjs,min.js,min.mjs}"
+  - "!node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.{asyncify,jsep,jspi}.*"
+  - "!node_modules/onnxruntime-web/lib/**"
+
+asar: true
 
 extraResources:
   - from: public/models
@@ -28,11 +40,18 @@ win:
       arch:
         - x64
   icon: resources/icons/icon.ico
+  requestedExecutionLevel: asInvoker
 
 nsis:
   oneClick: false
+  perMachine: false
+  allowElevation: true
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: StorePOS
+  # Store data lives in %APPDATA%\StorePOS and is never removed by uninstall or update.
   deleteAppDataOnUninstall: false
+  installerLanguages:
+    - en_US
+  language: "1033"

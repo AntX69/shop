@@ -84,8 +84,9 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Navigation Tabs - Never clips start items; neatly fits 1280px+ and Windows scaling */}
-        <nav className="flex-1 min-w-0 flex items-center justify-start xl:justify-center overflow-x-auto scrollbar-none py-1 px-1">
-          <div className="flex items-center gap-1 xl:gap-1.5 shrink-0">
+        <nav className="flex-1 min-w-0 flex items-center justify-start overflow-x-auto scrollbar-none py-1 px-1">
+          {/* mx-auto centres the tabs when they fit and, unlike justify-center, never cuts off the first tab */}
+          <div className="flex items-center gap-1 xl:gap-1.5 shrink-0 mx-auto">
             {navItems.map((item) => {
               if (item.ownerOnly && !isOwner) return null;
               const isActive = activeTab === item.id;
@@ -94,6 +95,8 @@ export const Header: React.FC<HeaderProps> = ({
                   key={item.id}
                   onClick={() => onSelectTab(item.id)}
                   title={`${item.label} (${item.hotkey})`}
+                  aria-label={`${item.label} (${item.hotkey})`}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`flex items-center space-x-1 sm:space-x-1.5 px-2 xl:px-2.5 py-1.5 rounded-lg text-xs transition-all shrink-0 cursor-pointer ${
                     isActive
                       ? 'bg-emerald-600 text-white font-bold shadow-md shadow-emerald-950/40'
@@ -101,8 +104,10 @@ export const Header: React.FC<HeaderProps> = ({
                   }`}
                 >
                   {item.icon}
-                  <span className="whitespace-nowrap font-medium">{item.label}</span>
-                  <span className={`hidden xl:inline-block text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none ${
+                  {/* Below 1536 CSS px (1280x720, 1366x768, 1920x1080 at 150-175 %, 2560x1440 at 175 %)
+                      inactive tabs show their icon only, so all eight tabs stay visible. */}
+                  <span className={`whitespace-nowrap font-medium ${isActive ? 'inline' : 'hidden 2xl:inline'}`}>{item.label}</span>
+                  <span className={`hidden 2xl:inline-block text-[9px] px-1 py-0.5 rounded font-mono font-bold leading-none ${
                     isActive ? 'bg-emerald-700/90 text-emerald-100' : 'bg-slate-800 text-slate-400 border border-slate-700/60'
                   }`}>
                     {item.hotkey}
