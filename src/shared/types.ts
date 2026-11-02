@@ -97,6 +97,8 @@ export interface CartItem {
   unit_cost_tetri?: number | null;
   quantity: number;
   available_stock: number;
+  /** Owner only: discount on the whole line, in tetri. */
+  line_discount_tetri?: number;
 }
 
 export interface CheckoutPayload {

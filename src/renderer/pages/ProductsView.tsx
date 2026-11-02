@@ -11,7 +11,9 @@ import React, { useState, useEffect } from 'react';
 import { Category, Product, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
-import { 
+import { ProductEditModal } from '../components/ProductEditModal.tsx';
+import { photoSrc, resizeImageFile } from '../utils/imageResize.ts';
+import {
   Package, 
   Plus, 
   Search, 
@@ -27,7 +29,9 @@ import {
   Upload,
   Eye,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Pencil,
+  Archive
 } from 'lucide-react';
 
 interface ProductsViewProps {
@@ -42,6 +46,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
+
+  // Owner: product editor and archive view
+  const [editingProductId, setEditingProductId] = useState<number | null>(null);
+  const [showArchived, setShowArchived] = useState<boolean>(false);
 
   // Multi-Image Gallery Modal
   const [galleryProduct, setGalleryProduct] = useState<Product | null>(null);
@@ -93,7 +101,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         invokeIpc<Category[]>('products:getCategories'),
         invokeIpc<Product[]>('products:list', {
           searchTerm: searchTerm || undefined,
-          categoryId: selectedCategory || undefined
+          categoryId: selectedCategory || undefined,
+          archivedOnly: isOwner && showArchived ? true : undefined
         })
       ]);
       setCategories(cats);
@@ -107,7 +116,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
   useEffect(() => {
     loadData();
-  }, [searchTerm, selectedCategory]);
+  }, [searchTerm, selectedCategory, showArchived]);
 
   const handleCreateCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -188,7 +197,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
       if (v.manual_5digit.trim()) {
         const manCode = v.manual_5digit.trim();
-        if (!/^\d{5}$/.test(manCode)) {
+        if (!/^[1-9]\d{4}$/.test(manCode)) {
           setFormError(`ხელით შესაყვანი კოდი უნდა იყოს ზუსტად 5-ნიშნა რიცხვი (10000-99999). ვარიანტი: "${vName}"`);
           return;
         }
@@ -266,9 +275,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64 = reader.result as string;
+      // Photos are shrunk (max 1280 px JPEG) before they leave the renderer.
+      resizeImageFile(file).then(async (base64) => {
         if (isGalleryModal && galleryProduct) {
           try {
             await invokeIpc('products:addImage', {
@@ -276,7 +284,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               filePath: base64,
               isPrimary: (galleryProduct.images?.length || 0) === 0
             });
-            const updated = await invokeIpc<Product>('products:getById', { productId: galleryProduct.id });
+            const updated = await invokeIpc<Product>('products:getById', { productId: galleryProduct.id, includeArchived: true });
             setGalleryProduct(updated);
             loadData();
           } catch (err: any) {
@@ -285,8 +293,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         } else {
           setNewProductImages(prev => [...prev, base64]);
         }
-      };
-      reader.readAsDataURL(file);
+      }).catch((err: any) => alert(err.message || 'ფოტოს დამუშავება ვერ მოხერხდა'));
     }
     // reset input
     e.target.value = '';
@@ -322,6 +329,15 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         <div className="flex items-center space-x-2.5 sm:space-x-3">
           {isOwner && (
             <>
+              <button
+                onClick={() => setShowArchived((v) => !v)}
+                className={`px-3 sm:px-3.5 py-2 border text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer ${showArchived ? 'bg-amber-950/60 border-amber-700/60 text-amber-300' : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200'}`}
+                title="დაარქივებული პროდუქტების ჩვენება"
+              >
+                <Archive className="w-3.5 h-3.5" />
+                <span>{showArchived ? 'აქტიურები' : 'არქივი'}</span>
+              </button>
+
               <button
                 onClick={() => setIsNewCategoryOpen(true)}
                 className="px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer"
@@ -399,12 +415,13 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                 <th className="py-3 px-4 text-right">გასაყიდი ფასი</th>
                 {isOwner && <th className="py-3 px-4 text-right">თვითღირებულება</th>}
                 <th className="py-3 px-4 text-right">მარაგი</th>
+                {isOwner && <th className="py-3 px-4 text-center w-20">მართვა</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {products.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-slate-400">
+                  <td colSpan={8} className="py-12 text-center text-slate-400">
                     <Package className="w-10 h-10 text-slate-700 mx-auto mb-2" />
                     პროდუქცია არ მოიძებნა
                   </td>
@@ -423,7 +440,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             className="relative group inline-block w-10 h-10 rounded-lg overflow-hidden border border-slate-700 bg-slate-950 hover:border-emerald-500 transition-colors cursor-pointer"
                             title="გალერეის გახსნა"
                           >
-                            <img src={p.images![0].file_path} alt={p.name} className="w-full h-full object-cover" />
+                            <img src={photoSrc(p.images![0])} alt={p.name} loading="lazy" className="w-full h-full object-cover" />
                             {p.images!.length > 1 && (
                               <span className="absolute bottom-0 right-0 bg-black/85 text-[9px] font-mono text-emerald-400 px-1 rounded-tl">
                                 +{p.images!.length - 1}
@@ -484,6 +501,19 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                           {totalStock} ცალი
                         </span>
                       </td>
+                      {isOwner && (
+                        <td className="py-3 px-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setEditingProductId(p.id)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-emerald-700 border border-slate-700 text-slate-200 hover:text-white rounded-lg text-[11px] font-semibold transition-colors cursor-pointer"
+                            title="რედაქტირება"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                            <span>შეცვლა</span>
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })
@@ -492,6 +522,15 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
           </table>
         </div>
       </div>
+
+      {editingProductId !== null && (
+        <ProductEditModal
+          productId={editingProductId}
+          categories={categories}
+          onClose={() => setEditingProductId(null)}
+          onChanged={loadData}
+        />
+      )}
 
       {/* --- MODAL: Add Category --- */}
       {isNewCategoryOpen && (
@@ -781,7 +820,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               {galleryProduct.images && galleryProduct.images.length > 0 ? (
                 <>
                   <img
-                    src={galleryProduct.images[activeImageIndex]?.file_path}
+                    src={photoSrc(galleryProduct.images[activeImageIndex])}
                     alt={galleryProduct.name}
                     className="max-h-[420px] max-w-full object-contain"
                   />
@@ -834,7 +873,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                       activeImageIndex === idx ? 'border-emerald-500 ring-2 ring-emerald-500/30' : 'border-slate-800 opacity-60 hover:opacity-100'
                     }`}
                   >
-                    <img src={img.file_path} alt="" className="w-full h-full object-cover" />
+                    <img src={photoSrc(img)} alt="" loading="lazy" className="w-full h-full object-cover" />
                   </button>
                 ))}
               </div>

@@ -100,9 +100,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       setModalError('გთხოვთ აირჩიოთ პროდუქტის ვარიანტი');
       return;
     }
-    const qty = parseInt(restockQty, 10);
-    if (isNaN(qty) || qty <= 0) {
-      setModalError('რაოდენობა უნდა იყოს 1 ან მეტი');
+    const qty = Number(restockQty.trim());
+    if (!Number.isInteger(qty) || qty <= 0) {
+      setModalError('რაოდენობა უნდა იყოს მთელი რიცხვი, 1 ან მეტი');
       return;
     }
 
@@ -142,9 +142,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       setModalError('გთხოვთ აირჩიოთ პროდუქტის ვარიანტი');
       return;
     }
-    const counted = parseInt(countedQty, 10);
-    if (isNaN(counted) || counted < 0) {
-      setModalError('დათვლილი მარაგი არ შეიძლება იყოს უარყოფითი');
+    const counted = Number(countedQty.trim());
+    if (countedQty.trim() === '' || !Number.isInteger(counted) || counted < 0) {
+      setModalError('დათვლილი მარაგი უნდა იყოს მთელი, არაუარყოფითი რიცხვი');
       return;
     }
 
@@ -454,13 +454,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">შესყიდვის ერთეულის ფასი (₾, არასავალდებულო FIFO-სთვის)</label>
                   <input
-                    type="number"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={restockUnitCost}
                     onChange={(e) => setRestockUnitCost(e.target.value)}
-                    placeholder="თუ უცნობია დატოვეთ ცარიელი"
+                    placeholder="ცარიელი = პროდუქტის ბარათში მითითებული ფასი"
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
+                  <p className="text-[10px] text-slate-500 mt-1">თუ ბარათშიც არ არის მითითებული, თვითღირებულება „უცნობი“ დარჩება და 0-ად არ ჩაითვლება.</p>
                 </div>
 
                 <div>

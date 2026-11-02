@@ -39,6 +39,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
   // Reset PIN Modal
   const [resetTargetUser, setResetTargetUser] = useState<User | null>(null);
   const [resetPinValue, setResetPinValue] = useState<string>('');
+  const [currentPinValue, setCurrentPinValue] = useState<string>('');
   const [resetError, setResetError] = useState<string>('');
 
   const loadUsers = async () => {
@@ -115,15 +116,27 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
       return;
     }
 
+    const isSelf = resetTargetUser.id === currentUser.id;
+    if (isSelf && !/^\d{4,6}$/.test(currentPinValue)) {
+      setResetError('შეიყვანეთ მიმდინარე PIN კოდი');
+      return;
+    }
+
     try {
-      await invokeIpc('auth:resetPin', {
-        userId: resetTargetUser.id,
-        newPin: resetPinValue
-      });
+      if (isSelf) {
+        // Own PIN: the current PIN is required (and counts towards the lockout)
+        await invokeIpc('auth:changeOwnPin', { currentPin: currentPinValue, newPin: resetPinValue });
+      } else {
+        // Employee PIN: the owner sets a new one without ever seeing the old one;
+        // the employee's open sessions end immediately.
+        await invokeIpc('auth:resetPin', { userId: resetTargetUser.id, newPin: resetPinValue });
+      }
 
       alert(`PIN კოდი წარმატებით შეიცვალა (${resetTargetUser.name})`);
       setResetTargetUser(null);
       setResetPinValue('');
+      setCurrentPinValue('');
+      loadUsers();
     } catch (err: any) {
       setResetError(err.message || 'PIN-ის შეცვლა ვერ მოხერხდა');
     }
@@ -188,6 +201,11 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                       }`}>
                         {u.is_active === 1 ? 'აქტიური' : 'დაბლოკილი'}
                       </span>
+                      {(u as any).locked_until && Date.parse((u as any).locked_until) > Date.now() && (
+                        <span className="ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/60 text-amber-300" title="ბევრი არასწორი PIN-ის გამო დროებით ჩაკეტილია">
+                          PIN ჩაკეტილია
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
                       {new Date(u.created_at).toLocaleDateString('ka-GE')}
@@ -197,12 +215,30 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                         onClick={() => {
                           setResetTargetUser(u);
                           setResetPinValue('');
+                          setCurrentPinValue('');
                           setResetError('');
                         }}
                         className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition-colors cursor-pointer"
                       >
                         PIN შეცვლა
                       </button>
+
+                      {!isSelf && ((u as any).failed_pin_attempts > 0 || (u as any).locked_until) && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await invokeIpc('auth:unlockUser', { userId: u.id });
+                              loadUsers();
+                            } catch (err: any) {
+                              alert(err.message || 'განბლოკვა ვერ მოხერხდა');
+                            }
+                          }}
+                          className="px-2.5 py-1 bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 text-xs rounded-lg transition-colors cursor-pointer"
+                          title="არასწორი PIN-ების მრიცხველის განულება"
+                        >
+                          განბლოკვა
+                        </button>
+                      )}
 
                       {!isSelf && (
                         <button
@@ -325,6 +361,22 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                 <div className="text-xs text-slate-400">
                   მომხმარებელი: <span className="font-bold text-white">{resetTargetUser.name}</span>
                 </div>
+                {resetTargetUser.id === currentUser.id ? (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">მიმდინარე PIN კოდი *</label>
+                    <input
+                      type="password"
+                      maxLength={6}
+                      required
+                      value={currentPinValue}
+                      onChange={(e) => setCurrentPinValue(e.target.value.replace(/\D/g, ''))}
+                      placeholder="••••"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold tracking-widest"
+                    />
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-500">ძველი PIN არავისთვის ჩანს. ახალი PIN-ის დაყენებისას თანამშრომლის ღია სესია დაიხურება.</p>
+                )}
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">ახალი PIN კოდი (4-6 ციფრი) *</label>

@@ -47,8 +47,12 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStoreNameChanged }) => {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [storeNameInput, setStoreNameInput] = useState<string>('');
-  const [backupDirInput, setBackupDirInput] = useState<string>('./data/backups');
+  const [backupDirInput, setBackupDirInput] = useState<string>('');
+  const [mirrorDirInput, setMirrorDirInput] = useState<string>('');
+  const [retentionInput, setRetentionInput] = useState<string>('30');
+  const [lockMinutesInput, setLockMinutesInput] = useState<string>('15');
   const [autoBackupEnabled, setAutoBackupEnabled] = useState<boolean>(true);
+  const [isBusy, setIsBusy] = useState<boolean>(false);
   
   const [backupsList, setBackupsList] = useState<BackupInfo[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
@@ -97,7 +101,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
       ]);
       setSettings(sets);
       setStoreNameInput(sets.store_name || 'ჩემი მაღაზია');
-      setBackupDirInput(sets.backup_directory || './data/backups');
+      setBackupDirInput(sets.backup_directory || '');
+      setMirrorDirInput(sets.backup_mirror_directory || '');
+      setRetentionInput(sets.backup_retention_count || '30');
+      setLockMinutesInput(sets.inactivity_lock_minutes || '15');
       setAutoBackupEnabled(sets.auto_backup_enabled !== '0');
       setAuditLogs(logs || []);
       setErrorLogs(errLogs || []);
@@ -119,7 +126,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
       await invokeIpc('backup:updateSettings', {
         settings: {
           store_name: storeNameInput.trim() || 'ჩემი მაღაზია',
-          backup_directory: backupDirInput.trim() || './data/backups',
+          backup_directory: backupDirInput.trim(),
+          backup_mirror_directory: mirrorDirInput.trim(),
+          backup_retention_count: retentionInput.trim() || '30',
+          inactivity_lock_minutes: lockMinutesInput.trim() || '15',
           auto_backup_enabled: autoBackupEnabled ? '1' : '0'
         }
       });
@@ -134,37 +144,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
   const handleExportBackup = async () => {
     try {
+      setIsBusy(true);
       const backup = await invokeIpc<{
         backup_filename: string;
+        filepath: string;
         size_bytes: number;
         checksum_sha256: string;
-        created_at: string;
-        data_base64: string;
-      }>('backup:create', { targetDir: backupDirInput.trim() });
-
-      // Trigger download in browser
-      const byteCharacters = atob(backup.data_base64);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: 'application/json' });
-
-      const link = document.createElement('a');
-      link.href = URL.createObjectURL(blob);
-      link.download = backup.backup_filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
+        mirror_filepath?: string | null;
+        mirror_error?: string | null;
+      }>('backup:create');
+      const mirror = backup.mirror_filepath
+        ? ` ასლი ასევე ჩაიწერა: ${backup.mirror_filepath}.`
+        : backup.mirror_error ? ` დამატებით საქაღალდეში ჩაწერა ვერ მოხერხდა: ${backup.mirror_error}.` : '';
       setStatusMsg({
-        type: 'success',
-        text: `სარეზერვო ასლი წარმატებით შეიქმნა! (${(backup.size_bytes / 1024).toFixed(1)} KB, Checksum: ${backup.checksum_sha256.substring(0, 10)}...)`
+        type: backup.mirror_error ? 'error' : 'success',
+        text: `სარეზერვო ასლი შეიქმნა: ${backup.filepath} (${(backup.size_bytes / 1024).toFixed(1)} KB).${mirror}`
       });
       loadData();
     } catch (err: any) {
       setStatusMsg({ type: 'error', text: err.message || 'სარეზერვო ასლის შექმნა ვერ მოხერხდა' });
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -172,13 +172,63 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
     try {
       const ran = await invokeIpc<boolean>('backup:runDaily');
       if (ran) {
-        setStatusMsg({ type: 'success', text: 'ყოველდღიური სარეზერვო ასლი წარმატებით შეიქმნა!' });
+        setStatusMsg({ type: 'success', text: 'დღევანდელი ავტომატური სარეზერვო ასლი შეიქმნა.' });
       } else {
-        setStatusMsg({ type: 'success', text: 'სარეზერვო ასლი ბოლო 24 საათში უკვე შექმნილია, განახლება არ იყო საჭირო.' });
+        setStatusMsg({ type: 'success', text: 'დღევანდელი ავტომატური ასლი უკვე არსებობს (ან ავტომატური რეზერვირება გამორთულია).' });
       }
       loadData();
     } catch (err: any) {
       setStatusMsg({ type: 'error', text: err.message || 'ავტომატური რეზერვირების შეცდომა' });
+    }
+  };
+
+  const chooseFolder = async (purpose: 'primary' | 'mirror') => {
+    try {
+      const res = await invokeIpc<{ path: string | null }>('backup:chooseDirectory', { purpose });
+      if (res.path) (purpose === 'primary' ? setBackupDirInput : setMirrorDirInput)(res.path);
+    } catch (err: any) {
+      setStatusMsg({ type: 'error', text: err.message || 'საქაღალდის არჩევა ვერ მოხერხდა' });
+    }
+  };
+
+  const handleOpenBackupFolder = async () => {
+    try {
+      await invokeIpc('backup:openFolder');
+    } catch (err: any) {
+      setStatusMsg({ type: 'error', text: err.message || 'საქაღალდის გახსნა ვერ მოხერხდა' });
+    }
+  };
+
+  const confirmRestore = (label: string) =>
+    confirm(`ყურადღება! "${label}"-დან აღდგენა ჩაანაცვლებს მიმდინარე მონაცემებს.\n\nმანამდე ავტომატურად შეიქმნება მიმდინარე მდგომარეობის სარეზერვო ასლი. შეცდომის შემთხვევაში არაფერი შეიცვლება.\n\nნამდვილად გსურთ გაგრძელება?`);
+
+  const afterRestore = (res: { message?: string; cancelled?: boolean } | null) => {
+    if (!res || res.cancelled) return;
+    alert(res.message || 'ბაზა წარმატებით აღდგა. გთხოვთ ხელახლა შეხვიდეთ.');
+    window.location.reload();
+  };
+
+  const handleRestoreFromList = async (filename: string) => {
+    if (!confirmRestore(filename)) return;
+    try {
+      setIsBusy(true);
+      afterRestore(await invokeIpc<{ message: string }>('backup:restoreFromList', { filename }));
+    } catch (err: any) {
+      alert(err.message || 'აღდგენის შეცდომა');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleRestoreFromFileDialog = async () => {
+    if (!confirmRestore('არჩეული ფაილი')) return;
+    try {
+      setIsBusy(true);
+      afterRestore(await invokeIpc<{ message?: string; cancelled?: boolean }>('backup:restoreFromFile'));
+    } catch (err: any) {
+      alert(err.message || 'აღდგენის შეცდომა');
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -219,7 +269,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!confirm(`ყურადღება! "${file.name}" ფაილიდან აღდგენა ჩაანაცვლებს მიმდინარე მონაცემებს.\n\nავტომატურად შეიქმნება უსაფრთხოების ასლი (store.db.before_restore).\n\nნამდვილად გსურთ გაგრძელება?`)) {
+    if (!confirmRestore(file.name)) {
       e.target.value = '';
       return;
     }
@@ -318,22 +368,55 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                     <Folder className="w-3.5 h-3.5 text-amber-400" />
                     <span>სარეზერვო საქაღალდე (HDD / SSD / USB)</span>
                   </label>
-                  <input
-                    type="text"
-                    value={backupDirInput}
-                    onChange={(e) => setBackupDirInput(e.target.value)}
-                    placeholder="./data/backups ან D:\POS_Backups"
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-xs focus:border-emerald-500 focus:outline-none"
-                  />
+                  <div className="flex gap-1.5">
+                    <div className="flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-[11px] truncate" title={backupDirInput || 'ნაგულისხმევი (პროგრამის მონაცემების საქაღალდე)'}>
+                      {backupDirInput || 'ნაგულისხმევი (პროგრამის მონაცემების საქაღალდე)'}
+                    </div>
+                    <button type="button" onClick={() => chooseFolder('primary')} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold cursor-pointer">შეცვლა</button>
+                    {backupDirInput && (
+                      <button type="button" onClick={() => setBackupDirInput('')} className="px-2 py-2 text-slate-400 hover:text-white text-[11px] cursor-pointer" title="ნაგულისხმევზე დაბრუნება">✕</button>
+                    )}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center space-x-1.5">
+                    <Folder className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>დამატებითი ასლი (მაგ. USB დისკი) — სურვილისამებრ</span>
+                  </label>
+                  <div className="flex gap-1.5">
+                    <div className="flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-[11px] truncate" title={mirrorDirInput || 'არ არის არჩეული'}>
+                      {mirrorDirInput || 'არ არის არჩეული'}
+                    </div>
+                    <button type="button" onClick={() => chooseFolder('mirror')} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold cursor-pointer">არჩევა</button>
+                    {mirrorDirInput && (
+                      <button type="button" onClick={() => setMirrorDirInput('')} className="px-2 py-2 text-slate-400 hover:text-white text-[11px] cursor-pointer" title="მოხსნა">✕</button>
+                    )}
+                  </div>
                   <p className="text-[10px] text-slate-500 mt-1">
-                    მხარს უჭერს ლოკალურ და გარე მეხსიერების ბარათებს / USB დისკებს
+                    ყოველი ასლი იქაც ჩაიწერება. თუ დისკი შეერთებული არ არის, მთავარი ასლი მაინც შეიქმნება და შეცდომა ჟურნალში ჩაიწერება.
                   </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">შესანახი ავტომატური ასლები</label>
+                    <input value={retentionInput} onChange={(e) => setRetentionInput(e.target.value.replace(/\D/g, ''))} inputMode="numeric"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none" />
+                    <p className="text-[10px] text-slate-500 mt-1">ძველი ავტომატური ასლები იშლება (3–365); ხელით შექმნილი რჩება.</p>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">ავტო-ჩაკეტვა (წუთი)</label>
+                    <input value={lockMinutesInput} onChange={(e) => setLockMinutesInput(e.target.value.replace(/\D/g, ''))} inputMode="numeric"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none" />
+                    <p className="text-[10px] text-slate-500 mt-1">უმოქმედობისას სესია იხურება (1–240).</p>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-xl">
                   <div>
                     <span className="text-xs font-semibold text-slate-200 block">ავტომატური დღიური რეზერვირება</span>
-                    <span className="text-[10px] text-slate-400">შემოწმება ყოველ 24 საათში პროგრამის გაშვებისას</span>
+                    <span className="text-[10px] text-slate-400">დღეში ერთხელ, ავტომატურად, სანამ პროგრამა ჩართულია</span>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input 
@@ -364,7 +447,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
             </h2>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              პაკეტი აერთიანებს SQLite მონაცემთა ბაზას, პროდუქციის რეალურ ფოტოებს (Binary Base64), მაღაზიის პარამეტრებს და SHA-256 ჰეშს (PRAGMA integrity_check დაცვით).
+              ერთი ფაილი შეიცავს მონაცემთა ბაზას, პროდუქციის ფოტოებს და პარამეტრებს, SHA-256 შემოწმებით. აღდგენამდე ფაილი სრულად მოწმდება; შეცდომისას მიმდინარე მონაცემები უცვლელი რჩება.
             </p>
 
             <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] space-y-1.5">
@@ -376,8 +459,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 </span>
               </div>
               <div className="flex justify-between text-slate-400">
-                <span>უსაფრთხოების სნეპშოტი:</span>
-                <span className="text-slate-300 font-mono">store.db.before_restore</span>
+                <span>აღდგენამდე:</span>
+                <span className="text-slate-300">მიმდინარე მდგომარეობის ასლი ავტომატურად</span>
               </div>
               <div className="flex justify-between text-slate-400">
                 <span>ბოლო ასლის თარიღი:</span>
@@ -385,16 +468,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                   {settings.last_backup_date ? new Date(settings.last_backup_date).toLocaleString('ka-GE') : 'არ ფიქსირდება'}
                 </span>
               </div>
+              <div className="flex justify-between text-slate-400">
+                <span>ბოლო ავტომატური ასლი:</span>
+                <span className="text-slate-300 font-mono">{settings.last_auto_backup_date || 'ჯერ არ შექმნილა'}</span>
+              </div>
             </div>
 
             <div className="space-y-2">
               <button
                 onClick={handleExportBackup}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors shadow-lg shadow-emerald-900/30 cursor-pointer"
+                disabled={isBusy}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors shadow-lg shadow-emerald-900/30 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                <span>ერთიანი ასლის შექმნა და ჩამოტვირთვა (.posbackup)</span>
+                <span>{isBusy ? 'მიმდინარეობს...' : 'სარეზერვო ასლის შექმნა ახლავე'}</span>
               </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleOpenBackupFolder}
+                  className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <Folder className="w-3.5 h-3.5 text-amber-400" />
+                  <span>საქაღალდის გახსნა</span>
+                </button>
+                <button
+                  onClick={handleRestoreFromFileDialog}
+                  disabled={isBusy}
+                  className="py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>ფაილიდან აღდგენა…</span>
+                </button>
+              </div>
 
               <button
                 onClick={handleRunDailyBackupNow}
@@ -406,10 +512,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
               <label className="w-full py-3 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors cursor-pointer block text-center">
                 <Upload className="w-4 h-4 inline mr-1 text-emerald-400" />
-                <span>ასლიდან აღდგენა (.posbackup ან .db)</span>
+                <span>ასლის ატვირთვა და აღდგენა (.posbackup)</span>
                 <input
                   type="file"
-                  accept=".posbackup,.db,application/json"
+                  accept=".posbackup,application/json"
                   onChange={handleImportBackup}
                   className="hidden"
                 />
@@ -539,6 +645,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                           </div>
                           <div className="text-[10px] text-slate-500 mt-0.5">
                             {new Date(bk.created_at).toLocaleString('ka-GE')}
+                            {bk.kind && (
+                              <span className="ml-1.5 text-slate-400">
+                                • {bk.kind === 'auto' ? 'ავტომატური' : bk.kind === 'manual' ? 'ხელით' : bk.kind === 'prereset' ? 'განულებამდე' : 'აღდგენამდე'}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="py-2.5 px-3 font-mono text-slate-300 whitespace-nowrap">
@@ -568,6 +679,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                             className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
                           >
                             {verifyingFilename === bk.filename ? 'მოწმდება...' : 'შემოწმება'}
+                          </button>
+                          <button
+                            onClick={() => handleRestoreFromList(bk.filename)}
+                            disabled={isBusy || !bk.is_valid}
+                            className="ml-1.5 px-2 py-1 bg-amber-950/50 hover:bg-amber-900/50 disabled:opacity-40 text-amber-200 text-[11px] font-semibold rounded-lg border border-amber-800/60 transition cursor-pointer"
+                          >
+                            აღდგენა
                           </button>
                         </td>
                       </tr>

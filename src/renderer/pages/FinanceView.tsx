@@ -34,13 +34,56 @@ interface FinanceViewProps {
   currentUser: User;
 }
 
+type PeriodPresetUi = 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'year' | 'all' | 'custom';
+
+const PERIODS: Array<[PeriodPresetUi, string]> = [
+  ['today', 'დღეს'],
+  ['yesterday', 'გუშინ'],
+  ['week', 'ეს კვირა'],
+  ['month', 'ეს თვე'],
+  ['last_month', 'წინა თვე'],
+  ['year', 'წელი'],
+  ['all', 'სრული'],
+  ['custom', 'შუალედი'],
+];
+
+const TONES: Record<string, string> = {
+  white: 'text-white',
+  emerald: 'text-emerald-400',
+  amber: 'text-amber-400',
+  red: 'text-red-400',
+  cyan: 'text-cyan-300',
+};
+
+const FinanceSection: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <section>
+    <h2 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">{title}</h2>
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-6 gap-3">{children}</div>
+  </section>
+);
+
+/** One figure; negative values are shown as they are (a period can legitimately be negative). */
+const Stat: React.FC<{ label: string; value: number | null | undefined; hint?: string; tone?: string; strong?: boolean }> = ({ label, value, hint, tone = 'white', strong }) => (
+  <div className={`bg-slate-900 border ${strong ? 'border-slate-600' : 'border-slate-800'} p-3.5 rounded-2xl shadow-xl`}>
+    <div className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">{label}</div>
+    <div className={`${strong ? 'text-2xl' : 'text-xl'} font-black mt-1 tabular-nums ${(value ?? 0) < 0 ? 'text-red-400' : TONES[tone] || 'text-white'}`}>
+      {formatTetri(value ?? 0)}
+    </div>
+    {hint && <div className="text-[11px] text-slate-500 mt-1 leading-snug">{hint}</div>}
+  </div>
+);
+
 export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Period Filter
-  const [periodPreset, setPeriodPreset] = useState<'today' | 'week' | 'month' | 'all'>('month');
+  // Period Filter (computed in the main process in Asia/Tbilisi local days)
+  const [periodPreset, setPeriodPreset] = useState<PeriodPresetUi>('month');
+  const [customFrom, setCustomFrom] = useState<string>('');
+  const [customTo, setCustomTo] = useState<string>('');
+  const [discounts, setDiscounts] = useState<any[]>([]);
+  const [loadError, setLoadError] = useState<string>('');
 
   // New Expense Modal
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState<boolean>(false);
@@ -49,36 +92,24 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
   const [expenseAmount, setExpenseAmount] = useState<string>('');
   const [expenseError, setExpenseError] = useState<string>('');
 
-  const getDatesForPreset = (preset: 'today' | 'week' | 'month' | 'all'): { start?: string; end?: string } => {
-    const now = new Date();
-    if (preset === 'today') {
-      const todayStr = now.toISOString().split('T')[0];
-      return { start: `${todayStr}T00:00:00.000Z` };
-    }
-    if (preset === 'week') {
-      const d = new Date(now);
-      d.setDate(d.getDate() - 7);
-      return { start: d.toISOString() };
-    }
-    if (preset === 'month') {
-      const d = new Date(now.getFullYear(), now.getMonth(), 1);
-      return { start: d.toISOString() };
-    }
-    return {};
-  };
-
   const loadData = async () => {
+    if (periodPreset === 'custom' && !customFrom && !customTo) return;
+    const period = periodPreset === 'custom'
+      ? { preset: 'custom', from: customFrom || undefined, to: customTo || undefined }
+      : { preset: periodPreset };
     try {
       setLoading(true);
-      const { start, end } = getDatesForPreset(periodPreset);
-      const [sum, exps] = await Promise.all([
-        invokeIpc<FinancialSummary>('finance:summary', { startDate: start, endDate: end }),
-        invokeIpc<Expense[]>('finance:listExpenses', { limit: 100 })
+      setLoadError('');
+      const [sum, exps, disc] = await Promise.all([
+        invokeIpc<FinancialSummary>('finance:summary', period),
+        invokeIpc<Expense[]>('finance:listExpenses', { limit: 100 }),
+        invokeIpc<any[]>('finance:listDiscounts', { ...period, limit: 50 })
       ]);
       setSummary(sum);
       setExpenses(exps);
-    } catch (err) {
-      console.error(err);
+      setDiscounts(disc);
+    } catch (err: any) {
+      setLoadError(err.message || 'ფინანსური მონაცემების ჩატვირთვა ვერ მოხერხდა');
     } finally {
       setLoading(false);
     }
@@ -86,7 +117,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
 
   useEffect(() => {
     loadData();
-  }, [periodPreset]);
+  }, [periodPreset, customFrom, customTo]);
 
   const handleExportCSV = async () => {
     try {
@@ -156,19 +187,28 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {/* Period selector */}
-          <div className="bg-slate-900 border border-slate-800 p-1 rounded-xl flex items-center space-x-1">
-            {(['today', 'week', 'month', 'all'] as const).map(p => (
+          <div className="bg-slate-900 border border-slate-800 p-1 rounded-xl flex flex-wrap items-center gap-1">
+            {PERIODS.map(([p, title]) => (
               <button
                 key={p}
                 onClick={() => setPeriodPreset(p)}
-                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                   periodPreset === p ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
                 }`}
               >
-                {p === 'today' ? 'დღეს' : p === 'week' ? '7 დღე' : p === 'month' ? 'მიმდინარე თვე' : 'სრული'}
+                {title}
               </button>
             ))}
           </div>
+          {periodPreset === 'custom' && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+                className="px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs [color-scheme:dark]" aria-label="საწყისი თარიღი" />
+              <span>—</span>
+              <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
+                className="px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs [color-scheme:dark]" aria-label="საბოლოო თარიღი" />
+            </div>
+          )}
 
           <button
             onClick={() => setIsExpenseModalOpen(true)}
@@ -191,100 +231,112 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto space-y-4 sm:space-y-5 pr-1 min-h-0">
         
-        {/* Stat Cards Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
-          
-          <div className="bg-slate-900 border border-slate-800 p-3.5 sm:p-4 rounded-2xl shadow-xl">
-            <div className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">გაყიდვების ბრუნვა</div>
-            <div className="text-xl sm:text-2xl font-black text-white mt-1 tabular-nums">
-              {formatTetri(summary?.total_sales_revenue_tetri)}
-            </div>
-            <div className="text-xs text-slate-400 mt-1">
-              სულ {summary?.total_sales_count || 0} გაყიდვა
+        {loadError && (
+          <div className="p-3 bg-red-950/60 border border-red-800/60 rounded-xl text-red-300 text-xs">{loadError}</div>
+        )}
+
+        {summary && (
+          <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5" />
+            <span>პერიოდი (თბილისის დროით): {summary.period_start} — {summary.period_end}{loading ? ' • იტვირთება...' : ''}</span>
+          </div>
+        )}
+
+        {summary?.has_unknown_costs && (
+          <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl text-amber-200 text-xs flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              {summary.unknown_cost_items_count > 0 && `${summary.unknown_cost_items_count} გაყიდულ ერთეულს `}
+              {(summary.unknown_cost_returned_items_count || 0) > 0 && `${summary.unknown_cost_returned_items_count} დაბრუნებულ ერთეულს `}
+              შესყიდვის ფასი უცნობია. თვითღირებულება 0-ად არ ითვლება, ამიტომ ზუსტი მოგება ვერ დაითვლება — ქვემოთ ნაჩვენებია მხოლოდ ცნობილი ფასების მიხედვით (არასრული).
+            </span>
+          </div>
+        )}
+
+        {/* 1. Sales */}
+        <FinanceSection title="გაყიდვები">
+          <Stat label="მთლიანი გაყიდვები" value={summary?.total_sales_revenue_tetri}
+            hint={`${summary?.total_sales_count || 0} გაყიდვა${(summary?.exchange_sales_count || 0) > 0 ? `, მათ შორის ${summary?.exchange_sales_count} გაცვლა` : ''}`} />
+          <Stat label="ფასდაკლებები" value={summary?.total_discounts_tetri} tone="amber"
+            hint={`ფასდაკლებამდე: ${formatTetri(summary?.sales_before_discount_tetri)}`} />
+          <Stat label="დაბრუნებული საქონელი" value={summary?.total_returns_amount_tetri} tone="red"
+            hint={`${summary?.total_returns_count || 0} დაბრუნება/გაცვლა, გადახდილი ფასით`} />
+          <Stat label="წმინდა გაყიდვები" value={summary?.net_sales_tetri} tone="white" strong
+            hint="მთლიანი გაყიდვები − დაბრუნებები" />
+        </FinanceSection>
+
+        {/* 2. Cost and gross profit */}
+        <FinanceSection title="თვითღირებულება (FIFO) და მთლიანი მოგება">
+          <Stat label="გაყიდულის თვითღირებულება" value={summary?.cost_of_goods_sold_tetri} hint="შესყიდვის ფასი პარტიების მიხედვით" />
+          <Stat label="დაბრუნებით უკუგატარებული" value={summary?.cogs_reversed_by_returns_tetri} tone="cyan" hint="დაბრუნებული ნივთების თავდაპირველი თვითღირებულება" />
+          <Stat label="წმინდა თვითღირებულება" value={summary?.net_cogs_tetri} hint="გაყიდული − უკუგატარებული" />
+          {summary?.estimated_gross_profit_tetri === null ? (
+            <Stat label="მთლიანი მოგება (არასრული)" value={summary?.gross_profit_partial_tetri} tone="amber" strong hint="ზოგიერთი ფასი უცნობია" />
+          ) : (
+            <Stat label="მთლიანი მოგება" value={summary?.estimated_gross_profit_tetri} tone="emerald" strong hint="წმინდა გაყიდვები − წმინდა თვითღირებულება" />
+          )}
+        </FinanceSection>
+
+        {/* 3. Operating result */}
+        <FinanceSection title="საოპერაციო შედეგი">
+          <Stat label="დაზიანებული საქონელი" value={summary?.damaged_goods_writeoff_tetri} tone="red"
+            hint={`${summary?.damaged_goods_units || 0} ერთეული ჩამოიწერა (თვითღირებულებით)`} />
+          <Stat label="ჩამოწერილი ნისია" value={summary?.debt_written_off_tetri} tone="red" hint="მფლობელის მიერ ჩამოწერილი ვალი" />
+          <Stat label="საოპერაციო ხარჯები" value={summary?.total_expenses_tetri} tone="red" hint="ქირა, კომუნალური, ტრანსპორტი და სხვა" />
+          {summary?.operating_result_tetri === null ? (
+            <Stat label="საოპერაციო შედეგი (არასრული)" value={summary?.operating_result_partial_tetri} tone="amber" strong hint="ზოგიერთი ფასი უცნობია" />
+          ) : (
+            <Stat label="საოპერაციო შედეგი" value={summary?.operating_result_tetri} tone="emerald" strong hint="მოგება − დანაკარგები − ხარჯები" />
+          )}
+        </FinanceSection>
+
+        {/* 4. Cash */}
+        <FinanceSection title="ნაღდი ფული და ნისიები">
+          <Stat label="ნაღდი გაყიდვებიდან" value={summary?.cash_collected_direct_tetri} tone="emerald" hint="მიღებული ნაღდი − ხურდა" />
+          <Stat label="ნისიების დაფარვიდან" value={summary?.cash_collected_debts_tetri} tone="emerald"
+            hint={`${summary?.repayments_count || 0} დაფარვა (გაყიდვად არ ითვლება)`} />
+          <Stat label="კლიენტებს დაუბრუნდა ნაღდი" value={summary?.cash_refunded_tetri} tone="red"
+            hint={(summary?.exchange_credit_used_tetri || 0) > 0 ? `გაცვლის კრედიტი ${formatTetri(summary?.exchange_credit_used_tetri)} ნაღდი არ არის` : 'დაბრუნებები და გაცვლები'} />
+          <Stat label="წმინდა ნაღდი ნაკადი" value={summary?.net_cash_flow_tetri} tone="white" strong
+            hint={`ხარჯების გამოკლებით: ${formatTetri(summary?.net_cash_after_expenses_tetri)}`} />
+          <Stat label="ახალი ნისიები პერიოდში" value={summary?.total_new_debt_tetri} tone="amber" hint="გაყიდვებზე გაფორმებული ვალი" />
+          <Stat label="კლიენტების დარჩენილი ვალი (ახლა)" value={summary?.outstanding_debt_tetri} tone="amber" strong
+            hint={`${summary?.customers_with_debt_count || 0} კლიენტი`} />
+        </FinanceSection>
+
+        {discounts.length > 0 && (
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
+            <h2 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider mb-3">ფასდაკლებების ისტორია</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs min-w-[560px]">
+                <thead className="text-slate-400 border-b border-slate-800">
+                  <tr>
+                    <th className="py-2 px-2">თარიღი</th>
+                    <th className="py-2 px-2">ჩეკი</th>
+                    <th className="py-2 px-2 text-right">ფასდაკლებამდე</th>
+                    <th className="py-2 px-2 text-right">ფასდაკლება</th>
+                    <th className="py-2 px-2 text-right">გადახდილი</th>
+                    <th className="py-2 px-2">მიზეზი</th>
+                    <th className="py-2 px-2">დაამტკიცა</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {discounts.map((d) => (
+                    <tr key={d.id}>
+                      <td className="py-2 px-2 font-mono text-[11px] text-slate-400 whitespace-nowrap">{new Date(d.created_at).toLocaleString('ka-GE')}</td>
+                      <td className="py-2 px-2 font-mono text-slate-300">#{d.receipt_number}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-slate-300">{formatTetri(d.subtotal_tetri)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-amber-400 font-bold">−{formatTetri(d.discount_tetri)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums text-white">{formatTetri(d.total_tetri)}</td>
+                      <td className="py-2 px-2 text-slate-300 max-w-[220px] truncate">{d.discount_reason || '-'}</td>
+                      <td className="py-2 px-2 text-slate-400">{d.authorized_by_name || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
-
-          <div className="bg-slate-900 border border-slate-800 p-3.5 sm:p-4 rounded-2xl shadow-xl">
-            <div className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">რეალურად მიღებული ნაღდი</div>
-            <div className="text-xl sm:text-2xl font-black text-emerald-400 mt-1 tabular-nums">
-              {formatTetri(summary?.total_cash_inflow_tetri)}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-1 tabular-nums">
-              სალარო: {formatTetri(summary?.cash_collected_direct_tetri)} + ნისიები: {formatTetri(summary?.cash_collected_debts_tetri)}
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 p-3.5 sm:p-4 rounded-2xl shadow-xl">
-            <div className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">აქტიური ნისიები (ვალი)</div>
-            <div className="text-xl sm:text-2xl font-black text-amber-400 mt-1 tabular-nums">
-              {formatTetri(summary?.total_new_debt_tetri)}
-            </div>
-            <div className="text-xs text-slate-400 mt-1">
-              პერიოდის ახალი დავალიანება
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 p-3.5 sm:p-4 rounded-2xl shadow-xl">
-            <div className="text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">დაბრუნებული პროდუქცია</div>
-            <div className="text-xl sm:text-2xl font-black text-red-400 mt-1 tabular-nums">
-              {formatTetri(summary?.total_returns_amount_tetri)}
-            </div>
-            <div className="text-xs text-slate-400 mt-1">
-              დაბრუნებული საქონლის ღირებულება
-            </div>
-          </div>
-
-        </div>
-
-        {/* Profit and Cost Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 sm:gap-4">
-          
-          <div className="bg-slate-900 border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl space-y-2 sm:space-y-3">
-            <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-              თვითღირებულება (FIFO COGS)
-            </div>
-            <div className="text-2xl sm:text-3xl font-black text-white tabular-nums">
-              {formatTetri(summary?.cost_of_goods_sold_tetri)}
-            </div>
-            <div className="text-xs text-slate-400">
-              შესყიდვის ფასი პარტიების (Lots) მიხედვით
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl space-y-2 sm:space-y-3">
-            <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-              მაღაზიის ხარჯები
-            </div>
-            <div className="text-2xl sm:text-3xl font-black text-red-400 tabular-nums">
-              {formatTetri(summary?.total_expenses_tetri)}
-            </div>
-            <div className="text-xs text-slate-400">
-              ქირა, კომუნალური, ტრანსპორტი და სხვა
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl space-y-2 sm:space-y-3">
-            <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-              სავარაუდო წმინდა მოგება
-            </div>
-            <div className="text-2xl sm:text-3xl font-black text-emerald-400 tabular-nums">
-              {summary?.has_unknown_costs ? (
-                <span className="text-amber-400 text-lg sm:text-xl font-bold flex items-center space-x-1.5">
-                  <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-                  <span>არასრული (უცნობი ხარჯი)</span>
-                </span>
-              ) : (
-                formatTetri(summary?.estimated_gross_profit_tetri)
-              )}
-            </div>
-            <div className="text-xs text-slate-400">
-              {summary?.has_unknown_costs
-                ? `ზოგიერთ გაყიდულ ნივთს (${summary?.unknown_cost_items_count} ც) შესყიდვის ფასი არ ჰქონდა მითითებული. 0 თვითღირებულება არ იქნა გამოყენებული!`
-                : 'სრული მოგება (ბრუნვა − დაბრუნება − თვითღირებულება − ხარჯები)'}
-            </div>
-          </div>
-
-        </div>
+        )}
 
         {/* Expenses List */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">

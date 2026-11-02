@@ -14,7 +14,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Sale, User, ReturnRecord, Product, ProductVariant } from '../../shared/types.ts';
-import { formatTetri, gelToTetri } from '../../shared/money.ts';
+import { formatTetri, gelToTetri, proratedLineAmount, safeParseTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { 
   History, 
@@ -70,6 +70,9 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
   const [newVariantQty, setNewVariantQty] = useState<number>(1);
   const [exchangeSearch, setExchangeSearch] = useState<string>('');
   const [exchangeError, setExchangeError] = useState<string>('');
+  // How the customer pays when the new goods cost more than the returned ones
+  const [exchangePayMethod, setExchangePayMethod] = useState<'cash' | 'debt' | 'mixed'>('cash');
+  const [exchangeCashInput, setExchangeCashInput] = useState<string>('');
 
   const loadData = async (limitToUse = salesLimit) => {
     try {
@@ -121,6 +124,8 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
     setExchangeError('');
     setSelectedNewVariant(null);
     setNewVariantQty(1);
+    setExchangePayMethod('cash');
+    setExchangeCashInput('');
 
     const initial: Record<number, { qty: number; condition: 'resellable' | 'damaged' }> = {};
     for (const item of selectedSale.items || []) {
@@ -141,6 +146,21 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
   };
 
   const selectedSale = sales.find(s => s.id === selectedSaleId) || null;
+
+  // Same settlement rules as the main process: returned value (price actually paid) first pays
+  // for the new goods; any excess reduces debt still open on this sale, the rest is cash back.
+  const exchangePreview = (() => {
+    if (!selectedSale || !selectedNewVariant) return null;
+    const returned = (selectedSale.items || []).reduce((sum, it) => {
+      const q = exchangeReturnItems[it.id]?.qty || 0;
+      return sum + (q > 0 ? proratedLineAmount(it.total_price_tetri, it.quantity, it.returned_quantity, q) : 0);
+    }, 0);
+    const newValue = (selectedNewVariant.variant.price_override_tetri ?? selectedNewVariant.product.base_price_tetri) * newVariantQty;
+    const credit = Math.min(returned, newValue);
+    const excess = returned - credit;
+    const debtReduction = Math.min(excess, selectedSale.debt_remaining_tetri || 0);
+    return { returned, newValue, credit, debtReduction, cashBack: excess - debtReduction, due: newValue - credit };
+  })();
 
   const openReturnModal = () => {
     if (!selectedSale) return;
@@ -237,35 +257,63 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
       return;
     }
 
-    const newUnitPriceTetri = selectedNewVariant.variant.price_override_tetri ?? selectedNewVariant.product.base_price_tetri;
+    const preview = exchangePreview;
+    if (!preview) return;
+    let cashReceived: number | undefined;
+    if (preview.due > 0) {
+      if ((exchangePayMethod === 'debt' || exchangePayMethod === 'mixed') && !selectedSale.customer_id) {
+        setExchangeError('ნისიით გადახდა შესაძლებელია მხოლოდ კლიენტზე გაფორმებული გაყიდვისთვის');
+        return;
+      }
+      if (exchangePayMethod !== 'debt') {
+        const parsed = safeParseTetri(exchangeCashInput);
+        if (parsed === null) {
+          setExchangeError('მიუთითეთ კლიენტისგან მიღებული ნაღდი თანხა');
+          return;
+        }
+        if (exchangePayMethod === 'cash' && parsed < preview.due) {
+          setExchangeError(`მიღებული ნაღდი ნაკლებია გადასახდელზე (${formatTetri(preview.due)})`);
+          return;
+        }
+        if (exchangePayMethod === 'mixed' && (parsed <= 0 || parsed >= preview.due)) {
+          setExchangeError('შერეული გადახდისას ნაღდი უნდა იყოს 0-ზე მეტი და გადასახდელზე ნაკლები');
+          return;
+        }
+        cashReceived = parsed;
+      }
+    }
 
     try {
       setIsSubmitting(true);
       const idempotencyKey = exchangeIdempotencyKeyRef.current || (exchangeIdempotencyKeyRef.current = crypto.randomUUID());
-      const res = await invokeIpc('returns:exchange', {
+      const res = await invokeIpc<any>('returns:exchange', {
         original_sale_id: selectedSale.id,
         return_items: payloadReturnItems,
         new_items: [{
           variant_id: selectedNewVariant.variant.id,
-          quantity: newVariantQty,
-          unit_price_tetri: newUnitPriceTetri
+          quantity: newVariantQty
         }],
+        payment_method: preview.due > 0 ? exchangePayMethod : 'cash',
+        ...(cashReceived !== undefined ? { cash_received_tetri: cashReceived } : {}),
         idempotency_key: idempotencyKey
       });
 
       exchangeIdempotencyKeyRef.current = null;
 
-      const diff = res.difference_tetri;
-      let msg = 'გაცვლა წარმატებით განხორციელდა!\n';
-      if (diff > 0) {
-        msg += `კლიენტმა დაამატა ნაღდი: ${formatTetri(diff)}`;
-      } else if (diff < 0) {
-        msg += `კლიენტს დაუბრუნდა ნაღდი: ${formatTetri(-diff)}`;
-      } else {
-        msg += 'თანაბარი გაცვლა (სხვაობის გარეშე)';
+      const lines = [
+        'გაცვლა წარმატებით განხორციელდა!',
+        `დაბრუნებული ნივთ(ებ)ის ღირებულება: ${formatTetri(res.returned_value_tetri)}`,
+        `ახალი ნივთის ღირებულება: ${formatTetri(res.new_items_value_tetri)}`,
+      ];
+      if (res.amount_due_tetri > 0) {
+        lines.push(`კლიენტმა დაამატა: ${formatTetri(res.amount_due_tetri)} (${exchangePayMethod === 'cash' ? 'ნაღდი' : exchangePayMethod === 'debt' ? 'ნისიაზე' : 'ნაღდი + ნისია'})`);
+        if (exchangePayMethod === 'cash' && res.new_sale?.change_given_tetri > 0) lines.push(`ხურდა: ${formatTetri(res.new_sale.change_given_tetri)}`);
       }
+      if (res.debt_deduction_tetri > 0) lines.push(`ნისია შემცირდა: ${formatTetri(res.debt_deduction_tetri)}`);
+      if (res.cash_refund_tetri > 0) lines.push(`კლიენტს დაუბრუნდა ნაღდი: ${formatTetri(res.cash_refund_tetri)}`);
+      if (res.amount_due_tetri === 0 && res.cash_refund_tetri === 0 && res.debt_deduction_tetri === 0) lines.push('თანაბარი გაცვლა — ფული არ მოძრაობს');
 
-      alert(msg);
+      alert(lines.join('\n'));
       setIsExchangeModalOpen(false);
       await loadData();
     } catch (err: any) {
@@ -924,34 +972,62 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                 </div>
               </div>
 
-              {/* 3. Price Difference Calculation Summary */}
-              {selectedNewVariant && (
+              {/* 3. Settlement: credit pays the new goods; excess reduces debt, then cash back */}
+              {selectedNewVariant && exchangePreview && (
                 <div className="bg-slate-950 p-3 rounded-xl border border-blue-900/50 space-y-1.5 text-xs">
                   <div className="flex justify-between text-slate-400">
-                    <span>დაბრუნებული ნივთ(ებ)ის ღირებულება:</span>
-                    <span className="font-bold text-amber-400 tabular-nums">
-                      {formatTetri(
-                        selectedSale.items?.reduce((sum, it) => sum + ((exchangeReturnItems[it.id]?.qty || 0) * it.unit_price_tetri), 0) || 0
-                      )}
-                    </span>
+                    <span>დაბრუნებული ნივთ(ებ)ის ღირებულება (გადახდილი ფასით):</span>
+                    <span className="font-bold text-amber-400 tabular-nums">{formatTetri(exchangePreview.returned)}</span>
                   </div>
                   <div className="flex justify-between text-slate-400">
                     <span>ახალი ნივთის ღირებულება:</span>
-                    <span className="font-bold text-blue-400 tabular-nums">
-                      {formatTetri((selectedNewVariant.variant.price_override_tetri ?? selectedNewVariant.product.base_price_tetri) * newVariantQty)}
-                    </span>
+                    <span className="font-bold text-blue-400 tabular-nums">{formatTetri(exchangePreview.newValue)}</span>
                   </div>
+                  {exchangePreview.debtReduction > 0 && (
+                    <div className="flex justify-between text-slate-400">
+                      <span>ნისია შემცირდება:</span>
+                      <span className="font-bold text-amber-300 tabular-nums">{formatTetri(exchangePreview.debtReduction)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm font-extrabold pt-1 border-t border-slate-800">
-                    <span className="text-white">ფასთა სხვაობა (კორექცია):</span>
-                    {(() => {
-                      const retVal = selectedSale.items?.reduce((sum, it) => sum + ((exchangeReturnItems[it.id]?.qty || 0) * it.unit_price_tetri), 0) || 0;
-                      const newVal = (selectedNewVariant.variant.price_override_tetri ?? selectedNewVariant.product.base_price_tetri) * newVariantQty;
-                      const diff = newVal - retVal;
-                      if (diff > 0) return <span className="text-emerald-400">+კლიენტი ამატებს {formatTetri(diff)}</span>;
-                      if (diff < 0) return <span className="text-amber-400">-მაღაზია უბრუნებს {formatTetri(-diff)}</span>;
-                      return <span className="text-slate-300">0.00 ₾ (თანაბარი გაცვლა)</span>;
-                    })()}
+                    {exchangePreview.due > 0 ? (
+                      <><span className="text-white">კლიენტი ამატებს:</span><span className="text-emerald-400 tabular-nums">{formatTetri(exchangePreview.due)}</span></>
+                    ) : exchangePreview.cashBack > 0 ? (
+                      <><span className="text-white">მაღაზია უბრუნებს ნაღდს:</span><span className="text-amber-400 tabular-nums">{formatTetri(exchangePreview.cashBack)}</span></>
+                    ) : (
+                      <><span className="text-white">თანაბარი გაცვლა</span><span className="text-slate-300">ფული არ მოძრაობს</span></>
+                    )}
                   </div>
+
+                  {exchangePreview.due > 0 && (
+                    <div className="pt-2 space-y-2">
+                      <div className="flex gap-1.5">
+                        {(['cash', 'debt', 'mixed'] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            disabled={m !== 'cash' && !selectedSale.customer_id}
+                            onClick={() => setExchangePayMethod(m)}
+                            className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${exchangePayMethod === m ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300'}`}
+                          >
+                            {m === 'cash' ? 'ნაღდი' : m === 'debt' ? 'ნისია' : 'ნაღდი + ნისია'}
+                          </button>
+                        ))}
+                      </div>
+                      {!selectedSale.customer_id && (
+                        <p className="text-[10px] text-slate-500">ნისია ხელმისაწვდომია მხოლოდ კლიენტზე გაფორმებული გაყიდვისთვის.</p>
+                      )}
+                      {exchangePayMethod !== 'debt' && (
+                        <input
+                          inputMode="decimal"
+                          value={exchangeCashInput}
+                          onChange={(e) => setExchangeCashInput(e.target.value)}
+                          placeholder={exchangePayMethod === 'cash' ? `მიღებული ნაღდი (მინ. ${formatTetri(exchangePreview.due, false)})` : 'ახლა გადახდილი ნაღდი'}
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm font-bold tabular-nums focus:outline-none focus:border-blue-500"
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

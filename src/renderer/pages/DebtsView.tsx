@@ -217,6 +217,54 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
     }
   };
 
+  // Owner corrections: void a mistaken repayment or write off debt (reason required, audited)
+  const isOwner = currentUser.role === 'owner';
+  const [correction, setCorrection] = useState<{ kind: 'void'; repayment: DebtRepayment } | { kind: 'writeoff'; sale: Sale } | null>(null);
+  const [correctionReason, setCorrectionReason] = useState<string>('');
+  const [correctionAmount, setCorrectionAmount] = useState<string>('');
+  const [correctionError, setCorrectionError] = useState<string>('');
+  const correctionKeyRef = useRef<string | null>(null);
+
+  const openCorrection = (c: { kind: 'void'; repayment: DebtRepayment } | { kind: 'writeoff'; sale: Sale }) => {
+    correctionKeyRef.current = crypto.randomUUID();
+    setCorrection(c);
+    setCorrectionReason('');
+    setCorrectionError('');
+    setCorrectionAmount(c.kind === 'writeoff' ? (((c.sale.debt_remaining_tetri ?? 0) / 100).toFixed(2)) : '');
+  };
+
+  const submitCorrection = async () => {
+    if (!correction) return;
+    setCorrectionError('');
+    if (!correctionReason.trim()) {
+      setCorrectionError('მიზეზის მითითება სავალდებულოა');
+      return;
+    }
+    try {
+      setIsSubmitting(true);
+      if (correction.kind === 'void') {
+        await invokeIpc('debts:voidRepayment', { repayment_id: correction.repayment.id, reason: correctionReason.trim() });
+      } else {
+        const amount = gelToTetri(correctionAmount);
+        if (amount <= 0) throw new Error('თანხა უნდა იყოს 0-ზე მეტი');
+        await invokeIpc('debts:writeOff', {
+          sale_id: correction.sale.id,
+          amount_tetri: amount,
+          reason: correctionReason.trim(),
+          idempotency_key: correctionKeyRef.current || undefined
+        });
+      }
+      correctionKeyRef.current = null;
+      setCorrection(null);
+      await loadCustomers();
+      if (selectedCustomerId) await loadCustomerDetails(selectedCustomerId);
+    } catch (err: any) {
+      setCorrectionError(err.message || 'კორექცია ვერ შესრულდა');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const totalStoreDebtTetri = customers.reduce((sum, c) => sum + (c.total_debt_tetri || 0), 0);
 
   return (
@@ -422,7 +470,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
                         {ledgerEntries.map((e) => {
-                          const isDebtIncrease = e.type === 'sale_debt';
+                          const isDebtIncrease = e.type === 'sale_debt' || e.type === 'repayment_void';
                           const isRepay = e.type === 'repayment';
                           const isReturn = e.type === 'return_credit';
 
@@ -446,7 +494,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-slate-300 max-w-xs truncate">
-                                <div>{e.description}</div>
+                                <div className={e.voided ? 'line-through text-slate-500' : ''}>{e.description}</div>
+                                {e.notes && (e.type === 'repayment_void' || e.type === 'write_off') && (
+                                  <div className="text-[10px] text-amber-300/90">მიზეზი: {e.notes}</div>
+                                )}
+                                {e.voided && <div className="text-[10px] text-red-400">გაუქმებულია მფლობელის მიერ</div>}
                                 {e.receipt_number && (
                                   <div className="text-[10px] text-slate-500 font-mono">ქვითარი: #{e.receipt_number}</div>
                                 )}
@@ -511,13 +563,22 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                                   </div>
                                 )}
                               </td>
-                              <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                              <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-1.5">
                                 <button
                                   onClick={() => openRepayModal(s.id)}
                                   className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-700/50 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
                                 >
                                   ამ ჩეკის დაფარვა
                                 </button>
+                                {isOwner && (
+                                  <button
+                                    onClick={() => openCorrection({ kind: 'writeoff', sale: s })}
+                                    className="px-2.5 py-1 bg-purple-900/30 hover:bg-purple-800/40 text-purple-200 border border-purple-700/50 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
+                                    title="ვალის ჩამოწერა (მხოლოდ მფლობელი)"
+                                  >
+                                    ჩამოწერა
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           );
@@ -540,16 +601,22 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                           <th className="py-2.5 px-3">განაწილება ჩეკებზე</th>
                           <th className="py-2.5 px-3">შენიშვნა</th>
                           <th className="py-2.5 px-3">თანამშრომელი</th>
+                          {isOwner && <th className="py-2.5 px-3 text-right">კორექცია</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
                         {repayments.map((r) => (
-                          <tr key={r.id} className="hover:bg-slate-900/40">
+                          <tr key={r.id} className={`hover:bg-slate-900/40 ${r.voided_at ? 'opacity-60' : ''}`}>
                             <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
                               {new Date(r.created_at).toLocaleString('ka-GE')}
                             </td>
-                            <td className="py-2.5 px-3 font-bold text-emerald-400 text-xs sm:text-sm tabular-nums whitespace-nowrap">
+                            <td className={`py-2.5 px-3 font-bold text-xs sm:text-sm tabular-nums whitespace-nowrap ${r.voided_at ? 'text-slate-500 line-through' : 'text-emerald-400'}`}>
                               +{formatTetri(r.amount_tetri)}
+                              {r.voided_at && (
+                                <div className="text-[10px] text-red-400 no-underline font-semibold" style={{ textDecoration: 'none' }}>
+                                  გაუქმდა: {r.void_reason}
+                                </div>
+                              )}
                             </td>
                             <td className="py-2.5 px-3">
                               {r.allocations && r.allocations.length > 0 ? (
@@ -579,6 +646,19 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                             <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">
                               {r.user_name || '-'}
                             </td>
+                            {isOwner && (
+                              <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                                {!r.voided_at && (
+                                  <button
+                                    onClick={() => openCorrection({ kind: 'void', repayment: r })}
+                                    className="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/50 text-red-300 border border-red-800/50 rounded-lg text-[11px] font-bold cursor-pointer"
+                                    title="შეცდომით შეტანილი დაფარვის გაუქმება"
+                                  >
+                                    გაუქმება
+                                  </button>
+                                )}
+                              </td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
@@ -743,6 +823,44 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40 disabled:opacity-50 cursor-pointer"
               >
                 {isSubmitting ? 'ინახება...' : 'დაფარვა'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODAL: Owner debt correction (void repayment / write off) --- */}
+      {correction && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true"
+          onKeyDown={(e) => { if (e.key === 'Escape') setCorrection(null); e.stopPropagation(); }}>
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-3">
+            <h3 className="text-base font-bold text-white">
+              {correction.kind === 'void' ? 'დაფარვის გაუქმება' : 'ნისიის ჩამოწერა'}
+            </h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              {correction.kind === 'void'
+                ? `დაფარვა ${formatTetri(correction.repayment.amount_tetri)} (${new Date(correction.repayment.created_at).toLocaleString('ka-GE')}) გაუქმდება. ჩანაწერი არ წაიშლება — ისტორიაში დარჩება მონიშნული, ვალი კი შესაბამისად გაიზრდება.`
+                : `ჩეკი #${correction.sale.receipt_number}: დარჩენილი ვალი ${formatTetri(correction.sale.debt_remaining_tetri ?? 0)}. ჩამოწერილი თანხა ფინანსებში აისახება ზარალად.`}
+            </p>
+            {correction.kind === 'writeoff' && (
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">ჩამოსაწერი თანხა (₾)</label>
+                <input inputMode="decimal" value={correctionAmount} onChange={(e) => setCorrectionAmount(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold tabular-nums focus:outline-none focus:border-purple-500" />
+              </div>
+            )}
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-400 mb-1">მიზეზი (სავალდებულო)</label>
+              <input autoFocus value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} maxLength={300}
+                placeholder={correction.kind === 'void' ? 'მაგ. თანხა ორჯერ შეიყვანეს' : 'მაგ. უიმედო ვალი'}
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500" />
+            </div>
+            {correctionError && <div className="p-2 bg-red-950/60 border border-red-800/60 rounded-lg text-red-300 text-xs">{correctionError}</div>}
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setCorrection(null)} className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold cursor-pointer">გაუქმება</button>
+              <button onClick={submitCorrection} disabled={isSubmitting}
+                className="flex-1 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold cursor-pointer">
+                {isSubmitting ? 'სრულდება...' : 'დადასტურება'}
               </button>
             </div>
           </div>

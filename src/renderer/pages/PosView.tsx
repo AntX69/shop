@@ -15,8 +15,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { CartItem, Customer, Product, ProductVariant, Sale, User } from '../../shared/types.ts';
-import { formatTetri } from '../../shared/money.ts';
+import { formatTetri, safeParseTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
+import { photoSrc } from '../utils/imageResize.ts';
 import { WebcamModal } from '../components/WebcamModal.tsx';
 import { 
   Barcode, 
@@ -64,6 +65,11 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState<boolean>(false);
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'debt' | 'mixed'>('cash');
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('');
+  // Owner-only discounts (the main process rejects them from sellers)
+  const isOwner = currentUser.role === 'owner';
+  const [cartDiscountInput, setCartDiscountInput] = useState<string>('');
+  const [discountReason, setDiscountReason] = useState<string>('');
+  const [lineDiscountEditor, setLineDiscountEditor] = useState<number | null>(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [checkoutError, setCheckoutError] = useState<string>('');
@@ -296,12 +302,28 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
     }
   };
 
-  // Calculations
-  const cartTotalTetri = cart.reduce((sum, item) => sum + (item.quantity * item.unit_price_tetri), 0);
+  // Calculations (integer tetri; the main process recomputes everything from database prices)
+  const cartSubtotalTetri = cart.reduce((sum, item) => sum + (item.quantity * item.unit_price_tetri), 0);
+  // A line discount never exceeds the line (quantity may have been lowered after it was set).
+  const lineDiscountOf = (c: CartItem) => (isOwner ? Math.min(c.line_discount_tetri || 0, c.quantity * c.unit_price_tetri) : 0);
+  const lineDiscountTotalTetri = cart.reduce((sum, item) => sum + lineDiscountOf(item), 0);
+  const parsedCartDiscount = isOwner ? safeParseTetri(cartDiscountInput) : null;
+  const cartDiscountTetri = parsedCartDiscount !== null && parsedCartDiscount > 0 ? parsedCartDiscount : 0;
+  const totalDiscountTetri = lineDiscountTotalTetri + cartDiscountTetri;
+  const cartTotalTetri = Math.max(0, cartSubtotalTetri - totalDiscountTetri);
   const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Cash and change calculations
-  const parsedCashReceived = Math.round(parseFloat(cashReceivedInput || '0') * 100) || 0;
+  const setLineDiscount = (variantId: number, input: string) => {
+    const parsed = safeParseTetri(input);
+    setCart(prev => prev.map(c => {
+      if (c.variant_id !== variantId) return c;
+      const max = c.quantity * c.unit_price_tetri;
+      return { ...c, line_discount_tetri: parsed === null ? 0 : Math.min(Math.max(0, parsed), max) };
+    }));
+  };
+
+  // Cash and change calculations ("12.50" and "12,50" are both accepted; parsed exactly to tetri)
+  const parsedCashReceived = safeParseTetri(cashReceivedInput) ?? 0;
   const changeTetri = Math.max(0, parsedCashReceived - cartTotalTetri);
   const debtTetri = paymentMethod === 'debt' 
     ? cartTotalTetri 
@@ -341,6 +363,19 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       }
     }
 
+    if (cashReceivedInput.trim() && safeParseTetri(cashReceivedInput) === null) {
+      setCheckoutError('ნაღდი თანხა არასწორადაა შეყვანილი (მაგ. 25.50 ან 25,50)');
+      return;
+    }
+    if (isOwner && cartDiscountInput.trim() && parsedCartDiscount === null) {
+      setCheckoutError('ფასდაკლების თანხა არასწორადაა შეყვანილი');
+      return;
+    }
+    if (totalDiscountTetri > cartSubtotalTetri || cartTotalTetri <= 0) {
+      setCheckoutError('ფასდაკლება არ შეიძლება უდრიდეს ან აღემატებოდეს ჯამურ თანხას');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       // Stable key: preserved across retries of the same checkout attempt
@@ -349,17 +384,23 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         items: cart.map(c => ({
           variant_id: c.variant_id,
           quantity: c.quantity,
-          unit_price_tetri: c.unit_price_tetri
+          unit_price_tetri: c.unit_price_tetri,
+          ...(lineDiscountOf(c) > 0 ? { line_discount_tetri: lineDiscountOf(c) } : {})
         })),
         payment_method: paymentMethod,
         customer_id: selectedCustomerId,
-        cash_received_tetri: parsedCashReceived,
-        idempotency_key: idempotencyKey
+        cash_received_tetri: paymentMethod === 'debt' ? 0 : parsedCashReceived,
+        idempotency_key: idempotencyKey,
+        ...(isOwner && cartDiscountTetri > 0 ? { cart_discount_tetri: cartDiscountTetri } : {}),
+        ...(isOwner && totalDiscountTetri > 0 && discountReason.trim() ? { discount_reason: discountReason.trim() } : {})
       });
 
       // Clear cart, reset idempotency key, close checkout modal, show receipt
       checkoutIdempotencyKeyRef.current = null;
       setCart([]);
+      setCartDiscountInput('');
+      setDiscountReason('');
+      setLineDiscountEditor(null);
       setIsCheckoutModalOpen(false);
       setCompletedSale(sale);
       loadCatalogue(); // Refresh local stock counts
@@ -469,7 +510,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   <div className="flex items-center space-x-3">
                     <div className="w-12 h-12 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-500 font-bold text-xs uppercase overflow-hidden">
                       {product.images && product.images.length > 0 ? (
-                        <img src={product.images[0].file_path} alt={product.name} className="w-full h-full object-cover" />
+                        <img src={photoSrc(product.images[0])} alt={product.name} loading="lazy" className="w-full h-full object-cover" />
                       ) : (
                         <ShoppingBag className="w-6 h-6 text-slate-600" />
                       )}
@@ -542,7 +583,37 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     </div>
                     <div className="text-xs text-slate-300 font-semibold mt-0.5 tabular-nums">
                       {formatTetri(item.unit_price_tetri)} &times; {item.quantity} = {formatTetri(item.quantity * item.unit_price_tetri)}
+                      {isOwner && (item.line_discount_tetri || 0) > 0 && (
+                        <span className="ml-1.5 text-amber-400">− {formatTetri(item.line_discount_tetri)} = {formatTetri(item.quantity * item.unit_price_tetri - (item.line_discount_tetri || 0))}</span>
+                      )}
                     </div>
+                    {isOwner && (
+                      lineDiscountEditor === item.variant_id ? (
+                        <input
+                          autoFocus
+                          inputMode="decimal"
+                          defaultValue={item.line_discount_tetri ? (item.line_discount_tetri / 100).toFixed(2) : ''}
+                          placeholder="ფასდაკლება ₾ (მთელ პოზიციაზე)"
+                          onKeyDown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === 'Enter' || e.key === 'Escape') {
+                              setLineDiscount(item.variant_id, (e.target as HTMLInputElement).value);
+                              setLineDiscountEditor(null);
+                            }
+                          }}
+                          onBlur={(e) => { setLineDiscount(item.variant_id, e.target.value); setLineDiscountEditor(null); }}
+                          className="mt-1 w-44 px-2 py-1 bg-slate-950 border border-amber-700/60 rounded-lg text-amber-200 text-[11px] focus:outline-none"
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setLineDiscountEditor(item.variant_id)}
+                          className="mt-0.5 text-[10px] text-amber-400/80 hover:text-amber-300 underline cursor-pointer"
+                        >
+                          {(item.line_discount_tetri || 0) > 0 ? 'ფასდაკლების შეცვლა' : 'ფასდაკლება'}
+                        </button>
+                      )
+                    )}
                   </div>
 
                   <div className="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
@@ -575,6 +646,12 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
 
           {/* Cart Bottom Summary */}
           <div className="border-t border-slate-800 pt-3 mt-2 bg-slate-900/90 rounded-2xl p-3 lg:p-4 shadow-xl shrink-0">
+            {totalDiscountTetri > 0 && (
+              <div className="flex justify-between items-center mb-1 text-xs text-amber-300 tabular-nums">
+                <span>ფასდაკლება ({formatTetri(cartSubtotalTetri)}-დან):</span>
+                <span>− {formatTetri(totalDiscountTetri)}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center mb-2.5 lg:mb-3">
               <span className="text-slate-400 text-xs sm:text-sm font-medium">სულ გადასახდელი:</span>
               <span className="text-xl sm:text-2xl font-black text-emerald-400 tabular-nums">
@@ -818,8 +895,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       {paymentMethod === 'cash' ? 'მიღებული ნაღდი თანხა (₾)' : 'ახლა გადახდილი ნაღდი თანხა (₾)'}
                     </label>
                     <input
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={cashReceivedInput}
                       onChange={(e) => setCashReceivedInput(e.target.value)}
                       className="w-full px-3.5 py-2 sm:py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg sm:text-xl font-bold focus:outline-none focus:border-emerald-500 tabular-nums"
@@ -871,6 +948,48 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
               {paymentMethod === 'debt' && (
                 <div className="bg-amber-950/30 border border-amber-800/60 p-3.5 rounded-xl text-xs text-amber-200">
                   სრული თანხა <span className="font-bold text-sm text-white tabular-nums">{formatTetri(cartTotalTetri)}</span> ჩაიწერება კლიენტის დავალიანებად.
+                </div>
+              )}
+
+              {isOwner && (
+                <div className="bg-slate-950/50 border border-amber-900/50 p-3 rounded-xl space-y-2">
+                  <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wide">ფასდაკლება (მხოლოდ მფლობელი)</div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <input
+                      inputMode="decimal"
+                      value={cartDiscountInput}
+                      onChange={(e) => setCartDiscountInput(e.target.value)}
+                      placeholder="კალათაზე ₾"
+                      className="w-28 px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-amber-500 tabular-nums"
+                    />
+                    {[5, 10, 15, 20].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => setCartDiscountInput((Math.floor((cartSubtotalTetri - lineDiscountTotalTetri) * pct / 100) / 100).toFixed(2))}
+                        className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                    {cartDiscountInput && (
+                      <button type="button" onClick={() => setCartDiscountInput('')} className="px-2 py-1 text-slate-400 hover:text-white text-[11px] cursor-pointer">გასუფთავება</button>
+                    )}
+                  </div>
+                  {totalDiscountTetri > 0 && (
+                    <input
+                      value={discountReason}
+                      onChange={(e) => setDiscountReason(e.target.value)}
+                      maxLength={300}
+                      placeholder="მიზეზი (მაგ. მუდმივი კლიენტი)"
+                      className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-amber-500"
+                    />
+                  )}
+                  {totalDiscountTetri > 0 && (
+                    <div className="text-[11px] text-amber-200 tabular-nums">
+                      ფასდაკლებამდე {formatTetri(cartSubtotalTetri)} • ფასდაკლება {formatTetri(totalDiscountTetri)} • გადასახდელი {formatTetri(cartTotalTetri)}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -985,6 +1104,12 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 <div className="flex justify-between text-slate-400">
                   <span>კლიენტი:</span>
                   <span className="font-bold text-white">{completedSale.customer_name}</span>
+                </div>
+              )}
+              {(completedSale.discount_tetri || 0) > 0 && (
+                <div className="flex justify-between text-slate-400">
+                  <span>ფასდაკლება:</span>
+                  <span className="text-amber-400 tabular-nums">− {formatTetri(completedSale.discount_tetri)}</span>
                 </div>
               )}
               <div className="flex justify-between text-slate-400">
