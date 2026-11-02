@@ -1,18 +1,18 @@
 node_modules/
-build/
-dist/
-dist-electron/
-release/
-coverage/
-test-results/
-tmp/
+/build/
+/dist/
+/dist-electron/
+/release/
+/coverage/
+/test-results/
+/tmp/
 .DS_Store
 *.log
 .env*
 !.env.example
 
 # Local store data must never be committed: databases, WAL/SHM, backups, product photos.
-data/
+/data/
 *.db
 *.db-wal
 *.db-shm
