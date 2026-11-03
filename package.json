@@ -4,7 +4,7 @@
   "description": "StorePOS — ლოკალური მაღაზიის მართვა (Offline Windows Desktop)",
   "author": "StorePOS",
   "private": true,
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0-rc.3",
   "main": "dist-electron/main.cjs",
   "type": "module",
   "scripts": {
