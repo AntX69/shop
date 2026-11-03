@@ -9,9 +9,9 @@
  *
  *   npx electron-builder --win nsis -c.productName=StorePOS-Test -c.appId=com.storepos.offline.test \
  *     -c.extraMetadata.productName=StorePOS-Test -c.extraMetadata.name=storepos-test \
- *     -c.extraMetadata.version=<1.0.0 | 1.0.0-rc.2> -c.artifactName='StorePOS-Test-Setup-${version}.${ext}' \
+ *     -c.extraMetadata.version=<old | new version> -c.artifactName='StorePOS-Test-Setup-${version}.${ext}' \
  *     -c.nsis.createDesktopShortcut=false -c.nsis.createStartMenuShortcut=false -c.directories.output=<dir>
- *   node e2e/installer-upgrade-test.mjs --old <setup 1.0.0> --new <setup 1.0.0-rc.2> --dir <install dir> --data <empty dir> --out <report dir>
+ *   node e2e/installer-upgrade-test.mjs --old <older test setup> --new <newer test setup> --dir <install dir> --data <empty dir> --out <report dir>
  */
 
 import fs from 'node:fs';
@@ -26,6 +26,8 @@ const arg = (name, fallback) => {
 };
 const oldSetup = arg('old');
 const newSetup = arg('new');
+// Version of the newer installer, from its file name (StorePOS-Test-Setup-<version>.exe).
+const newVersion = arg('new-version', (path.basename(newSetup || '').match(/Setup-(.+)\.exe$/i) || [])[1] || '');
 const installDir = path.resolve(arg('dir', ''));
 const dataDir = path.resolve(arg('data', 'installer-profile'));
 const outDir = path.resolve(arg('out', 'installer-report'));
@@ -106,9 +108,9 @@ async function main() {
   check('newer installer finishes silently over the running older version', code === 0, `${((Date.now() - t0) / 1000).toFixed(0)} s`);
   check('the running older program was closed by the installer (only the test folder\'s program)', !stillRunning);
   const v2 = fs.existsSync(exePath) ? productVersion(exePath) : 'missing';
-  check('the program in the folder is now the newer version', v2 === '1.0.0-rc.2', v2);
+  check('the program in the folder is now the newer version', v2 === newVersion, v2);
   const entries2 = uninstallEntries();
-  check('still exactly one uninstall entry, with the new version', entries2.length === 1 && entries2[0].DisplayVersion === '1.0.0-rc.2', JSON.stringify(entries2));
+  check('still exactly one uninstall entry, with the new version', entries2.length === 1 && entries2[0].DisplayVersion === newVersion, JSON.stringify(entries2));
 
   // 4. data after the update
   app = await launchApp(exePath, dataDir, port++);
@@ -117,7 +119,7 @@ async function main() {
   const T2 = (await must(app.cdp, 'auth:login', { userId: owner.id, pin: '7531' })).token;
   const after = await fingerprint(app.cdp, T2);
   check('after the update: same owner and PIN, products, stock, photo, sales, debt and finance', after === before);
-  check('the sign-in screen shows the new version', /1\.0\.0-rc\.2/.test(shown), shown);
+  check('the sign-in screen shows the new version', shown.includes(newVersion), shown);
   const backups = await must(app.cdp, 'backup:list', {}, T2);
   check('backups made by the older version are listed and valid', backups.length >= 1 && backups.every((b) => b.is_valid));
   await closeApp(app);

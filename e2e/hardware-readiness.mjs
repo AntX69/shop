@@ -192,6 +192,7 @@ async function main() {
   await focusDigitCell(cdp, 0);
   await typeHuman(cdp, '12845');
   check('typed code fills the cells in order', (await digitCells(cdp)).join('') === '12845');
+  check('digits typed by the seller are no longer marked as doubtful', (await cdp.evaluate(`document.querySelectorAll('input[aria-label^="ციფრი #"][data-flagged]').length`)) === 0);
   await sleep(400);
   check('a code with no product shows "not found" and no confirm button', (await text(cdp)).includes('კოდით "12845" პროდუქტი ვერ მოიძებნა'));
   await focusDigitCell(cdp, 2);
@@ -414,6 +415,82 @@ async function main() {
   const t2 = await text(cdp);
   await cdp.screenshot(path.join(outDir, 'hw-02-ocr-video-frame.png'));
   check('after a restart OCR works again: camera frame -> recognition -> product (printed 10001)', cells === '10001' && t2.includes('ბურთი'), `read "${cells}"`);
+
+  // ---------- RC3: the green frame is the area recognised; diagnostics; photo import ----------
+  await clickButton(cdp, 'დიაგნოსტიკა');
+  await sleep(200);
+  const geometry = await cdp.evaluate(`(() => {
+    const v = document.querySelector('video');
+    const box = v.getBoundingClientRect();
+    const f = document.querySelector('[data-testid="ocr-frame"]').getBoundingClientRect();
+    return { bw: box.width, bh: box.height, fx: f.left - box.left, fy: f.top - box.top, fw: f.width, fh: f.height, vw: v.videoWidth, vh: v.videoHeight };
+  })()`);
+  await clickButton(cdp, 'კადრის გადაღება და ამოცნობა');
+  await cdp.waitFor(`document.querySelector('[data-testid="ocr-diag-summary"]') && !document.body.innerText.includes('ამოცნობა მიმდინარეობს')`, 20000, 'diagnostics after capture');
+  await sleep(300);
+  const diagText = await text(cdp);
+  // Expected region: the on-screen frame mapped through the video's object-fit: cover.
+  const sc = Math.max(geometry.bw / geometry.vw, geometry.bh / geometry.vh);
+  const offX = (geometry.bw - geometry.vw * sc) / 2;
+  const offY = (geometry.bh - geometry.vh * sc) / 2;
+  const expW = Math.round(Math.min(geometry.vw, (geometry.fx + geometry.fw - offX) / sc) - Math.max(0, (geometry.fx - offX) / sc));
+  const expH = Math.round(Math.min(geometry.vh, (geometry.fy + geometry.fh - offY) / sc) - Math.max(0, (geometry.fy - offY) / sc));
+  const m = diagText.match(/დამუშავებული არე \((\d+)×(\d+)\)/);
+  check('the recognised area is exactly the green frame on screen (object-fit: cover mapped)', !!m && Math.abs(Number(m[1]) - expW) <= 2 && Math.abs(Number(m[2]) - expH) <= 2,
+    m ? `region ${m[1]}x${m[2]}, frame on screen maps to ${expW}x${expH} of ${geometry.vw}x${geometry.vh}` : 'no region size shown');
+  const digitCanvases = await cdp.evaluate(`document.querySelectorAll('[data-testid="ocr-diag-digits"] canvas').length`);
+  check('recognition runs on the OCR worker thread in the installed app', diagText.includes('ცალკე ნაკადში (worker)'));
+  check('diagnostics show the stages, the five model inputs, confidences and timings',
+    digitCanvases === 5 && diagText.includes('კონტრასტი (განათების კორექციით)') && diagText.includes('მელანი') && /დრო\s*\d+ მს/.test(diagText) && diagText.includes('კლასიფიკაცია'),
+    `${digitCanvases} digit inputs`);
+
+  // A photo of a handwriting-style code (off-centre, slightly rotated) through the same pipeline.
+  const photo = await cdp.evaluate(`(() => {
+    const c = document.createElement('canvas'); c.width = 1600; c.height = 900;
+    const x = c.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 1600, 0); g.addColorStop(0, '#f4f1e8'); g.addColorStop(1, '#c9c5bb');
+    x.fillStyle = g; x.fillRect(0, 0, 1600, 900);
+    x.translate(560, 520); x.rotate(-0.05);
+    x.fillStyle = '#1e2a78'; x.font = '150px "Segoe Print", "Comic Sans MS", cursive'; x.textBaseline = 'middle';
+    x.fillText('48213', 0, 0);
+    return c.toDataURL('image/png').split(',')[1];
+  })()`);
+  const photoFile = path.join(outDir, 'ocr-photo-48213.png');
+  fs.writeFileSync(photoFile, Buffer.from(photo, 'base64'));
+  const { root } = await cdp.send('DOM.getDocument', { depth: -1 });
+  const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: 'input[type=file][accept="image/png,image/jpeg"]' });
+  await cdp.send('DOM.setFileInputFiles', { nodeId, files: [photoFile] });
+  await cdp.waitFor(`document.body.innerText.includes('ფოტო: ocr-photo-48213.png') && !document.body.innerText.includes('ამოცნობა მიმდინარეობს')`, 20000, 'photo result');
+  await sleep(300);
+  const photoCells = (await digitCells(cdp)).join('');
+  check('photo import (PNG) goes through the same pipeline and shows the diagnostics', photoCells === '48213', `read "${photoCells}"`);
+  const notImage = path.join(outDir, 'not-an-image.png');
+  fs.writeFileSync(notImage, '<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  await cdp.send('DOM.setFileInputFiles', { nodeId, files: [notImage] });
+  await sleep(600);
+  check('a file that is not really a PNG/JPEG is refused before decoding', (await text(cdp)).includes('ფოტოს გახსნა ვერ მოხერხდა'));
+
+  // Camera unplugged while a frame is being recognised: the frame is still read, then the
+  // seller is told the camera is gone and can retry.
+  await clickButton(cdp, 'კადრის გადაღება და ამოცნობა');
+  await cdp.evaluate(`(() => { const t = document.querySelector('video').srcObject.getVideoTracks()[0]; t.dispatchEvent(new Event('ended')); return true; })()`);
+  await cdp.waitFor(`!document.body.innerText.includes('ამოცნობა მიმდინარეობს')`, 20000, 'recognition after unplug');
+  await sleep(300);
+  const unplugged = await text(cdp);
+  check('camera unplugged during recognition: the frame is still read, then "camera disconnected" with retry', unplugged.includes('კამერა გაითიშა') && unplugged.includes('ხელახლა ცდა') && (await digitCells(cdp)).join('') === '10001', `cells "${(await digitCells(cdp)).join('')}"`);
+  await clickButton(cdp, 'ხელახლა ცდა');
+  await cdp.waitFor(`(() => { const v = document.querySelector('video'); return v && v.videoWidth > 0; })()`, 15000, 'picture after unplug retry');
+
+  // Repeated recognition: same answer every time, nothing piles up.
+  const reads = [];
+  for (let k = 0; k < 6; k++) {
+    await clickButton(cdp, 'კადრის გადაღება და ამოცნობა');
+    await cdp.waitFor(`!document.body.innerText.includes('ამოცნობა მიმდინარეობს')`, 20000, 'repeat recognition');
+    await sleep(150);
+    reads.push((await digitCells(cdp)).join(''));
+  }
+  check('six recognitions in a row give the same code', reads.every((r) => r === '10001'), reads.join(','));
+  await clickButton(cdp, 'დიაგნოსტიკა');
   await closeWebcam(cdp);
   const closed2 = await closeApp(app);
   check('second close is clean', closed2.clean);
