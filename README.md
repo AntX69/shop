@@ -16,7 +16,7 @@
 | მონაცემების აღდგენა (Disaster Recovery) | [docs/DISASTER_RECOVERY_KA.md](docs/DISASTER_RECOVERY_KA.md) |
 | მომხმარებლის სახელმძღვანელო | [docs/USER_GUIDE_KA.md](docs/USER_GUIDE_KA.md) |
 | განახლება / ახალ კომპიუტერზე გადატანა | [docs/UPDATE_GUIDE.md](docs/UPDATE_GUIDE.md) |
-| Release Readiness (1.0.0-rc.2) და Release Checklist | [docs/release/RELEASE_READINESS.md](docs/release/RELEASE_READINESS.md), [docs/release/RELEASE_CHECKLIST.md](docs/release/RELEASE_CHECKLIST.md) |
+| Release Readiness (1.0.0-rc.3) და Release Checklist | [docs/release/RELEASE_READINESS.md](docs/release/RELEASE_READINESS.md), [docs/release/RELEASE_CHECKLIST.md](docs/release/RELEASE_CHECKLIST.md) |
 | ცვლილებები | [CHANGELOG.md](CHANGELOG.md) |
 | უსაფრთხოება / ფინანსები / Backup / ტესტები | [docs/release/](docs/release/) |
 | აპარატურის სტატუსი (სკანერი, კამერა, DATECS DP-150) | [docs/HARDWARE_STATUS.md](docs/HARDWARE_STATUS.md), [docs/hardware/](docs/hardware/) |

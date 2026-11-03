@@ -1,19 +1,32 @@
-# Release Security & Privacy Review: StorePOS 1.0.0-rc.2
+# Release Security & Privacy Review: StorePOS 1.0.0-rc.3
 
 ტესტის გარემო: Windows 11 Pro x64, აწყობილი ინსტალერის შიგთავსი (`app.asar`) და გაშვებული პროგრამა. ყველა შემოწმება ჩატარდა სატესტო პროფილებზე; მაღაზიის `%APPDATA%\StorePOS` არ გახსნილა.
 
 | # | მოთხოვნა | შედეგი | როგორ შემოწმდა |
 |---|---|---|---|
-| 1 | Production კონფიგურაცია Offline-ში მუშაობს | ✅ | CSP (`connect-src 'self'`). main process ბლოკავს ყველა http/https/ws მოთხოვნას. E2E: „0 ქსელური მოთხოვნა“. ჩვეულებრივ გაშვებაზე StorePOS-ის 4 პროცესს **არცერთი** TCP/UDP სოკეტი არ აქვს (`Get-NetTCPConnection`/`Get-NetUDPEndpoint`). |
+| 1 | Production კონფიგურაცია Offline-ში მუშაობს | ✅ | CSP (`connect-src 'self'`). main process ბლოკავს ყველა http/https/ws მოთხოვნას. E2E: „0 ქსელური მოთხოვნა“. ჩვეულებრივ გაშვებაზე StorePOS-ის 4 პროცესს **არცერთი** TCP/UDP სოკეტი არ აქვს (`Get-NetTCPConnection`/`Get-NetUDPEndpoint`; RC2-ზეც და RC3-ზეც). |
 | 2 | არ არის Developer Backdoor | ✅ (გასწორდა) | ნაპოვნი და დახურული: `VITE_DEV_SERVER_URL`. დაინსტალირებული პროგრამა ამ გარემოს ცვლადით უცხო გვერდს ტვირთავდა, IPC-ზე სრული წვდომით. ასევე `STOREPOS_DEVTOOLS` (DevTools) და `SQLITE_SYNCHRONOUS` (durability-ის შესუსტება). დარჩა მხოლოდ `STOREPOS_NO_MAXIMIZE` (ფანჯრის ზომა). |
 | 3 | არ არის წინასწარ შექმნილი Owner/Seller PIN | ✅ | მომხმარებელი იქმნება მხოლოდ პირველ გაშვებაზე (`setupInitialOwner`, როცა მომხმარებელი არ არის) ან Owner-ის მიერ. კოდში seed მომხმარებელი, „1234“ ან სხვა სტანდარტული PIN არ არის. E2E: სუფთა პროფილი იწყება Owner-ის შექმნით. |
-| 4 | სატესტო მონაცემები ინსტალერში არ არის | ✅ | `app.asar` (17.8 MB, 307 ჩანაწერი): `dist/` (UI), `dist-electron/` (main/preload), `package.json`, `onnxruntime-web` (Node runtime + WASM) და მისი `protobufjs` დამოკიდებულებები. `.db`, `.posbackup`, `.env`, `server.ts`, ტესტები, `.map` არ არის. მოდელი `resources/models/mnist.onnx` (26 KB). |
+| 4 | სატესტო მონაცემები ინსტალერში არ არის | ✅ | `app.asar` (17.8 MB, 307 ჩანაწერი): `dist/` (UI), `dist-electron/` (main/preload), `package.json`, `onnxruntime-web` (Node runtime + WASM) და მისი `protobufjs` დამოკიდებულებები. `.db`, `.posbackup`, `.env`, `server.ts`, ტესტები, `.map` არ არის. RC3: `app.asar` 18.6 MB, 310 ჩანაწერი, დამატებით `dist-electron/ocrWorker.cjs`. მოდელი `resources/models/handwriting-digits.onnx` (757 KB) + `README.md` (ლიცენზიები) + `model-card.json`. სასწავლო მონაცემები, `scripts/`, ტესტის fixture-ები არ არის. |
 | 5 | მონაცემები ინახება ლოკალურად | ✅ | `%APPDATA%\StorePOS\data` (ბაზა, ფოტოები, ასლები). ინსტალერი/განახლება/Uninstall მას არ შლის (`deleteAppDataOnUninstall: false`, შემოწმებულია ინსტალერის ტესტით). |
 | 6 | არ არის ფარული Remote Access | ✅ | სოკეტი არ იხსნება (იხ. 1). განახლების სერვერი, ტელემეტრია, crash-reporter-ის ატვირთვა არ არის. ფანჯარაში მხოლოდ საკუთარი გვერდი იხსნება (ნავიგაცია, `window.open`, `<webview>` დაბლოკილია). IPC მიიღება მხოლოდ საკუთარი გვერდიდან. Electron fuses: RunAsNode, NODE_OPTIONS, `--inspect` გამორთულია; asar integrity ჩართულია. |
 | 7 | Backup ფაილები GitHub-ზე არ იტვირთება | ✅ | მონაცემები რეპოზიტორიის საქაღალდის გარეთაა. `.gitignore`: `*.db`, `*.db-wal`, `*.db-shm`, `*.bak`, `*.posbackup`, `/data/`, `/release/`. ისტორიული კვალი: იხ. ქვემოთ. |
 | 8 | ლოგები PIN-ს და კლიენტის მონაცემებს არ ავრცელებს | ✅ | დისკზე ცალკე ლოგ-ფაილი არ იწერება. `system_error_logs` (ბაზაში, მხოლოდ Owner ხედავს) PIN/token/password ნიმუშებს `[REDACTED]`-ით ცვლის და მოთხოვნის მონაცემებს არ წერს. აუდიტი PIN-ს და ჰეშს არ შეიცავს (მხოლოდ „PIN reset by owner“ და მსგავსი). soak ტესტის ბაზაში ტესტის PIN-ები აუდიტში და შეცდომების ჟურნალში არ მოიძებნა. PIN-ის ჰეში/salt IPC პასუხში **არასდროს** იგზავნება. |
 | 9 | ინტერნეტი მუშაობისთვის აუცილებელი არ არის | ✅ | ყველა ფუნქცია, OCR-ის ჩათვლით, ლოკალურია. ONNX ბიბლიოთეკა CDN-დან არაფერს ტვირთავს (შეფუთულ ფაილებში მხოლოდ დოკუმენტაციის ბმულია შეცდომის ტექსტში). |
 | 10 | Repository Visibility / Git History | უცვლელი | საჯაროა შენი გადაწყვეტილებით. არც visibility შემიცვლია, არც ისტორია გადამიწერია. |
+
+## RC3: OCR-ის ცვლილებების მიმოხილვა
+
+| # | საკითხი | შედეგი | როგორ შემოწმდა |
+|---|---|---|---|
+| R1 | OCR ქსელს არ იყენებს | ✅ | ამოცნობა main process-ის worker ნაკადშია; მოდელი `resources/models`-დან იკითხება; ქსელის კოდი არ არის. ქსელის ბლოკი (CSP, http/https/ws) უცვლელია. |
+| R2 | ფოტოები ავტომატურად არ ინახება და არ იგზავნება | ✅ | კადრი მეხსიერებაში რჩება. დისკზე მხოლოდ „ნიმუშის შენახვა“ წერს, მომხმარებლის მიერ Windows-ის ფანჯარაში არჩეულ საქაღალდეში. გზა renderer-იდან არ მოდის; ფაილის სახელს main process ადგენს. |
+| R3 | არასანდო ფაილები (ფოტოს იმპორტი) | ✅ | მხოლოდ `image/png` / `image/jpeg`, ფაილის სიგნატურის შემოწმებით (PNG/JPEG magic bytes), ≤ 15 MB, ≤ 40 მეგაპიქსელი. დეკოდირება Chromium-ის sandbox-ში (`createImageBitmap`), შემდეგ ≤ 2 მეგაპიქსელამდე შემცირება. main process ზომას და სიგრძეს ისევ ამოწმებს. unit + E2E (SVG `.png` სახელით უარყოფილია). |
+| R4 | ნიმუშის შენახვის IPC (`ocr:saveSample`) | ✅ | მხოლოდ შესული მომხმარებელი. PNG სიგნატურა და ზომა (≤ 12 MB), JSON ≤ 512 KB და ვალიდური, სწორი კოდი მხოლოდ 5 ციფრი. საქაღალდე მხოლოდ დიალოგით (unit: `samples.test.ts`). |
+| R5 | Worker ნაკადი | ✅ | `dist-electron/ocrWorker.cjs` `app.asar`-შია (integrity fuse მოიცავს). ახალი პროცესი ან სოკეტი არ იქმნება. 15 წამზე მეტი სამუშაო ნაკადს აჩერებს. |
+| R6 | სასწავლო მონაცემები ინსტალერში და რეპოზიტორიაში | ✅ | MNIST და pendigits მხოლოდ დეველოპერის კომპიუტერზე. რეპოზიტორიაში მხოლოდ 40 კალმის ნიმუში (20 KB, CC BY 4.0) რეგრესიის ტესტისთვის. ინსტალერში: მოდელი, `README.md` (ლიცენზიები) და `model-card.json`. |
+| R7 | მოდელის ლიცენზია | ✅ | CC BY-SA 3.0 (MNIST-ის გამო), ავტორობით (`resources/models/README.md`). |
+| R8 | დიაგნოსტიკა POS-ის უსაფრთხოებას არ არღვევს | ✅ | აჩვენებს მხოლოდ კამერის/ფოტოს გამოსახულებას და OCR-ის შიდა მონაცემებს: ფასები, ხარჯები, ნისიები, PIN-ები იქ არ ჩანს. არჩეული რეჟიმი `localStorage`-შია (მხოლოდ ჩართული/გამორთული). |
 
 ## დარჩენილი რისკები (გულწრფელად)
 
