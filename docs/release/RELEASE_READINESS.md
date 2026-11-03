@@ -5,6 +5,7 @@
 | ვერსია | **1.0.0-rc.3** (Release Candidate 3) |
 | სამუშაო branch | `claude/storepos-v1-final` (`main` = AI Studio M12 `1bfb98d`, უცვლელი) |
 | **ინსტალერი** | `StorePOS-Setup-1.0.0-rc.3.exe`: 125 469 366 ბაიტი |
+| ინსტალერი აწყობილია | commit `6963b94`-ის კოდით. შემდეგ მხოლოდ დოკუმენტაცია შეიცვალა. ინსტალერის `resources/models/README.md` შედეგების ცხრილის დამატებამდე აიწყო; მოდელი და კოდი იგივეა. |
 | **SHA-256** | `8279403a92e1fee4ca5fdf401a8c6f14c58bbfe8483391d8d540da12403f94a5` |
 | წინა ინსტალერები (არ შეცვლილა) | RC2 `StorePOS-Setup-1.0.0-rc.2.exe` `e5fa50f5…dd3424c`; RC1 `StorePOS-Setup-1.0.0.exe` `eb7c761d…6d9d08` |
 | ხელმოწერა | არა (Code Signing სერტიფიკატი არ გვაქვს) → SmartScreen გააფრთხილებს |
@@ -160,7 +161,15 @@ restart, load და soak RC3-ზე თავიდან არ გაშვ�
 
 ## 6. Git და GitHub
 
-- RC3-ის commit-ები: branch `claude/storepos-v1-final`-ზე, `401737b`-ის (RC2) შემდეგ.
+- RC3-ის commit-ები, `401737b`-ის (RC2) შემდეგ:
+
+```
+72c107d feat(ocr): handwriting digit model trained on StorePOS's own preprocessing
+7c78cc3 fix(ocr): find handwritten digits where they are written, never in fixed cells
+13abf05 test(ocr): real-handwriting benchmark, model evaluation and RC3 E2E checks
+6963b94 chore(release): version 1.0.0-rc.3
++ docs: RC3 დოკუმენტაცია
+```
 - `main` არ შეცვლილა. Merge, force-push და ისტორიის გადაწერა არ გამიკეთებია. Git ისტორიის ძველი კვალი: [SECURITY_PRIVACY_REVIEW.md](SECURITY_PRIVACY_REVIEW.md).
 - სასწავლო მონაცემები რეპოზიტორიაში არ არის (მხოლოდ 40 კალმის ნიმუში ტესტისთვის, 20 KB). PyTorch გამოყენებული იყო მხოლოდ სწავლებისთვის; პროგრამაში არ შედის.
 
