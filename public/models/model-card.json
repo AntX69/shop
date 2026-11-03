@@ -1,0 +1,114 @@
+{
+  "model": "handwriting-digits.onnx",
+  "architecture": "CNN 32 | 48-48 | 96 (3x3 conv, batch norm, max pool) + 128 dense, dropout; 188778 parameters",
+  "input": "input [n,1,28,28] float 0 (paper) .. 1 (ink), MNIST-style normalisation by src/main/ocr/normalize.ts",
+  "output": "logits [n,10], divided by the calibration temperature (softmax gives calibrated probabilities)",
+  "temperature": 0.5499999999999999,
+  "training": {
+    "iso": 88000,
+    "seg": 11407
+  },
+  "validation": {
+    "pendigits_writers_24_29": 1494,
+    "mnist_train_58000_59999": 2000
+  },
+  "best_epoch": 5,
+  "epochs": 8,
+  "seed": 20261103,
+  "validation_accuracy": 0.9948483109474182,
+  "calibration": [
+    {
+      "min_confidence": 0.0,
+      "share": 1.0,
+      "accuracy": 0.9948483109474182
+    },
+    {
+      "min_confidence": 0.5,
+      "share": 0.9991413950920105,
+      "accuracy": 0.9951303601264954
+    },
+    {
+      "min_confidence": 0.7,
+      "share": 0.9951345324516296,
+      "accuracy": 0.9965487718582153
+    },
+    {
+      "min_confidence": 0.85,
+      "share": 0.9899828433990479,
+      "accuracy": 0.9982653856277466
+    },
+    {
+      "min_confidence": 0.95,
+      "share": 0.9822552800178528,
+      "accuracy": 0.998834490776062
+    },
+    {
+      "min_confidence": 0.99,
+      "share": 0.9564968347549438,
+      "accuracy": 0.9997007846832275
+    }
+  ],
+  "history": [
+    {
+      "epoch": 1,
+      "loss": 0.8451955395793601,
+      "val": 0.9839725494384766,
+      "val_pen": 0.9852744340896606,
+      "val_mnist": 0.9829999804496765
+    },
+    {
+      "epoch": 2,
+      "loss": 0.4133986030377488,
+      "val": 0.987693190574646,
+      "val_pen": 0.9906291961669922,
+      "val_mnist": 0.9854999780654907
+    },
+    {
+      "epoch": 3,
+      "loss": 0.38249804347389865,
+      "val": 0.9922724962234497,
+      "val_pen": 0.993306577205658,
+      "val_mnist": 0.9915000200271606
+    },
+    {
+      "epoch": 4,
+      "loss": 0.3700069392123904,
+      "val": 0.9942759275436401,
+      "val_pen": 0.9953145980834961,
+      "val_mnist": 0.9934999942779541
+    },
+    {
+      "epoch": 5,
+      "loss": 0.3595718659805091,
+      "val": 0.9948483109474182,
+      "val_pen": 0.9946452379226685,
+      "val_mnist": 0.9950000047683716
+    },
+    {
+      "epoch": 6,
+      "loss": 0.3525336268093686,
+      "val": 0.9948483109474182,
+      "val_pen": 0.9939758777618408,
+      "val_mnist": 0.9955000281333923
+    },
+    {
+      "epoch": 7,
+      "loss": 0.34756995986012756,
+      "val": 0.9945620894432068,
+      "val_pen": 0.9939758777618408,
+      "val_mnist": 0.9950000047683716
+    },
+    {
+      "epoch": 8,
+      "loss": 0.34454828708929525,
+      "val": 0.9945620894432068,
+      "val_pen": 0.993306577205658,
+      "val_mnist": 0.9955000281333923
+    }
+  ],
+  "data_sources": [
+    "MNIST (Y. LeCun, C. Cortes, C. J. C. Burges), CC BY-SA 3.0",
+    "Pen-Based Recognition of Handwritten Digits (E. Alpaydin, F. Alimoglu, 1998), UCI ML Repository, doi:10.24432/C5MG6K, CC BY 4.0"
+  ],
+  "torch": "2.15.0+cpu"
+}
