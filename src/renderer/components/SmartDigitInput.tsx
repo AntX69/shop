@@ -21,6 +21,8 @@ export interface SmartDigitInputProps {
   value: string;
   /** Exact cells (with gaps), e.g. an OCR result with an unrecognised middle digit. Takes precedence over value. */
   slotValues?: string[];
+  /** Cells to check (e.g. digits the OCR is unsure of), highlighted in amber. */
+  flagged?: boolean[];
   onChange: (value: string, slots?: string[]) => void;
   onComplete?: (value: string) => void;
   autoFocus?: boolean;
@@ -35,6 +37,7 @@ export const SmartDigitInput: React.FC<SmartDigitInputProps> = ({
   length,
   value,
   slotValues,
+  flagged,
   onChange,
   onComplete,
   autoFocus = false,
@@ -146,10 +149,14 @@ export const SmartDigitInput: React.FC<SmartDigitInputProps> = ({
           onKeyDown={(e) => handleKeyDown(idx, e)}
           onPaste={(e) => handlePaste(idx, e)}
           aria-label={`ციფრი #${idx + 1}`}
+          data-flagged={flagged?.[idx] ? 'true' : undefined}
+          title={flagged?.[idx] ? 'შეამოწმეთ ეს ციფრი' : undefined}
           placeholder="0"
           className={
             slotClassName ||
-            'w-10 h-12 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-black bg-slate-900 border-2 border-slate-700 focus:border-emerald-500 rounded-xl text-white font-mono shadow-inner focus:outline-none transition-colors'
+            `w-10 h-12 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-black border-2 rounded-xl text-white font-mono shadow-inner focus:outline-none transition-colors ${
+              flagged?.[idx] ? 'bg-amber-950/50 border-amber-500 focus:border-amber-300' : 'bg-slate-900 border-slate-700 focus:border-emerald-500'
+            }`
           }
         />
       ))}

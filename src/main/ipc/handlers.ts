@@ -20,6 +20,7 @@ import { ReturnsService } from '../domain/returnsService.ts';
 import { FinanceService } from '../domain/financeService.ts';
 import { BackupService } from '../domain/backupService.ts';
 import { OcrService } from '../domain/ocrService.ts';
+import { saveOcrSample } from '../ocr/samples.ts';
 import { noteActivity } from '../activity.ts';
 import { User } from '../../shared/types.ts';
 
@@ -127,17 +128,22 @@ const routes: Record<string, Route> = {
   'products:updateVariant': { access: 'owner', handler: (c) => products().updateVariant(c.user, c.payload) },
   'products:setVariantActive': { access: 'owner', handler: (c) => products().setVariantActive(c.user, p(c).variantId, !!p(c).isActive) },
 
-  // 5. OCR (offline ONNX)
+  // 5. OCR (offline ONNX, on the OCR worker thread)
   'ocr:isModelReady': {
     access: 'user',
-    handler: async () => ({ ready: !!(await OcrService.getSession()), model: 'mnist.onnx' })
+    handler: async () => ({ ready: await OcrService.warmup(), model: OcrService.modelName })
   },
   'ocr:recognize': {
     access: 'user',
     handler: (c) => {
       const img = OcrService.validateImage(p(c).pixels, p(c).width, p(c).height);
-      return new OcrService().recognize5Digits(img.pixels, img.width, img.height);
+      return OcrService.recognize(img.pixels, img.width, img.height, { diagnostics: p(c).diagnostics === true });
     }
+  },
+  // Test sample from the diagnostics panel, saved only on request into a folder the seller picks.
+  'ocr:saveSample': {
+    access: 'user',
+    handler: (c) => saveOcrSample(p(c), nativeHost.chooseDirectory)
   },
 
   // 6. Inventory
@@ -236,6 +242,8 @@ const NEVER_SENT_FIELD = /^(pin_hash|pin_salt)$/;
 /** Removes fields a session must not see: PIN hashes for everyone, costs/profit for sellers. */
 export function filterResponse(value: any, user: User | null, depth = 0): any {
   if (value === null || typeof value !== 'object' || depth > 25) return value;
+  // Binary data (OCR diagnostics images) has no named fields to filter and must stay binary.
+  if (ArrayBuffer.isView(value)) return value;
   if (Array.isArray(value)) return value.map((v) => filterResponse(v, user, depth + 1));
   const isOwner = user?.role === 'owner';
   const out: Record<string, any> = {};

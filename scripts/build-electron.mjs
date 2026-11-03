@@ -24,6 +24,7 @@ async function build() {
     entryPoints: {
       main: 'src/main/app.ts',
       preload: 'src/preload/index.ts',
+      ocrWorker: 'src/main/ocr/ocrWorker.ts',
     },
     bundle: true,
     platform: 'node',
@@ -39,7 +40,8 @@ async function build() {
       'node:fs',
       'node:crypto',
       'node:url',
-      'node:os'
+      'node:os',
+      'node:worker_threads'
     ],
     sourcemap: isDev,
     minify: !isDev,

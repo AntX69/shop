@@ -24,6 +24,8 @@ import { initDatabaseWithRetry, closeDatabase, getDb } from './db/database.ts';
 import { migrateInlineImagesToFiles, SAFE_IMAGE_FILE } from './domain/productImages.ts';
 import { handleIpcMessage, setNativeHost } from './ipc/handlers.ts';
 import { startBackupScheduler } from './backupScheduler.ts';
+import { configureOcrWorker, stopOcrWorker } from './ocr/workerClient.ts';
+import { OcrService } from './domain/ocrService.ts';
 
 let mainWindow: BrowserWindow | null = null;
 let appPageUrl = '';
@@ -162,6 +164,9 @@ if (!gotTheLock) {
     // Daily automatic backup, independent of the screens in use.
     stopBackupScheduler = startBackupScheduler();
 
+    // Handwriting OCR runs on its own thread (started when the camera dialog first needs it).
+    configureOcrWorker(path.join(__dirname, 'ocrWorker.cjs'), OcrService.getModelPath());
+
     // 3. Resolve preload script path
     const candidatePreloadPaths = [
       path.join(__dirname, 'preload.cjs'),
@@ -269,6 +274,7 @@ if (!gotTheLock) {
 
   app.on('before-quit', () => {
     stopBackupScheduler?.();
+    stopOcrWorker();
     closeDatabase();
   });
 }

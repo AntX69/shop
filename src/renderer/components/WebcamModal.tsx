@@ -2,11 +2,14 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Webcam Offline OCR Modal Component (M6).
- * Recognizes 5-digit handwritten store codes strictly offline using a local trained ONNX model.
+ * Webcam Offline OCR Modal Component (M6, RC3).
+ * Reads a handwritten 5-digit store code strictly offline with a local ONNX model. The code can be
+ * written anywhere inside the green frame: the digits are found where they are, the frame on
+ * screen is exactly the area recognised, doubtful digits are marked, unreadable ones are left
+ * empty and every digit stays editable. The product is added only after the seller confirms it.
  * Handles one or several cameras (the choice is remembered on this computer), missing or busy
- * cameras and blocked camera access with plain instructions, image upload testing, manual digit
- * correction, and mandatory seller confirmation before cart addition.
+ * cameras and blocked camera access with plain instructions, photo import and a diagnostics
+ * panel for testing.
  *
  * Camera lifecycle: a stream is opened only while the dialog is open and is stopped when it
  * closes, when another camera is chosen, or when the stream arrives after the dialog was
@@ -16,9 +19,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Product, ProductVariant } from '../../shared/types.ts';
 import { formatTetri } from '../../shared/money.ts';
+import type { OcrResult } from '../../shared/ocr.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
-import { recognize5DigitsFromCanvas, OcrResult, BoundingBox } from '../utils/offlineOcr.ts';
+import { canvasPng, checkPhotoFile, PHOTO_MAX_PIXELS, readRegion, recognizeRegion, regionPng, type BoundingBox, type RegionImage } from '../utils/offlineOcr.ts';
+import { frameInVideo, OCR_FRAME } from '../utils/cameraRoi.ts';
+import { compositeCanvas, drawCodeCrop } from '../utils/ocrDiagnostics.ts';
 import { SmartDigitInput } from './SmartDigitInput.tsx';
+import { OcrDiagnosticsBoundary, OcrDiagnosticsPanel } from './OcrDiagnosticsPanel.tsx';
 import {
   Camera,
   RotateCw,
@@ -28,7 +35,7 @@ import {
   Sparkles,
   Scan,
   ShoppingBag,
-  SlidersHorizontal,
+  Microscope,
   Upload,
   Play
 } from 'lucide-react';
@@ -39,19 +46,19 @@ interface WebcamModalProps {
   onConfirmProduct: (product: Product, variant: ProductVariant, code: string) => void;
 }
 
-/** Digits below this confidence are listed for the seller to check. */
-const LOW_DIGIT_CONFIDENCE = 70;
 const CAMERA_CHOICE_KEY = 'storepos_ocr_camera';
+const DIAGNOSTICS_KEY = 'storepos_ocr_diagnostics';
 const EMPTY_DIGITS = ['', '', '', '', ''];
+const NO_FLAGS = [false, false, false, false, false];
 
-function readCameraChoice(): string {
-  try { return globalThis.localStorage?.getItem(CAMERA_CHOICE_KEY) || ''; } catch { return ''; }
+function readSetting(key: string): string {
+  try { return globalThis.localStorage?.getItem(key) || ''; } catch { return ''; }
 }
 
-function saveCameraChoice(deviceId: string): void {
+function saveSetting(key: string, value: string): void {
   try {
-    if (deviceId) globalThis.localStorage?.setItem(CAMERA_CHOICE_KEY, deviceId);
-    else globalThis.localStorage?.removeItem(CAMERA_CHOICE_KEY);
+    if (value) globalThis.localStorage?.setItem(key, value);
+    else globalThis.localStorage?.removeItem(key);
   } catch {}
 }
 
@@ -82,6 +89,8 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const codeCropRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -95,9 +104,14 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
   const [cameraNotice, setCameraNotice] = useState<string>('');
   const [isRecognizing, setIsRecognizing] = useState<boolean>(false);
   const [ocrResult, setOcrResult] = useState<OcrResult | null>(null);
+  const [region, setRegion] = useState<RegionImage | null>(null);
+  const [frameInfo, setFrameInfo] = useState<{ canvas: HTMLCanvasElement; roi: BoundingBox } | null>(null);
+  const [source, setSource] = useState<string>('');
+  const [roundTripMs, setRoundTripMs] = useState<number | null>(null);
 
-  // 5 editable digits ('' = not recognised yet, the seller types it)
+  // 5 editable digits ('' = not recognised, the seller types it) and the ones to check
   const [digitInputs, setDigitInputs] = useState<string[]>(EMPTY_DIGITS);
+  const [flagged, setFlagged] = useState<boolean[]>(NO_FLAGS);
 
   // Matched product lookup
   const [matchedItem, setMatchedItem] = useState<{
@@ -109,8 +123,10 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
   // Only the answer for the code currently in the boxes may be shown (older lookups are dropped).
   const latestLookupRef = useRef<string>('');
 
-  // Toggle binarized threshold preview
-  const [showThresholdPreview, setShowThresholdPreview] = useState<boolean>(false);
+  // Diagnostics panel (remembered on this computer) and test samples
+  const [showDiagnostics, setShowDiagnostics] = useState<boolean>(() => readSetting(DIAGNOSTICS_KEY) === '1');
+  const [expectedCode, setExpectedCode] = useState<string>('');
+  const [saveNotice, setSaveNotice] = useState<string>('');
 
   // A video element that (re)appears gets the running stream.
   const setVideoElement = useCallback((el: HTMLVideoElement | null) => {
@@ -127,13 +143,20 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
       return;
     }
     setOcrResult(null);
+    setRegion(null);
+    setFrameInfo(null);
     setDigitInputs(EMPTY_DIGITS);
+    setFlagged(NO_FLAGS);
     setMatchedItem(null);
     setLookupError('');
     setCameraNotice('');
+    setSaveNotice('');
+    setRoundTripMs(null);
     latestLookupRef.current = '';
-    setRequestedDeviceId(readCameraChoice());
+    setRequestedDeviceId(readSetting(CAMERA_CHOICE_KEY));
     setCameraSession(++sessionCounterRef.current);
+    // Load the model on the OCR thread now, so the first recognition does not wait for it.
+    invokeIpc('ocr:isModelReady').catch(() => {});
   }, [isOpen]);
 
   // Open the camera while the dialog is open; stop it on close, on camera change or on retry.
@@ -156,7 +179,8 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
         setCameraError('ამ კომპიუტერზე კამერა მიუწვდომელია. შეიყვანეთ კოდი ხელით ან გამოიყენეთ შტრიხკოდის სკანერი.');
         return;
       }
-      const video: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 } };
+      // Full HD when the camera has it: more pixels per pen stroke.
+      const video: MediaTrackConstraints = { width: { ideal: 1920 }, height: { ideal: 1080 } };
       if (requestedDeviceId) video.deviceId = { exact: requestedDeviceId };
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
@@ -201,28 +225,53 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     };
   }, [isOpen, requestedDeviceId, cameraSession]);
 
+  // The read code area under the digit cells.
+  useEffect(() => {
+    if (codeCropRef.current && region && ocrResult && ocrResult.digits.length) drawCodeCrop(codeCropRef.current, region, ocrResult, 56);
+  }, [region, ocrResult]);
+
   const chooseCamera = (deviceId: string) => {
-    saveCameraChoice(deviceId);
+    saveSetting(CAMERA_CHOICE_KEY, deviceId);
     setActiveDeviceId(deviceId);
     setRequestedDeviceId(deviceId);
   };
 
   const retryCamera = () => setCameraSession(++sessionCounterRef.current);
 
-  // Process canvas through offline ONNX OCR pipeline
-  const processCanvasImage = async (canvas: HTMLCanvasElement, roi: BoundingBox) => {
+  const toggleDiagnostics = () => {
+    const next = !showDiagnostics;
+    setShowDiagnostics(next);
+    saveSetting(DIAGNOSTICS_KEY, next ? '1' : '');
+  };
+
+  // Recognise `roi` of the canvas through the offline pipeline.
+  const processCanvasImage = async (canvas: HTMLCanvasElement, roi: BoundingBox, label: string) => {
     try {
       setIsRecognizing(true);
       setLookupError('');
       setMatchedItem(null);
       setCameraNotice('');
-
-      const result = await recognize5DigitsFromCanvas(canvas, roi);
+      setSaveNotice('');
+      const t0 = performance.now();
+      const reg = readRegion(canvas, roi);
+      const result = await recognizeRegion(reg, showDiagnostics);
+      setRoundTripMs(Math.round(performance.now() - t0));
       setOcrResult(result);
+      setRegion(reg);
+      setFrameInfo({ canvas, roi });
+      setSource(label);
 
-      // Unrecognised positions stay empty for the seller; a digit is never invented.
+      if (result.status === 'rejected') {
+        latestLookupRef.current = '';
+        setDigitInputs(EMPTY_DIGITS);
+        setFlagged(NO_FLAGS);
+        setLookupError(`კოდი ვერ ამოიცნო: ${result.message || ''} კოდის შეყვანა ხელითაც შეგიძლიათ.`);
+        return;
+      }
+      // Unreadable positions stay empty for the seller; a digit is never invented.
       const digitsArr = EMPTY_DIGITS.map((_, i) => (/^\d$/.test(result.digits[i]?.digit || '') ? result.digits[i].digit : ''));
       setDigitInputs(digitsArr);
+      setFlagged(EMPTY_DIGITS.map((_, i) => !!result.digits[i] && (result.digits[i].doubtful || !result.digits[i].digit)));
 
       if (digitsArr.every((d) => d !== '')) {
         await checkProductLookup(digitsArr.join(''));
@@ -238,7 +287,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     }
   };
 
-  // Capture frame from active video stream
+  // Capture frame from active video stream: exactly the part inside the green frame.
   const captureAndRecognize = async () => {
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
@@ -253,24 +302,17 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Central ROI: 65% width, 28% height
-    const roiWidth = Math.floor(canvas.width * 0.65);
-    const roiHeight = Math.floor(canvas.height * 0.28);
-    const roiX = Math.floor((canvas.width - roiWidth) / 2);
-    const roiY = Math.floor((canvas.height - roiHeight) / 2);
-
-    await processCanvasImage(canvas, {
-      x: roiX,
-      y: roiY,
-      width: roiWidth,
-      height: roiHeight,
-    });
+    // The video element fills the preview inside its border; the frame is positioned in the same
+    // box, so both are measured from it.
+    const box = video.getBoundingClientRect();
+    const roi = frameInVideo({ width: box.width, height: box.height }, { width: video.videoWidth, height: video.videoHeight });
+    const label = devices.find((d) => d.deviceId === activeDeviceId)?.label || 'კამერა';
+    await processCanvasImage(canvas, roi, `${label}, ${video.videoWidth}×${video.videoHeight}`);
   };
 
-  // Test mode: render realistic sample 5 digits to verify real ONNX inference without physical webcam
+  // Test mode: printed sample code to check the model without a camera.
   const runSampleOcrTest = async () => {
     if (!canvasRef.current) return;
     const canvas = canvasRef.current;
@@ -279,7 +321,6 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Background
     ctx.fillStyle = '#f1f5f9';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -288,14 +329,9 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     const roiX = (canvas.width - roiWidth) / 2;
     const roiY = (canvas.height - roiHeight) / 2;
 
-    // White paper note in the center
     ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 2;
     ctx.fillRect(roiX, roiY, roiWidth, roiHeight);
-    ctx.strokeRect(roiX, roiY, roiWidth, roiHeight);
 
-    // Draw 5 distinct handwritten-style digits (e.g. 1 0 0 0 1)
     ctx.fillStyle = '#0f172a';
     ctx.font = 'bold 58px monospace';
     ctx.textBaseline = 'middle';
@@ -307,43 +343,78 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
       ctx.fillText(sample[i], roiX + i * slotW + slotW / 2, roiY + roiHeight / 2);
     }
 
-    await processCanvasImage(canvas, {
-      x: roiX,
-      y: roiY,
-      width: roiWidth,
-      height: roiHeight,
-    });
+    await processCanvasImage(canvas, { x: roiX, y: roiY, width: roiWidth, height: roiHeight }, 'სატესტო ნიმუში 10001');
   };
 
-  // Upload an image file to test OCR on real user photos/scans
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // A photo of a handwritten code (JPG/PNG), through exactly the same pipeline.
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file || !canvasRef.current) return;
+    const problem = await checkPhotoFile(file);
+    if (problem) {
+      setLookupError(`ფოტოს გახსნა ვერ მოხერხდა: ${problem}`);
+      return;
+    }
+    let bitmap: ImageBitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      setLookupError('ფოტოს გახსნა ვერ მოხერხდა: ფაილი დაზიანებულია');
+      return;
+    }
+    if (bitmap.width * bitmap.height > PHOTO_MAX_PIXELS) {
+      bitmap.close();
+      setLookupError('ფოტოს გახსნა ვერ მოხერხდა: 40 მეგაპიქსელზე დიდია');
+      return;
+    }
+    const canvas = canvasRef.current;
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    await processCanvasImage(canvas, { x: 0, y: 0, width: canvas.width, height: canvas.height }, `ფოტო: ${file.name}`);
+  };
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = async () => {
-        const canvas = canvasRef.current!;
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0);
-
-        // Treat whole image or center 80% as ROI
-        await processCanvasImage(canvas, {
-          x: Math.floor(img.width * 0.1),
-          y: Math.floor(img.height * 0.1),
-          width: Math.floor(img.width * 0.8),
-          height: Math.floor(img.height * 0.8),
-        });
+  const saveSample = async (changeFolder: boolean) => {
+    if (!ocrResult || !region) return;
+    try {
+      setSaveNotice('ინახება...');
+      const composite = compositeCanvas(ocrResult, region, frameInfo, `StorePOS OCR — ${new Date().toLocaleString('ka-GE')} — ${source}`);
+      const { diagnostics, ...summary } = ocrResult;
+      const report = {
+        savedAt: new Date().toISOString(),
+        source,
+        expectedCode,
+        enteredCode: digitInputs.join(''),
+        region: { width: region.width, height: region.height },
+        frame: frameInfo ? { width: frameInfo.canvas.width, height: frameInfo.canvas.height, roi: frameInfo.roi } : null,
+        roundTripMs,
+        result: summary,
+        diagnostics: diagnostics ? {
+          thresholds: diagnostics.thresholds,
+          strokeWidth: diagnostics.strokeWidth,
+          digitHeight: diagnostics.digitHeight,
+          ruledLinePixels: diagnostics.ruledLinePixels,
+          codeBox: diagnostics.codeBox,
+          components: diagnostics.components,
+        } : null,
       };
-      img.onerror = () => setLookupError('ფოტოს გახსნა ვერ მოხერხდა');
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+      const saved = await invokeIpc<{ folder: string; files: string[] } | null>('ocr:saveSample', {
+        regionPng: await regionPng(region),
+        diagnosticPng: await canvasPng(composite),
+        report: JSON.stringify(report, null, 2),
+        expectedCode,
+        changeFolder,
+      });
+      setSaveNotice(saved ? `შენახულია: ${saved.files[0]}` : 'შენახვა გაუქმდა');
+    } catch (err: any) {
+      setSaveNotice(`შენახვა ვერ მოხერხდა: ${err?.message || ''}`);
+    }
   };
 
   const checkProductLookup = async (code: string) => {
@@ -371,10 +442,12 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
   };
 
   const currentCode = digitInputs.join('');
-  const doubtfulDigits = (ocrResult?.digits || [])
+  // Digits still marked: doubtful or unreadable, and not edited by the seller since.
+  const toCheck = (ocrResult?.digits || [])
     .map((d, i) => ({ position: i + 1, digit: d.digit, confidence: d.confidence }))
-    .filter((d) => d.digit !== '' && d.confidence < LOW_DIGIT_CONFIDENCE);
+    .filter((d) => flagged[d.position - 1]);
   const canConfirm = !!matchedItem && digitInputs.every((d) => d !== '') && matchedItem.code_used === currentCode;
+  const showsResult = !!ocrResult && ocrResult.status !== 'rejected';
 
   if (!isOpen) return null;
 
@@ -387,7 +460,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="image/png,image/jpeg"
           className="hidden"
           onChange={handleFileUpload}
         />
@@ -400,7 +473,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
             </div>
             <div>
               <h3 className="text-sm sm:text-base font-bold text-white">ვებკამერით 5-ნიშნა კოდის ამოცნობა (Offline ONNX OCR)</h3>
-              <p className="text-[10px] sm:text-[11px] text-slate-400">მიიტანეთ ხელით დაწერილი 5-ნიშნა კოდი მწვანე ჩარჩოსთან</p>
+              <p className="text-[10px] sm:text-[11px] text-slate-400">მიიტანეთ ხელით დაწერილი 5-ნიშნა კოდი მწვანე ჩარჩოში, ნებისმიერ ადგილას</p>
             </div>
           </div>
 
@@ -439,21 +512,22 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
             <div className="flex items-center space-x-2 shrink-0">
               <button
                 type="button"
-                onClick={() => setShowThresholdPreview(!showThresholdPreview)}
+                onClick={toggleDiagnostics}
+                aria-pressed={showDiagnostics}
                 className={`px-2.5 py-1 rounded-lg border text-xs font-semibold flex items-center space-x-1 cursor-pointer transition-colors ${
-                  showThresholdPreview
-                    ? 'bg-emerald-950/60 text-emerald-300 border-emerald-700'
+                  showDiagnostics
+                    ? 'bg-sky-950/60 text-sky-300 border-sky-700'
                     : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
                 }`}
               >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                <span>კონტრასტის ხედი</span>
+                <Microscope className="w-3.5 h-3.5" />
+                <span>დიაგნოსტიკა</span>
               </button>
             </div>
           </div>
 
-          {/* Video / ROI Viewport */}
-          <div className="relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center h-44 sm:h-56 md:h-60 shadow-inner shrink-0">
+          {/* Video / frame viewport */}
+          <div ref={previewRef} className="relative bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 flex items-center justify-center h-44 sm:h-56 md:h-60 shadow-inner shrink-0">
             {cameraError ? (
               <div className="text-center p-4 sm:p-6 text-slate-400 max-w-md">
                 <AlertCircle className="w-8 h-8 sm:w-10 sm:h-10 text-amber-500 mx-auto mb-2" />
@@ -498,48 +572,28 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                   className="w-full h-full object-cover"
                 />
 
-                {/* ROI Guideline Overlay with 5 slots */}
-                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                  <div className="w-[65%] h-[40%] border-2 border-emerald-400/80 rounded-2xl shadow-[0_0_20px_rgba(16,185,129,0.3)] bg-emerald-500/5 backdrop-blur-[0.5px] flex flex-col justify-between p-2">
-                    <div className="flex justify-between items-center text-[10px] text-emerald-300 font-mono font-bold uppercase tracking-wider">
-                      <span>ხელნაწერი 5 ციფრი</span>
-                      <span className="flex items-center space-x-1">
-                        <Scan className="w-3 h-3 animate-pulse" />
-                        <span>ONNX MODEL</span>
-                      </span>
-                    </div>
-
-                    {/* 5 digit slot boxes */}
-                    <div className="grid grid-cols-5 gap-1.5 h-12 sm:h-16">
-                      {[1, 2, 3, 4, 5].map((slot) => (
-                        <div
-                          key={slot}
-                          className="border border-dashed border-emerald-400/50 rounded-lg flex items-center justify-center text-xs font-mono text-emerald-400/70 bg-slate-950/20"
-                        >
-                          #{slot}
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="text-[9px] text-slate-400 text-center">
-                      მოათავსეთ კოდი ჩარჩოს შუაში
-                    </div>
+                {/* The frame is exactly the area recognised (see utils/cameraRoi.ts). */}
+                <div
+                  data-testid="ocr-frame"
+                  className="absolute pointer-events-none border-2 border-emerald-400/90 rounded-xl shadow-[0_0_20px_rgba(16,185,129,0.3)] bg-emerald-500/5 flex flex-col justify-between p-1.5"
+                  style={{
+                    left: `${OCR_FRAME.left * 100}%`,
+                    top: `${OCR_FRAME.top * 100}%`,
+                    width: `${OCR_FRAME.width * 100}%`,
+                    height: `${OCR_FRAME.height * 100}%`,
+                  }}
+                >
+                  <div className="flex justify-between items-center text-[10px] text-emerald-300 font-mono font-bold uppercase tracking-wider">
+                    <span className="bg-slate-950/50 rounded px-1">ხელნაწერი 5-ნიშნა კოდი</span>
+                    <span className="flex items-center space-x-1 bg-slate-950/50 rounded px-1">
+                      <Scan className="w-3 h-3 animate-pulse" />
+                      <span>OFFLINE</span>
+                    </span>
+                  </div>
+                  <div className="text-[9px] text-slate-200 text-center">
+                    <span className="bg-slate-950/50 rounded px-1">ციფრები ერთ ხაზზე, ჩარჩოს ნებისმიერ ადგილას</span>
                   </div>
                 </div>
-
-                {/* Optional Binarized Otsu Preview thumbnail in corner */}
-                {showThresholdPreview && ocrResult?.processedImageUri && (
-                  <div className="absolute bottom-2 right-2 border-2 border-emerald-500 rounded-lg overflow-hidden shadow-lg bg-black">
-                    <img
-                      src={ocrResult.processedImageUri}
-                      alt="Binarized Threshold"
-                      className="w-28 sm:w-32 h-12 sm:h-14 object-contain"
-                    />
-                    <div className="text-[9px] text-center bg-emerald-950/80 text-emerald-300 font-mono">
-                      Otsu Binarized
-                    </div>
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -584,9 +638,9 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               <span className="text-[11px] sm:text-xs font-bold text-slate-300 uppercase tracking-wider">
                 ამოცნობილი 5-ნიშნა კოდი (შესაძლებელია ჩასწორება):
               </span>
-              {ocrResult && (
+              {showsResult && ocrResult && (
                 <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border tabular-nums ${
-                  ocrResult.confidence >= 75 && doubtfulDigits.length === 0
+                  ocrResult.status === 'ok' && toCheck.length === 0
                     ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
                     : 'bg-amber-950/60 text-amber-400 border-amber-800'
                 }`}>
@@ -595,14 +649,18 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               )}
             </div>
 
-            {/* Low confidence advisory alert: per digit, so one doubtful digit is never hidden by an average */}
-            {ocrResult && (doubtfulDigits.length > 0 || ocrResult.confidence < LOW_DIGIT_CONFIDENCE) && (
+            {showsResult && ocrResult && ocrResult.digits.length > 0 && region && (
+              <div className="flex justify-center">
+                <canvas ref={codeCropRef} aria-label="ამოკითხული კოდის არე" className="max-w-full h-14 rounded border border-slate-700 bg-white" />
+              </div>
+            )}
+
+            {/* Doubtful digits, per position: one unsure digit is never hidden by a good average */}
+            {toCheck.length > 0 && (
               <div className="text-[10px] sm:text-[11px] text-amber-300 bg-amber-950/40 border border-amber-800/50 px-2.5 py-1 rounded-lg flex items-center space-x-2">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
                 <span>
-                  {doubtfulDigits.length > 0
-                    ? `საეჭვო ციფრები: ${doubtfulDigits.map((d) => `#${d.position} („${d.digit}“, ${d.confidence}%)`).join(', ')}. გადაამოწმეთ და საჭიროების შემთხვევაში ხელით შეასწორეთ.`
-                    : `ამოცნობის სანდოობა დაბალია (<${LOW_DIGIT_CONFIDENCE}%). გთხოვთ გადაამოწმოთ და საჭიროების შემთხვევაში ხელით შეასწოროთ 5-ნიშნა კოდი.`}
+                  {`შეამოწმეთ მონიშნული ციფრები: ${toCheck.map((d) => (d.digit ? `#${d.position} („${d.digit}“, ${d.confidence}%)` : `#${d.position} (ვერ ამოიცნო)`)).join(', ')}. შეადარეთ ფურცელს და საჭიროებისას შეასწორეთ.`}
                 </span>
               </div>
             )}
@@ -612,9 +670,12 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 length={5}
                 value={currentCode}
                 slotValues={digitInputs}
+                flagged={flagged}
                 autoFocus={true}
                 onChange={(code, slots) => {
                   const next = slots ? [...slots] : code.padEnd(5, ' ').split('').map(c => c.trim());
+                  // A digit the seller typed is no longer the OCR's doubt.
+                  setFlagged((prev) => prev.map((f, i) => f && next[i] === digitInputs[i]));
                   setDigitInputs(next);
                   if (next.every((d) => d !== '')) {
                     checkProductLookup(next.join(''));
@@ -628,7 +689,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
             </div>
 
             {lookupError && (
-              <div className="text-xs text-amber-400 flex items-center justify-center space-x-1.5 pt-0.5">
+              <div className="text-xs text-amber-400 flex items-center justify-center space-x-1.5 pt-0.5 text-center">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{lookupError}</span>
               </div>
@@ -637,36 +698,62 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
 
           {/* Matched Product Preview & Confirmation Button */}
           {canConfirm && matchedItem && (
-            <div className="bg-emerald-950/30 border border-emerald-800/60 p-3 sm:p-4 rounded-2xl flex items-center justify-between animate-in fade-in slide-in-from-bottom-2 gap-2">
-              <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-slate-950 border border-emerald-700/50 flex items-center justify-center text-emerald-400 shrink-0">
-                  <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div className="bg-emerald-950/30 border border-emerald-800/60 p-3 sm:p-4 rounded-2xl space-y-2 animate-in fade-in slide-in-from-bottom-2">
+              {toCheck.length > 0 && (
+                <div className="text-[11px] text-amber-300 flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>კოდი შეადარეთ ფურცელს: მონიშნული ციფრები საეჭვოა. პროდუქტის არსებობა ამოცნობის სისწორეს არ ადასტურებს.</span>
                 </div>
-                <div className="min-w-0">
-                  <div className="text-xs sm:text-sm font-extrabold text-white truncate">{matchedItem.product.name}</div>
-                  <div className="text-[11px] sm:text-xs text-slate-300 truncate">
-                    ვარიანტი: <span className="text-emerald-300 font-bold">{matchedItem.variant.variant_name}</span> &bull;
-                    მარაგი: <span className="font-bold text-white tabular-nums">{matchedItem.variant.stock_quantity} ც</span>
+              )}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-slate-950 border border-emerald-700/50 flex items-center justify-center text-emerald-400 shrink-0">
+                    <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
                   </div>
-                  <div className="text-[11px] sm:text-xs font-extrabold text-emerald-400 mt-0.5 tabular-nums">
-                    ფასი: {formatTetri(matchedItem.variant.price_override_tetri ?? matchedItem.product.base_price_tetri)}
+                  <div className="min-w-0">
+                    <div className="text-xs sm:text-sm font-extrabold text-white truncate">{matchedItem.product.name}</div>
+                    <div className="text-[11px] sm:text-xs text-slate-300 truncate">
+                      ვარიანტი: <span className="text-emerald-300 font-bold">{matchedItem.variant.variant_name}</span> &bull;
+                      მარაგი: <span className="font-bold text-white tabular-nums">{matchedItem.variant.stock_quantity} ც</span>
+                    </div>
+                    <div className="text-[11px] sm:text-xs font-extrabold text-emerald-400 mt-0.5 tabular-nums">
+                      ფასი: {formatTetri(matchedItem.variant.price_override_tetri ?? matchedItem.product.base_price_tetri)}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Strict Requirement: confirmation by seller required */}
-              <button
-                type="button"
-                onClick={() => {
-                  onConfirmProduct(matchedItem.product, matchedItem.variant, matchedItem.code_used);
-                  onClose();
-                }}
-                className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-900/40 transition-colors cursor-pointer flex items-center space-x-1.5 shrink-0"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>დადასტურება</span>
-              </button>
+                {/* Strict Requirement: confirmation by seller required */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    onConfirmProduct(matchedItem.product, matchedItem.variant, matchedItem.code_used);
+                    onClose();
+                  }}
+                  className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-900/40 transition-colors cursor-pointer flex items-center space-x-1.5 shrink-0"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>დადასტურება</span>
+                </button>
+              </div>
             </div>
+          )}
+
+          {showDiagnostics && (
+            <OcrDiagnosticsBoundary key={ocrResult ? ocrResult.timings.totalMs + ':' + ocrResult.code : 'none'}>
+            <OcrDiagnosticsPanel
+              result={ocrResult}
+              region={region}
+              frame={frameInfo}
+              source={source}
+              roundTripMs={roundTripMs}
+              expectedCode={expectedCode}
+              onExpectedCode={setExpectedCode}
+              onImport={() => fileInputRef.current?.click()}
+              onSave={saveSample}
+              saveNotice={saveNotice}
+              busy={isRecognizing}
+            />
+            </OcrDiagnosticsBoundary>
           )}
 
         </div>
