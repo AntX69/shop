@@ -15,6 +15,14 @@ export class Cdp {
     this.nextId = 0;
     this.pending = new Map();
     this.listeners = new Map();
+    this.closed = false;
+    // If the app window goes away (closed by hand, crashed), fail loudly instead of leaving
+    // promises that never settle (Node would then exit silently with code 0).
+    ws.addEventListener('close', () => {
+      this.closed = true;
+      for (const { reject } of this.pending.values()) reject(new Error('CDP connection closed: the StorePOS window was closed or crashed'));
+      this.pending.clear();
+    });
     ws.addEventListener('message', (ev) => {
       const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : Buffer.from(ev.data).toString('utf8'));
       if (msg.id && this.pending.has(msg.id)) {
@@ -38,6 +46,7 @@ export class Cdp {
   }
 
   send(method, params = {}) {
+    if (this.closed) return Promise.reject(new Error('CDP connection closed: the StorePOS window was closed or crashed'));
     const id = ++this.nextId;
     this.ws.send(JSON.stringify({ id, method, params }));
     return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
@@ -97,7 +106,10 @@ export class Cdp {
 /** Starts StorePOS.exe with an isolated profile and a debugging port; returns process + page client. */
 export async function launchApp(exe, userDataDir, port, extraArgs = []) {
   fs.mkdirSync(userDataDir, { recursive: true });
-  const proc = spawn(exe, [`--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`, ...extraArgs], {
+  // Keep painting and timers running when the test window is covered by another window, so
+  // timing measurements do not depend on how windows happen to be stacked on the screen.
+  const steady = ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling'];
+  const proc = spawn(exe, [`--user-data-dir=${userDataDir}`, `--remote-debugging-port=${port}`, ...steady, ...extraArgs], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, STOREPOS_NO_MAXIMIZE: '1', ELECTRON_ENABLE_LOGGING: '1' },
   });
@@ -120,7 +132,32 @@ export async function launchApp(exe, userDataDir, port, extraArgs = []) {
   const cdp = await Cdp.connect(target.webSocketDebuggerUrl);
   await cdp.send('Runtime.enable');
   await cdp.send('Page.enable');
-  return { proc, cdp, log, startedMs: Date.now() - t0, pageUrl: target.url };
+  // The page target can exist before the preload has exposed the bridge.
+  await cdp.waitFor(`typeof window.electronAPI?.invoke === 'function' && document.readyState !== 'loading'`, 20000, 'preload bridge');
+  const startedMs = Date.now() - t0;
+  const app = { proc, cdp, log, startedMs, pageUrl: target.url };
+  if (process.env.STOREPOS_E2E_VISIBLE !== '1') app.window = moveOffscreen(app);
+  return app;
+}
+
+/**
+ * Moves the test window beyond the right edge of all monitors (Win32 MoveWindow on this test
+ * process's own window), so long tests do not pop up in front of the person using the
+ * computer. Painting continues thanks to the launch flags.
+ */
+export function moveOffscreen(app) {
+  const ps = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    'Add-Type -Namespace StorePosTest -Name Win -MemberDefinition \'[DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool r);\'',
+    '$v = [System.Windows.Forms.SystemInformation]::VirtualScreen',
+    `for ($i = 0; $i -lt 40; $i++) { $h = (Get-Process -Id ${app.proc.pid} -ErrorAction SilentlyContinue).MainWindowHandle; if ($h -and $h -ne 0) { break }; Start-Sleep -Milliseconds 250 }`,
+    'if (-not $h -or $h -eq 0) { "no-window" } else { [void][StorePosTest.Win]::MoveWindow($h, $v.Right + 400, $v.Top, 1440, 900, $true); "moved to x=$($v.Right + 400)" }',
+  ].join('; ');
+  try {
+    return execSync(`powershell.exe -NoProfile -NonInteractive -Command "${ps.replace(/"/g, '\\"')}"`, { encoding: 'utf8', timeout: 60000 }).trim();
+  } catch (err) {
+    return `move failed: ${String(err?.message || err).slice(0, 200)}`;
+  }
 }
 
 /** Closes the window the way a user does and waits for a clean exit. */
