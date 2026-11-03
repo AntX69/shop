@@ -1,54 +1,67 @@
-# Test Report — StorePOS V1.0
+# Test Report: StorePOS 1.0.0-rc.2
 
-გარემო: Windows 11 Pro 10.0.26200 x64; Node 26.13 (ტესტები), Electron 45.1.0 (პროგრამა); კოდი `c825b1b`.
+გარემო: Windows 11 Pro 10.0.26200 x64. Node 26.13 (ტესტების გაშვება), Electron 45.1.0 (პროგრამა). კოდი: `dde11c7` (ინსტალერი), ტესტები `62742e6`+. ყველა E2E გაეშვა **საბოლოო ინსტალერის** ბინარზე (`release/win-unpacked`, იგივე ფაილები, რაც ინსტალერშია).
 
 ## 1. როგორ გავუშვა
 
 ```bash
 npm ci
-npm test                      # unit + integration (Node test runner, tsx)
 npm run lint                  # TypeScript
-npm run dist:win              # ინსტალერი → release/StorePOS-Setup-1.0.0.exe
-node e2e/desktop-acceptance.mjs --exe "<StorePOS.exe>" --data "<ცარიელი საქაღალდე>" --out "<ანგარიშის საქაღალდე>"
-node e2e/load-test.mjs        --exe "<StorePOS.exe>" --data "<ცარიელი საქაღალდე>" --out "<ანგარიშის საქაღალდე>"
+npm test                      # unit + integration (Node test runner, tsx)
+npm run dist:win              # release/StorePOS-Setup-1.0.0-rc.2.exe
+node e2e/desktop-acceptance.mjs  --exe "<StorePOS.exe>" --data "<ცარიელი საქაღალდე>" --out "<ანგარიში>"
+node e2e/hardware-readiness.mjs  --exe "<StorePOS.exe>" --data "<ცარიელი>" --out "<ანგარიში>"
+node e2e/restart-test.mjs        --exe "<StorePOS.exe>" --data "<ცარიელი>" --out "<ანგარიში>" --cycles 25
+node e2e/dr-restore-test.mjs     --exe "<StorePOS.exe>" --data "<ცარიელი>" --out "<ანგარიში>"
+node e2e/soak-test.mjs           --exe "<StorePOS.exe>" --data "<ცარიელი>" --out "<ანგარიში>" --minutes 120
+node e2e/load-test.mjs           --exe "<StorePOS.exe>" --data "<ცარიელი>" --out "<ანგარიში>"
+node e2e/installer-upgrade-test.mjs --old <StorePOS-Test-Setup-1.0.0.exe> --new <StorePOS-Test-Setup-1.0.0-rc.2.exe> --dir <...\StorePOS-Test> --data <ცარიელი> --out <ანგარიში>
 ```
 
-E2E სკრიპტები **ყოველთვის** იყენებენ ცალკე პროფილს (`--user-data-dir`) და არასდროს ეხებიან რეალურ `%APPDATA%\StorePOS`-ს; პროფილი, რომელშიც უკვე არის ბაზა, უარყოფილია.
+წესები:
+- E2E სკრიპტები **ყოველთვის** ცალკე პროფილს იყენებს (`--user-data-dir`) და რეალურ `%APPDATA%\StorePOS`-ს არ ეხება. პროფილი, რომელშიც უკვე არის ბაზა, უარყოფილია.
+- სატესტო ფანჯრები ეკრანის კიდის მიღმა გადადის და იქ ხატავს. ხილვადი ფანჯრებისთვის: `STOREPOS_E2E_VISIBLE=1`.
+- ინსტალერის ტესტი მხოლოდ **სატესტო იდენტობით** (`StorePOS-Test`, ცალკე appId/საქაღალდე/რეესტრი; build-ის ბრძანება სკრიპტის თავშია). სატესტო ინსტალერები ინსტალაციის საქაღალდის **გარეთ** უნდა იდოს (electron-builder ეძებს ყველა პროცესს, რომლის მისამართი ინსტალაციის საქაღალდის სახელით იწყება).
 
-## 2. შედეგები
+## 2. შედეგები (საბოლოო build)
 
-| ნაკრები | ფაილი | შედეგი |
-|---|---|---|
-| Unit + integration | `src/**/*.test.ts` (13 ფაილი) | **96/96** |
-| ფინანსები და FIFO | `src/main/domain/v1Accounting.test.ts` | 20/20 |
-| უსაფრთხოება (IPC-ის გავლით) | `src/main/ipc/security.test.ts` | 6/6 |
-| Backup/Restore/Reset | `src/main/domain/v1Backup.test.ts` | 7/7 |
-| პროდუქტები/ფოტოები/კატალოგი | `src/main/domain/v1Products.test.ts` | 6/6 |
-| OCR | `src/main/domain/ocrService.test.ts` | 6/6 |
-| M8/M11/M12 ტესტები (Google AI) | `productionReliability`, `m11Regression`, `m12DebtAndAccounting`, `realStoreSimulation`, `storeScenarios`, `SmartDigitInput` … | ყველა გადის Windows-ზე |
-| Desktop acceptance (დაყენებული პროგრამა) | `e2e/desktop-acceptance.mjs` | **28/28** |
-| M12 → V1.0 განახლება (დაყენებული პროგრამა) | `e2e/upgrade/*` | **15/15** |
-| დატვირთვა და შეჯერება (დაყენებული პროგრამა) | `e2e/load-test.mjs` | **16/16** |
-| თავდაპირველი აუდიტი F1–F13 | `e2e/audit/verify-findings.mts` | **0/13 მეორდება** |
-
-M12-ის კოდზე Windows-ზე იყო 44/52; გამოსწორდა: OCR ×4 (`buf.buffer`), Restore `EBUSY`, Linux-ის `/tmp` გზა, reset ტესტი (არასწორ ბაზას აკოპირებდა), `localStorage` Node-ში.
-
-## 3. ინსტალერის შემოწმება (Windows 11)
-
-| ნაბიჯი | შედეგი |
+| ნაკრები | შედეგი |
 |---|---|
-| Build, ინსტალერის შიგთავსი | ✅ `app.asar` 17.8 MB: UI, main/preload, onnxruntime-web (Node + SIMD WASM); dev/Cloud პაკეტები არ არის |
-| ჩუმი ინსტალაცია (`/S /D=`) | ✅ 15 წმ; exe, resources, მოდელი, uninstaller |
-| Desktop და Start Menu shortcut | ✅ სწორ exe-ზე |
-| Windows-ის პროგრამების სია | ✅ „StorePOS 1.0.0“ |
-| გახსნა, SQLite, პირველი Owner, პროდუქტი, გაყიდვა | ✅ (acceptance) |
-| დახურვა, ხელახლა გახსნა, მონაცემები | ✅ |
-| ზემოდან ინსტალაცია არსებული მონაცემებით | ✅ 2 პროდუქტი, 4 გაყიდვა, 255.00 ₾ — უცვლელი |
-| ძველი ვერსიის (M12) მონაცემებით გახსნა | ✅ 15/15 |
-| Offline | ✅ 0 ქსელური მოთხოვნა; ინტერნეტზე ნავიგაცია დაბლოკილია |
-| Uninstall | ✅ პროგრამა, shortcut-ები, რეესტრი წაიშალა; მონაცემები დარჩა |
-| Windows 10 | ⏳ არ შემოწმებულა |
+| `npm run lint` | 0 შეცდომა |
+| `npm test` (21 ფაილი) | **129 / 129** |
+| ფინანსები და FIFO (`v1Accounting`) | 20 / 20 |
+| უსაფრთხოება IPC-ის გავლით (`security.test`) | 6 / 6 |
+| Backup/Restore/Reset (`v1Backup` + `v1BackupRisks`) | 7 + 7 |
+| სკანერი (`scannerInput.test`) | 11 / 11 |
+| SmartDigitInput (`digitSlots`) | 10 / 10 |
+| OCR (`ocrService.test`, `offlineOcr.test`) | 9 + 4 |
+| ბაზის გახსნა (`openRetry.test`) / scheduler (`backupScheduler.test`) | 3 + 3 |
+| Desktop acceptance | **28 / 28** |
+| კამერა / OCR / სკანერი რეალურ პროგრამაში | **40 / 40** |
+| გადატვირთვა / ძალით გათიშვა / მეორე instance / ავარია / დაზიანებული და დაკავებული ფაილი | **11 / 11** |
+| Disaster Recovery | **18 / 18** |
+| დატვირთვა და შეჯერება (1500 ვარიანტი) | **16 / 16** |
+| M12 → RC2 მონაცემების განახლება | **15 / 15** |
+| ინსტალერის განახლება 1.0.0 → 1.0.0-rc.2 + Uninstall | **14 / 14** |
+| ძველი აუდიტის 13 სცენარი | **0 / 13 მეორდება** |
+| Soak, 120 წუთი | **12 / 13** (იხ. ქვემოთ) |
 
-## 4. UI (ემულაცია, 8 ეკრანი × 10 კომბინაცია)
+Soak: 10 117 გაყიდვა, 2 001 დაფარვა, 1 361 დაბრუნება, 348 გაცვლა, 30 780 ძებნა, 11 ასლი, 2 ავტომატური ასლი, 19 კამერის ციკლი, 57 ეკრანის რაუნდი. 25 შეჯერება: ყველა სწორი. მე-13 შემოწმება („მოულოდნელი IPC შეცდომა“) ჩავარდა 5 გაცვლის გამო, რომლებიც პროგრამამ **სწორად** უარყო: ახალ ნივთზე მარაგი არ იყო. ტესტი ამას შეცდომად ითვლიდა და შემდეგ შესწორდა. სხვა შეცდომა არ ყოფილა.
 
-1280×720, 1366×768, 1920×1080, 2560×1440 (100%); 1366×768 125%; 1920×1080 125/150/175%; 2560×1440 150/175% — გვერდის ჰორიზონტალური/ვერტიკალური გადავსება არ არის, ჰედერის 8-ვე ჩანართი ჩანს. ეკრანის სურათები: `docs/release/screenshots/`. ხელით არ შემოწმებულა: ფიზიკური მონიტორები, ახალი დიალოგების ყველა ველი.
+## 3. ამ ეტაპზე ტესტებმა იპოვეს (და გასწორდა)
+
+- `restart-test`: ძალით გათიშვისთანავე გახსნისას ერთჯერადი „disk I/O error“ → მარცხი. ახლა დროებითი შეცდომა მეორდება (`dde11c7`).
+- `soak-test`: ავტომატური ასლი ~1–2 წამით აჩერებს სალაროს → ახლა სიჩუმეს ელოდება (`dde11c7`).
+- ტესტების საკუთარი ხარვეზები (არა პროგრამის): PowerShell-ის ფანჯრების დამკვირვებელი, IPC ხიდის ლოდინი, დაფარული ფანჯრის ხატვა, მარაგის უარყოფის კლასიფიკაცია.
+
+## 4. Windows-ის თავსებადობა
+
+| | სტატუსი |
+|---|---|
+| Windows 11 Pro x64 | ✅ ყველა ზემოთ |
+| Windows 10 x64 | ⏳ გარემო არ იყო |
+| 1280×720, 1366×768, 1920×1080, 2560×1440 @100%; 1366×768 @125%; 1920×1080 @125/150/175%; 2560×1440 @150/175% | ✅ ემულაციით (8 ეკრანი, გადავსება არ არის, ჰედერის ყველა ჩანართი ჩანს); ⏳ ფიზიკური მონიტორები |
+| AppData-ს შენარჩუნება განახლებისას და წაშლისას | ✅ |
+| განახლება ძველი ვერსიის თავზე (გაშვებული პროგრამით) | ✅ სატესტო იდენტობით |
+| SHA-256 | ✅ `e5fa50f5…3424c` |
+| SmartScreen | ხელმოუწერელი → „More info → Run anyway“ (INSTALL_AND_BACKUP_KA.md) |

@@ -11,7 +11,7 @@
 
 ```bash
 npm ci                       # ზუსტი dependency-ები lockfile-იდან (Windows-ის native პაკეტების ჩათვლით)
-npm test                     # 96 unit/integration ტესტი
+npm test                     # 129 unit/integration ტესტი
 npm run lint                 # TypeScript (tsc --noEmit)
 npm run dist:win             # vite build + esbuild (main/preload) + electron-builder NSIS
 ```
@@ -41,17 +41,19 @@ React, Vite, Tailwind, Express, TypeScript — მხოლოდ build-ის�
 1. `package.json` → `version` გაზრდა; ბაზის ცვლილება — მხოლოდ **ახალი** მიგრაციით.
 2. `npm ci && npm test && npm run lint`.
 3. `npm run dist:win`.
-4. ინსტალერის შემოწმება (ყოველთვის **იზოლირებული პროფილით** — არასდროს გაუშვა სატესტოდ `StorePOS.exe` `--user-data-dir`-ის გარეშე, თორემ ის რეალურ `%APPDATA%\StorePOS`-ში შექმნის ბაზას):
+4. პროგრამის შემოწმება: ყოველთვის **იზოლირებული პროფილით**. არასდროს გაუშვა სატესტოდ `StorePOS.exe` `--user-data-dir`-ის გარეშე, თორემ ის რეალურ `%APPDATA%\StorePOS`-ში შექმნის ან გახსნის ბაზას. E2E ნაკრებები `release\win-unpacked\StorePOS.exe`-ზე (იგივე ფაილები, რაც ინსტალერშია):
    ```bash
-   StorePOS-Setup-X.Y.Z.exe /S /D=C:\StorePOS-test\app
-   node e2e/desktop-acceptance.mjs --exe C:\StorePOS-test\app\StorePOS.exe --data C:\StorePOS-test\profile --out C:\StorePOS-test\report
-   node e2e/load-test.mjs --exe C:\StorePOS-test\app\StorePOS.exe --data C:\StorePOS-test\load --out C:\StorePOS-test\load-report
+   node e2e/desktop-acceptance.mjs --exe release\win-unpacked\StorePOS.exe --data <ცარიელი> --out <ანგარიში>
+   node e2e/hardware-readiness.mjs --exe ... ; node e2e/restart-test.mjs --exe ... ; node e2e/dr-restore-test.mjs --exe ...
+   node e2e/load-test.mjs --exe ... ; node e2e/soak-test.mjs --exe ... --minutes 120
    ```
-   განახლების ტესტი წინა ვერსიის მონაცემებით: `e2e/upgrade/` (M12-ისთვის მზა სკრიპტი; ახალი ვერსიებისთვის — წინა რელიზის ინსტალერით შექმნილი პროფილი).
-   ბოლოს: `"C:\StorePOS-test\app\Uninstall StorePOS.exe" /S /currentuser`.
-5. SHA-256: `Get-FileHash release\StorePOS-Setup-X.Y.Z.exe`.
-6. განაახლე `docs/release/*` (შედეგები, ჰეში, ცნობილი შეზღუდვები).
-7. Git tag `vX.Y.Z`.
+   სატესტო ფანჯრები ეკრანის მიღმა გადადის, რომ ვინმემ შემთხვევით არ დახუროს. ხილვადისთვის: `STOREPOS_E2E_VISIBLE=1`.
+   M12-ის მონაცემების განახლება: `e2e/upgrade/`.
+5. **ინსტალერის ტესტი იმ კომპიუტერზე, სადაც StorePOS უკვე დაყენებულია** (მაგ. მაღაზიის): მხოლოდ **სატესტო იდენტობით** (`StorePOS-Test`, სხვა appId, საქაღალდე და რეესტრი; ბრძანება: `e2e/installer-upgrade-test.mjs`-ის თავში). ნამდვილი იდენტობის ინსტალერი იმავე appId-ით ჯერ არსებულ ინსტალაციას წაშლის. ის მხოლოდ სუფთა სატესტო კომპიუტერზე ან მაღაზიის რეალური განახლებისთვის გამოიყენე. სატესტო ინსტალერები ინსტალაციის საქაღალდის **გარეთ** შეინახე (electron-builder-ის „გაშვებული პროგრამის“ შემოწმება ყველა პროცესს ეძებს, რომლის მისამართი ინსტალაციის საქაღალდის სახელით იწყება).
+   build mirror-ში (robocopy `/MIR`) სატესტო build-ის საქაღალდე `release/` შიგნით უნდა იყოს, თორემ სინქრონიზაცია წაშლის.
+6. SHA-256: `Get-FileHash release\StorePOS-Setup-X.Y.Z.exe`.
+7. განაახლე `docs/release/*` (შედეგები, ჰეში, ცნობილი შეზღუდვები), `CHANGELOG.md`, `docs/release/RELEASE_CHECKLIST.md`.
+8. Git tag `vX.Y.Z` (მხოლოდ საბოლოო რელიზზე, Owner-ის თანხმობით).
 
 ## 5. Code signing (ჯერ არ არის)
 

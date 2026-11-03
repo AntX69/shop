@@ -58,7 +58,8 @@ const stats = (arr = []) => {
   return { n: s.length, p50: Math.round(s[Math.floor(s.length * 0.5)]), p95: Math.round(s[Math.floor(s.length * 0.95)] ?? s[s.length - 1]), max: Math.round(s[s.length - 1]) };
 };
 let seed = 7;
-const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+// LCG; the high bits are used (the low bits of an LCG repeat with a short period).
+const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor(seed / 65536) % n; };
 const tbilisiDate = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
 
 /** Working set / private bytes of the app's processes (main + its children). */
@@ -293,8 +294,19 @@ async function main() {
     if (cycle % 29 === 0) {
       const s = recentSales.find((x) => x.debt_amount_tetri > 0 && !x.items[0].__returned);
       if (s) {
-        const ok = await softCall('exchange', 'returns:exchange', { original_sale_id: s.id, return_items: [{ sale_item_id: s.items[0].id, quantity: 1 }], new_items: [{ variant_id: variants[rnd(variants.length)].id, quantity: 1 }], payment_method: 'debt', idempotency_key: `soak-exc-${cycle}` }, ST);
-        if (ok) { counters.exchanges++; s.items[0].__returned = true; }
+        const newVariant = variants[rnd(variants.length)];
+        try {
+          await call('exchange', 'returns:exchange', { original_sale_id: s.id, return_items: [{ sale_item_id: s.items[0].id, quantity: 1 }], new_items: [{ variant_id: newVariant.id, quantity: 1 }], payment_method: 'debt', idempotency_key: `soak-exc-${cycle}` }, ST);
+          counters.exchanges++; s.items[0].__returned = true;
+        } catch (err) {
+          if (/მარაგ/.test(err.ipcError || '')) {
+            // correctly refused: the new item is out of stock; refill it like the shop would
+            counters.refused_out_of_stock = (counters.refused_out_of_stock || 0) + 1;
+            await softCall('inventory:restock', 'inventory:restock', { variant_id: newVariant.id, added_quantity: 60, unit_cost_tetri: 500 }, OT);
+          } else {
+            failures.push({ at: new Date().toISOString(), label: 'exchange', error: err.message });
+          }
+        }
       }
     }
     if (cycle % 41 === 0) { await softCall('expense', 'finance:createExpense', { category: 'სხვა', description: `ხარჯი ${cycle}`, amount_tetri: 500 + rnd(3000) }, OT); counters.expenses++; }

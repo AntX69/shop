@@ -1,5 +1,7 @@
 # Security Validation Report — StorePOS V1.0
 
+> RC2 (1.0.0-rc.2): საბოლოო უსაფრთხოებისა და კონფიდენციალურობის მიმოხილვა (offline, backdoor-ები, ჟურნალები, ინსტალერის შიგთავსი, git ისტორიის კვალი): **[SECURITY_PRIVACY_REVIEW.md](SECURITY_PRIVACY_REVIEW.md)**. RC2-ში დამატებით დაიხურა dev-გადამრთველები (`VITE_DEV_SERVER_URL`, `STOREPOS_DEVTOOLS`, `SQLITE_SYNCHRONOUS`).
+
 კოდი: `c825b1b`. ტესტები: `src/main/ipc/security.test.ts` (6 სცენარი რეალური IPC dispatcher-ით), `e2e/desktop-acceptance.mjs` (დაყენებულ პროგრამაზე).
 
 ## 1. როლები და სერვერის მხარის შემოწმება

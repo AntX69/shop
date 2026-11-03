@@ -12,12 +12,14 @@
 
 | | |
 |---|---|
-| ინსტალაცია | [docs/WINDOWS_INSTALLATION.md](docs/WINDOWS_INSTALLATION.md) |
+| ინსტალაცია, განახლება, სარეზერვო ასლები | [docs/INSTALL_AND_BACKUP_KA.md](docs/INSTALL_AND_BACKUP_KA.md) |
+| მონაცემების აღდგენა (Disaster Recovery) | [docs/DISASTER_RECOVERY_KA.md](docs/DISASTER_RECOVERY_KA.md) |
 | მომხმარებლის სახელმძღვანელო | [docs/USER_GUIDE_KA.md](docs/USER_GUIDE_KA.md) |
 | განახლება / ახალ კომპიუტერზე გადატანა | [docs/UPDATE_GUIDE.md](docs/UPDATE_GUIDE.md) |
-| Release Readiness (V1.0 RC1) | [docs/release/RELEASE_READINESS.md](docs/release/RELEASE_READINESS.md) |
+| Release Readiness (1.0.0-rc.2) და Release Checklist | [docs/release/RELEASE_READINESS.md](docs/release/RELEASE_READINESS.md), [docs/release/RELEASE_CHECKLIST.md](docs/release/RELEASE_CHECKLIST.md) |
+| ცვლილებები | [CHANGELOG.md](CHANGELOG.md) |
 | უსაფრთხოება / ფინანსები / Backup / ტესტები | [docs/release/](docs/release/) |
-| აპარატურის სტატუსი (სკანერი, კამერა, DATECS DP-150) | [docs/HARDWARE_STATUS.md](docs/HARDWARE_STATUS.md) |
+| აპარატურის სტატუსი (სკანერი, კამერა, DATECS DP-150) | [docs/HARDWARE_STATUS.md](docs/HARDWARE_STATUS.md), [docs/hardware/](docs/hardware/) |
 | ცნობილი შეზღუდვები | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) |
 | არქიტექტურა / OCR | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/OFFLINE_OCR.md](docs/OFFLINE_OCR.md) |
 | Build და Release | [docs/BUILD_AND_RELEASE.md](docs/BUILD_AND_RELEASE.md) |
