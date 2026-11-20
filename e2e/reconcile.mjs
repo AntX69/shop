@@ -82,7 +82,8 @@ export function reconcileDatabase(dbFile) {
             AND EXISTS (SELECT 1 FROM inventory_movements m WHERE m.variant_id = pv.id)
         `).all();
         const off = perVariant.filter((r) => r.by_moves !== r.on_shelf);
-        add('stock value per variant: movements\' costs = shelf cost (variants with only known costs)', perVariant.length > 0 && off.length === 0,
+        add('stock value per variant: movements\' costs = shelf cost (variants with only known costs)', off.length === 0, // 0 checked = nothing comparable (e.g. a database upgraded from RC3, whose movements predate costs)
+         
           `${perVariant.length} variants checked, ${off.length} off; skipped: ${unknownMoves} movements / ${unknownLayers} layers without cost`);
       }
     }

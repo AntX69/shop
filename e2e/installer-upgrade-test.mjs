@@ -75,7 +75,12 @@ async function fingerprint(cdp, T) {
   const products = (await must(cdp, 'products:list', { stockFilter: 'all' }, T)).map((p) => `${p.name}:${(p.variants || []).map((v) => v.stock_quantity).join('/')}:${(p.images || []).length}`);
   const sales = (await must(cdp, 'pos:searchSales', { limit: 100 }, T)).map((s) => `${s.id}:${s.total_tetri}`);
   const finance = await must(cdp, 'finance:summary', { preset: 'all' }, T);
-  return JSON.stringify({ products, sales, finance });
+  return { products, sales, finance };
+}
+/** Same data; the newer finance report may add figures, but every figure the older one had must be unchanged. */
+function sameData(before, after) {
+  const changed = Object.keys(before.finance).filter((k) => JSON.stringify(before.finance[k]) !== JSON.stringify(after.finance[k]));
+  return { ok: JSON.stringify(before.products) === JSON.stringify(after.products) && JSON.stringify(before.sales) === JSON.stringify(after.sales) && changed.length === 0, changed };
 }
 
 async function main() {
@@ -93,7 +98,13 @@ async function main() {
     variants: [{ variant_name: 'სტ', initial_stock: 12, codes: [{ code_type: 'manual_5digit', code_value: '45678' }] }] }, T);
   const cust = await must(app.cdp, 'customers:create', { first_name: 'თამარ' }, T);
   await must(app.cdp, 'pos:checkout', { items: [{ variant_id: p.variants[0].id, quantity: 2 }], payment_method: 'cash', cash_received_tetri: 5000 }, T);
-  await must(app.cdp, 'pos:checkout', { items: [{ variant_id: p.variants[0].id, quantity: 1 }], payment_method: 'debt', customer_id: cust.id }, T);
+  const debtSale = await must(app.cdp, 'pos:checkout', { items: [{ variant_id: p.variants[0].id, quantity: 1 }], payment_method: 'debt', customer_id: cust.id }, T);
+  // A seller, a sale by the seller, a return and a repayment in the older version.
+  const sellerOld = await must(app.cdp, 'auth:addUser', { name: 'ძველი გამყიდველი', pin: '2468', role: 'seller' }, T);
+  const TS = (await must(app.cdp, 'auth:login', { userId: sellerOld.id, pin: '2468' })).token;
+  const s3 = await must(app.cdp, 'pos:checkout', { items: [{ variant_id: p.variants[0].id, quantity: 3 }], payment_method: 'cash', cash_received_tetri: 10000 }, TS);
+  await must(app.cdp, 'returns:process', { sale_id: s3.id, items: [{ sale_item_id: s3.items[0].id, variant_id: p.variants[0].id, quantity: 1 }] }, TS);
+  await must(app.cdp, 'customers:repay', { customer_id: cust.id, amount_tetri: 1000 }, TS);
   await must(app.cdp, 'backup:create', {}, T);
   const before = await fingerprint(app.cdp, T);
   await closeApp(app);
@@ -118,13 +129,31 @@ async function main() {
   const owner = (await must(app.cdp, 'auth:getActiveUsers', {})).find((u) => u.role === 'owner');
   const T2 = (await must(app.cdp, 'auth:login', { userId: owner.id, pin: '7531' })).token;
   const after = await fingerprint(app.cdp, T2);
-  check('after the update: same owner and PIN, products, stock, photo, sales, debt and finance', after === before);
+  const same = sameData(before, after);
+  check('after the update: same owner and PIN, products, stock, photo, sales, debt; every finance figure of the older version unchanged', same.ok, same.changed.join(', '));
+  const sellerNew = (await must(app.cdp, 'auth:getActiveUsers', {})).find((u) => u.role === 'seller');
+  const sellerLogin = await app.cdp.ipc('auth:login', { userId: sellerNew?.id, pin: '2468' });
+  check('the seller from the older version signs in with the same PIN', sellerLogin.success, sellerLogin.error);
+  const perms = await must(app.cdp, 'auth:getUserPermissions', { userId: sellerNew.id }, T2);
+  const expected = ['debts.collect', 'debts.history', 'debts.select_receipt', 'debts.view', 'customers.create', 'inventory.quantities', 'inventory.view', 'pos.access', 'products.view', 'returns.exchange', 'returns.process', 'sales.cash', 'sales.debt', 'sales.history', 'sales.mixed'].sort();
+  check('the upgraded seller has exactly the rights an older seller had (V1.1 defaults)', JSON.stringify([...perms].sort()) === JSON.stringify(expected), perms.join(', '));
+  const sellerFinance = await app.cdp.ipc('finance:summary', { preset: 'all' }, sellerLogin.data?.token);
+  check('the upgraded seller still cannot open finance', !sellerFinance.success);
   check('the sign-in screen shows the new version', shown.includes(newVersion), shown);
   const backups = await must(app.cdp, 'backup:list', {}, T2);
   check('backups made by the older version are listed and valid', backups.length >= 1 && backups.every((b) => b.is_valid));
   await closeApp(app);
   const rec = reconcileDatabase(path.join(dataDir, 'data', 'store.db'));
-  check('bookkeeping identities hold after the update', rec.checks.every((c) => c.ok), JSON.stringify(rec.checks.filter((c) => !c.ok)));
+  check('bookkeeping identities hold after the update (incl. V1.1 FIFO cost layers)', rec.checks.every((c) => c.ok), JSON.stringify(rec.checks.filter((c) => !c.ok)));
+  {
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(path.join(dataDir, 'data', 'store.db'), { readOnly: true });
+    const schema = db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v;
+    const lots = db.prepare('SELECT COUNT(*) AS n, SUM(remaining_cost_tetri = unit_cost_tetri * remaining_quantity) AS ok FROM inventory_lots WHERE unit_cost_tetri IS NOT NULL').get();
+    const units = db.prepare("SELECT COUNT(*) AS n FROM products WHERE unit_type <> 'piece'").get().n;
+    db.close();
+    check('database migrated to schema v10; existing products stay pieces; piece layer costs = unit cost × quantity', schema === 10 && units === 0 && lots.n > 0 && lots.ok === lots.n, `v${schema}, ${lots.ok}/${lots.n} layers, ${units} non-piece`);
+  }
 
   // 5. uninstall keeps the data
   const uninstaller = path.join(installDir, 'Uninstall StorePOS-Test.exe');
@@ -133,7 +162,7 @@ async function main() {
   await sleep(2000);
   check('uninstall removes the program', !fs.existsSync(exePath));
   check('uninstall removes the Windows uninstall entry', uninstallEntries().length === 0);
-  check('uninstall keeps the store data', fs.existsSync(path.join(dataDir, 'data', 'store.db')) && rec.figures.sales === 2);
+  check('uninstall keeps the store data', fs.existsSync(path.join(dataDir, 'data', 'store.db')) && rec.figures.sales === 3);
 
   fs.writeFileSync(path.join(outDir, 'installer-report.json'), JSON.stringify({ oldSetup, newSetup, installDir, date: new Date().toISOString(), results }, null, 2));
   const failed = results.filter((r) => !r.ok).length;
