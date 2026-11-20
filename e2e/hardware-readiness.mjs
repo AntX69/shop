@@ -101,7 +101,7 @@ const confirmInfo = (cdp) => cdp.evaluate(`(() => {
   const h = [...document.querySelectorAll('h3')].find((x) => x.innerText.trim() === 'პროდუქტის დადასტურება');
   if (!h) return null;
   const box = h.closest('.max-w-md');
-  return { text: box.innerText, qty: Number(box.querySelector('input[type=number]').value) };
+  return { text: box.innerText, qty: Number(box.querySelector('input[aria-label="რაოდენობა"]').value) };
 })()`);
 const cartRows = (cdp) => cdp.evaluate(`[...document.querySelectorAll('button[aria-label="რაოდენობის გაზრდა"]')].map((b) => ({
   qty: Number(b.previousElementSibling.textContent.trim()),
@@ -286,7 +286,7 @@ async function main() {
   const s3 = await confirmInfo(cdp);
   check('another product while one is open waits in the queue (Tab suffix too)', s3.text.includes('ბავშვის ფეხსაცმელი') && s3.text.includes('რიგში კიდევ 1'));
   // S4: scan into the quantity box: the box keeps the seller's value
-  await cdp.evaluate(`(() => { const i = [...document.querySelectorAll('h3')].find((x) => x.innerText.trim() === 'პროდუქტის დადასტურება').closest('.max-w-md').querySelector('input[type=number]'); i.focus(); return true; })()`);
+  await cdp.evaluate(`(() => { const i = [...document.querySelectorAll('h3')].find((x) => x.innerText.trim() === 'პროდუქტის დადასტურება').closest('.max-w-md').querySelector('input[aria-label="რაოდენობა"]'); i.focus(); return true; })()`);
   await scan(cdp, '4860123456786');
   const s4 = await confirmInfo(cdp);
   check('scan while the quantity box has focus: the digits do not land in it', s4.qty === 3, `qty ${s4.qty}`);

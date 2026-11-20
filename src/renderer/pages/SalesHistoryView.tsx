@@ -16,7 +16,41 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Sale, User, ReturnRecord, Product, ProductVariant } from '../../shared/types.ts';
 import { formatTetri, gelToTetri, proratedLineAmount, safeParseTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
-import { EditableIntegerInput } from '../components/inputs/NumericInputs.tsx';
+import { EditableIntegerInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
+import { formatUnitQuantity, lineTotalTetri, UnitType } from '../../shared/quantity.ts';
+import { gramsToField, weightToGrams } from '../utils/numericInput.ts';
+
+const unitOf = (u?: string | null): UnitType => (u === 'kg' ? 'kg' : 'piece');
+
+/**
+ * Quantity field for a return/exchange line, in the line's own unit: whole pieces, or kg with
+ * up to 3 decimals (stored in grams). 0 = not returning this line; the limit is what is left.
+ */
+const ReturnQuantityField: React.FC<{
+  unit: UnitType;
+  value: number;
+  max: number;
+  onChange: (qty: number) => void;
+  className: string;
+}> = ({ unit, value, max, onChange, className }) =>
+  unit === 'kg' ? (
+    <EditableWeightInput
+      maxGrams={max}
+      value={value > 0 ? gramsToField(value) : ''}
+      onChange={(val) => onChange(Math.min(max, weightToGrams(val) ?? 0))}
+      className={className}
+      ariaLabel="დასაბრუნებელი წონა (კგ)"
+    />
+  ) : (
+    <EditableIntegerInput
+      min={0}
+      max={max}
+      value={value > 0 ? value : ''}
+      onChange={(val) => onChange(val === '' ? 0 : Math.min(max, val))}
+      className={className}
+      ariaLabel="დასაბრუნებელი რაოდენობა"
+    />
+  );
 import { 
   History, 
   Search, 
@@ -156,7 +190,11 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
       const q = exchangeReturnItems[it.id]?.qty || 0;
       return sum + (q > 0 ? proratedLineAmount(it.total_price_tetri, it.quantity, it.returned_quantity, q) : 0);
     }, 0);
-    const newValue = (selectedNewVariant.variant.price_override_tetri ?? selectedNewVariant.product.base_price_tetri) * newVariantQty;
+    const newValue = lineTotalTetri(
+      selectedNewVariant.variant.price_override_tetri ?? selectedNewVariant.product.base_price_tetri,
+      newVariantQty,
+      unitOf(selectedNewVariant.product.unit_type)
+    );
     const credit = Math.min(returned, newValue);
     const excess = returned - credit;
     const debtReduction = Math.min(excess, selectedSale.debt_remaining_tetri || 0);
@@ -237,6 +275,16 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
     if (!selectedSale) return;
     if (!selectedNewVariant) {
       setExchangeError('გთხოვთ აირჩიოთ ახალი პროდუქტი გასაცვლელად');
+      return;
+    }
+    if (newVariantQty < 1) {
+      setExchangeError(unitOf(selectedNewVariant.product.unit_type) === 'kg'
+        ? 'მიუთითეთ ახალი პროდუქტის წონა (კგ)'
+        : 'მიუთითეთ ახალი პროდუქტის რაოდენობა');
+      return;
+    }
+    if (newVariantQty > selectedNewVariant.variant.stock_quantity) {
+      setExchangeError(`ახალი პროდუქტის მარაგი არ კმარა (${formatUnitQuantity(selectedNewVariant.variant.stock_quantity, unitOf(selectedNewVariant.product.unit_type))})`);
       return;
     }
 
@@ -669,7 +717,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                           {it.code_snap || '-'}
                         </td>
                         <td className="py-2 px-3 text-right font-bold text-white tabular-nums whitespace-nowrap">
-                          {it.quantity} ც
+                          {formatUnitQuantity(it.quantity, unitOf(it.unit_type))}
                         </td>
                         <td className="py-2 px-3 text-right text-slate-300 tabular-nums whitespace-nowrap">
                           {formatTetri(it.unit_price_tetri)}
@@ -680,7 +728,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                         <td className="py-2 px-3 text-center whitespace-nowrap">
                           {it.returned_quantity > 0 ? (
                             <span className="px-2 py-0.5 bg-red-950/60 text-red-400 rounded-full font-bold text-[10px]">
-                              {it.returned_quantity} ცალი
+                              {formatUnitQuantity(it.returned_quantity, unitOf(it.unit_type))}
                             </span>
                           ) : (
                             <span className="text-slate-600">-</span>
@@ -774,27 +822,23 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                       <div key={item.id} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 text-xs">
                         <div className="flex justify-between font-bold text-white">
                           <span>{item.product_name_snap} ({item.variant_name_snap})</span>
-                          <span className="tabular-nums">{formatTetri(item.unit_price_tetri)} / ც</span>
+                          <span className="tabular-nums">{formatTetri(item.unit_price_tetri)} / {unitOf(item.unit_type) === 'kg' ? 'კგ' : 'ც'}</span>
                         </div>
 
                         <div className="text-slate-400">
-                          დარჩენილი დაბრუნებადი: <span className="text-emerald-400 font-bold tabular-nums">{maxReturnable} ც</span>
+                          დარჩენილი დაბრუნებადი: <span className="text-emerald-400 font-bold tabular-nums">{formatUnitQuantity(maxReturnable, unitOf(item.unit_type))}</span>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 pt-1">
                           <div>
-                            <label className="block text-[11px] text-slate-400 mb-1">დასაბრუნებელი რაოდენობა</label>
-                            <EditableIntegerInput
-                              min={0}
+                            <label className="block text-[11px] text-slate-400 mb-1">
+                              {unitOf(item.unit_type) === 'kg' ? 'დასაბრუნებელი წონა (კგ)' : 'დასაბრუნებელი რაოდენობა'}
+                            </label>
+                            <ReturnQuantityField
+                              unit={unitOf(item.unit_type)}
                               max={maxReturnable}
                               value={st.qty}
-                              onChange={(val) => {
-                                const num = val === '' ? 0 : val;
-                                setReturnItemsState(prev => ({
-                                  ...prev,
-                                  [item.id]: { ...st, qty: Math.min(maxReturnable, Math.max(0, num)) }
-                                }));
-                              }}
+                              onChange={(qty) => setReturnItemsState(prev => ({ ...prev, [item.id]: { ...st, qty } }))}
                               className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-bold tabular-nums"
                             />
                           </div>
@@ -893,25 +937,19 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                         <div>
                           <div className="font-semibold text-white">{item.product_name_snap} ({item.variant_name_snap})</div>
                           <div className="text-[11px] text-slate-400">
-                            ფასი: {formatTetri(item.unit_price_tetri)} &bull; დარჩენილი: {maxReturnable} ც
+                            ფასი: {formatTetri(item.unit_price_tetri)}{unitOf(item.unit_type) === 'kg' ? ' / კგ' : ''} &bull; დარჩენილი: {formatUnitQuantity(maxReturnable, unitOf(item.unit_type))}
                           </div>
                         </div>
 
                         <div className="flex items-center space-x-2">
-                          <EditableIntegerInput
-                            min={0}
+                          <ReturnQuantityField
+                            unit={unitOf(item.unit_type)}
                             max={maxReturnable}
                             value={st.qty}
-                            onChange={(val) => {
-                              const num = val === '' ? 0 : val;
-                              setExchangeReturnItems(prev => ({
-                                ...prev,
-                                ...{ [item.id]: { ...st, qty: Math.min(maxReturnable, Math.max(0, num)) } }
-                              }));
-                            }}
-                            className="w-16 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
+                            onChange={(qty) => setExchangeReturnItems(prev => ({ ...prev, [item.id]: { ...st, qty } }))}
+                            className="w-20 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
                           />
-                          <span className="text-slate-400">ცალი</span>
+                          <span className="text-slate-400">{unitOf(item.unit_type) === 'kg' ? 'კგ' : 'ცალი'}</span>
                         </div>
                       </div>
                     );
@@ -952,7 +990,11 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                       return (
                         <div
                           key={variant.id}
-                          onClick={() => setSelectedNewVariant({ product, variant })}
+                          onClick={() => {
+                            setSelectedNewVariant({ product, variant });
+                            // Pieces start at 1; a weight must be entered (no invented default weight).
+                            setNewVariantQty(unitOf(product.unit_type) === 'kg' ? 0 : 1);
+                          }}
                           className={`p-2 rounded-lg cursor-pointer flex items-center justify-between text-xs transition-colors ${
                             isChosen ? 'bg-blue-900/60 border border-blue-600' : 'hover:bg-slate-900 border border-transparent'
                           }`}
@@ -963,12 +1005,39 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                           </div>
                           <div className="text-right">
                             <span className="font-bold text-emerald-400">{formatTetri(effectivePrice)}</span>
-                            <span className="text-[10px] text-slate-400 ml-2">მარაგი: {variant.stock_quantity} ც</span>
+                            {unitOf(product.unit_type) === 'kg' && <span className="text-[10px] text-slate-400"> / კგ</span>}
+                            <span className="text-[10px] text-slate-400 ml-2">მარაგი: {formatUnitQuantity(variant.stock_quantity, unitOf(product.unit_type))}</span>
                           </div>
                         </div>
                       );
                     })}
                 </div>
+
+                {selectedNewVariant && (
+                  <div className="mt-2 flex items-center justify-between gap-3 bg-slate-950 p-2.5 rounded-xl border border-blue-900/50 text-xs">
+                    <label className="text-slate-300 font-semibold">
+                      {unitOf(selectedNewVariant.product.unit_type) === 'kg' ? 'ახალი პროდუქტის წონა (კგ)' : 'ახალი პროდუქტის რაოდენობა (ცალი)'}
+                    </label>
+                    {unitOf(selectedNewVariant.product.unit_type) === 'kg' ? (
+                      <EditableWeightInput
+                        maxGrams={selectedNewVariant.variant.stock_quantity}
+                        value={newVariantQty > 0 ? gramsToField(newVariantQty) : ''}
+                        onChange={(val) => setNewVariantQty(weightToGrams(val) ?? 0)}
+                        className="w-24 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
+                        ariaLabel="ახალი პროდუქტის წონა (კგ)"
+                      />
+                    ) : (
+                      <EditableIntegerInput
+                        min={1}
+                        max={selectedNewVariant.variant.stock_quantity}
+                        value={newVariantQty > 0 ? newVariantQty : ''}
+                        onChange={(val) => setNewVariantQty(val === '' ? 0 : val)}
+                        className="w-20 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
+                        ariaLabel="ახალი პროდუქტის რაოდენობა"
+                      />
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* 3. Settlement: credit pays the new goods; excess reduces debt, then cash back */}

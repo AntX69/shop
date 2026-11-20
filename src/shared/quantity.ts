@@ -95,6 +95,22 @@ export function formatUnitQuantity(quantity: number | null | undefined, unit: Un
 }
 
 /**
+ * Price of a sale line in integer tetri, the single place this is calculated (POS screen and
+ * server use the same function).
+ * - piece: unit price × quantity.
+ * - kg: price per kg × grams / 1000, rounded to the nearest tetri, halves up
+ *   (12.50 ₾/kg × 0.375 kg = 4.6875 ₾ -> 4.69 ₾; 1.00 ₾/kg × 0.005 kg = 0.5 tetri -> 1 tetri).
+ * Integer (BigInt) arithmetic, so large prices and weights never lose precision.
+ */
+export function lineTotalTetri(unitPriceTetri: number, quantity: number, unit: UnitType = 'piece'): number {
+  if (!Number.isInteger(unitPriceTetri) || !Number.isInteger(quantity) || unitPriceTetri < 0 || quantity < 0) {
+    throw new Error('არასწორი ფასი ან რაოდენობა');
+  }
+  if (unit !== 'kg') return unitPriceTetri * quantity;
+  return Number((BigInt(unitPriceTetri) * BigInt(quantity) + 500n) / 1000n);
+}
+
+/**
  * Unit label in Georgian.
  */
 export function unitLabel(unit: UnitType): string {

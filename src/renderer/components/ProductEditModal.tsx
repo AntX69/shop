@@ -13,7 +13,9 @@ import { Category, Product, ProductVariant, UnitType } from '../../shared/types.
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { SmartDigitInput } from './SmartDigitInput.tsx';
-import { EditableMoneyInput } from './inputs/NumericInputs.tsx';
+import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from './inputs/NumericInputs.tsx';
+import { finishInteger, weightToGrams } from '../utils/numericInput.ts';
+import { formatUnitQuantity } from '../../shared/quantity.ts';
 import { Archive, ArchiveRestore, CheckCircle, Info, Pencil, Plus, Save, X, AlertCircle } from 'lucide-react';
 
 interface ProductEditModalProps {
@@ -49,7 +51,7 @@ function draftFrom(v: ProductVariant): VariantDraft {
   };
 }
 
-const emptyDraft = (): VariantDraft => ({ variant_name: '', size: '', color: '', price: '', cost: '', manual: '', barcode: '', initial_stock: '0' });
+const emptyDraft = (): VariantDraft => ({ variant_name: '', size: '', color: '', price: '', cost: '', manual: '', barcode: '', initial_stock: '' });
 
 function parseOptionalGel(value: string, label: string): number | null {
   if (!value.trim()) return null;
@@ -156,8 +158,18 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
     const d = newVariant!;
     if (!d.manual && !d.barcode) throw new Error('მიუთითეთ 5-ნიშნა კოდი ან ქარხნული შტრიხკოდი');
     if (d.manual && !/^[1-9]\d{4}$/.test(d.manual)) throw new Error('5-ნიშნა კოდი უნდა იყოს 10000-დან 99999-მდე');
-    const stock = Number(d.initial_stock || '0');
-    if (!Number.isInteger(stock) || stock < 0) throw new Error('საწყისი მარაგი უნდა იყოს მთელი, არაუარყოფითი რიცხვი');
+    // Initial stock in the saved product unit: whole pieces, or kg sent as integer grams. Empty = 0.
+    const savedUnit: UnitType = product?.unit_type === 'kg' ? 'kg' : 'piece';
+    let stock = 0;
+    if ((d.initial_stock || '').trim()) {
+      const parsed = savedUnit === 'kg' ? weightToGrams(d.initial_stock || '') : finishInteger(d.initial_stock || '', 0);
+      if (parsed === null || parsed === '') {
+        throw new Error(savedUnit === 'kg'
+          ? 'საწყისი მარაგი კილოგრამებში უნდა იყოს (მაგ. 12.500)'
+          : 'საწყისი მარაგი უნდა იყოს მთელი, არაუარყოფითი რიცხვი');
+      }
+      stock = parsed;
+    }
     const codes = [
       ...(d.manual ? [{ code_type: 'manual_5digit', code_value: d.manual }] : []),
       ...(d.barcode ? [{ code_type: 'barcode', code_value: d.barcode.trim() }] : []),
@@ -311,7 +323,7 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                             <input className={`${input} font-mono`} value={d.barcode} onChange={(e) => setDraft(v.id, { barcode: e.target.value.replace(/\D/g, '') })} inputMode="numeric" />
                           </div>
                           <div className="text-[11px] text-slate-400">
-                            მარაგი: <span className="font-bold text-white">{v.stock_quantity} ც</span>
+                            მარაგი: <span className="font-bold text-white">{formatUnitQuantity(v.stock_quantity, product.unit_type === 'kg' ? 'kg' : 'piece')}</span>
                           </div>
                           <div className="flex gap-1.5 justify-end">
                             <button onClick={() => saveVariant(v)} disabled={busy} className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold cursor-pointer" title="შენახვა">
@@ -346,8 +358,12 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                           <EditableMoneyInput className={input} value={newVariant.price} onChange={(p) => setNewVariant({ ...newVariant, price: p })} placeholder="0.00" />
                         </div>
                         <div>
-                          <label className={label}>საწყისი მარაგი</label>
-                          <input className={input} value={newVariant.initial_stock} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setNewVariant({ ...newVariant, initial_stock: e.target.value.replace(/\D/g, '') })} inputMode="numeric" />
+                          <label className={label}>{product?.unit_type === 'kg' ? 'საწყისი მარაგი (კგ)' : 'საწყისი მარაგი (ცალი)'}</label>
+                          {product?.unit_type === 'kg' ? (
+                            <EditableWeightInput className={input} value={newVariant.initial_stock || ''} onChange={(s) => setNewVariant({ ...newVariant, initial_stock: s })} placeholder="0.000" ariaLabel="საწყისი მარაგი კილოგრამებში" />
+                          ) : (
+                            <EditableIntegerInput className={input} min={0} value={/^\d+$/.test(newVariant.initial_stock || '') ? Number(newVariant.initial_stock) : ''} onChange={(n) => setNewVariant({ ...newVariant, initial_stock: n === '' ? '' : String(n) })} placeholder="0" ariaLabel="საწყისი მარაგი ცალობით" />
+                          )}
                         </div>
                         <div className="col-span-2">
                           <label className={label}>5-ნიშნა კოდი</label>

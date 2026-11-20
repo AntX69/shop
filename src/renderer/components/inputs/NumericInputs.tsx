@@ -1,24 +1,21 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
- * Reusable Numeric Input Components for StorePOS V1.1.
- * Resolves the friction of sticky zeros:
- * - Selects entire text on focus so a single keystroke immediately replaces it.
- * - Allows clearing the field without automatically reinserting '0'.
- * - Normalizes on blur.
- * - Preserves standard keyboard navigation (Ctrl+A, Backspace, Delete, Arrows, Tab).
- * - Avoids cursor jumping.
+ *
+ * Numeric input components (whole numbers, money, weight).
+ * - Focus selects the whole text, so one keystroke replaces the old value.
+ * - The field can be cleared; it never refills itself with 0 or a minimum. An empty field
+ *   reports '' and the form decides whether that is allowed (e.g. "enter an amount").
+ * - Comma and point both work as the decimal separator.
+ * - Backspace, Delete, arrows, Ctrl+A and Tab keep their normal behaviour (plain text input).
+ * The rules themselves live in utils/numericInput.ts and are unit-tested there.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { typingInteger, typingDecimal, finishInteger, finishMoney, finishWeight, weightToGrams, sameFieldValue, NumericKind } from '../../utils/numericInput.ts';
+import { gramsToKg } from '../../../shared/quantity.ts';
 
-// --- 1. EditableIntegerInput ---
-export interface EditableIntegerInputProps {
-  value: number | '' | undefined;
-  onChange: (val: number | '') => void;
-  min?: number;
-  max?: number;
+interface BaseProps {
   placeholder?: string;
   className?: string;
   autoFocus?: boolean;
@@ -27,93 +24,70 @@ export interface EditableIntegerInputProps {
   name?: string;
   onBlur?: () => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  /** Marks the field as mandatory for the browser form; an empty value is still reported as ''. */
   required?: boolean;
+  ariaLabel?: string;
+}
+
+/**
+ * Field text: follows the parent's value, except that while the field has focus its own value
+ * coming back from the form does not overwrite what is being typed ("0.30" stays "0.30").
+ * A real change from elsewhere (a second scan, +/- buttons) is shown at once, focused or not.
+ */
+function useFieldText(external: string, kind: NumericKind) {
+  const [text, setText] = useState<string>(external);
+  const focused = useRef(false);
+  const reported = useRef(external);
+  useEffect(() => {
+    if (!focused.current || !sameFieldValue(external, reported.current, kind)) {
+      setText(external);
+      reported.current = external;
+    }
+  }, [external]);
+  /** Shows `t` and remembers it as the field's own value before it is passed to the form. */
+  const show = (t: string) => {
+    setText(t);
+    reported.current = t;
+  };
+  return { text, show, focused };
+}
+
+// --- 1. EditableIntegerInput ---
+export interface EditableIntegerInputProps extends BaseProps {
+  value: number | '' | undefined;
+  onChange: (val: number | '') => void;
+  min?: number;
+  max?: number;
 }
 
 export const EditableIntegerInput: React.FC<EditableIntegerInputProps> = ({
-  value,
-  onChange,
-  min = 0,
-  max,
-  placeholder = '0',
-  className = '',
-  autoFocus,
-  disabled,
-  id,
-  name,
-  onBlur,
-  onKeyDown,
-  required
+  value, onChange, min = 0, max, placeholder = '0', className = '', autoFocus, disabled, id, name, onBlur, onKeyDown, required, ariaLabel,
 }) => {
-  const [text, setText] = useState<string>(value === undefined || value === '' ? '' : String(value));
-  const isFocusedRef = useRef(false);
-
-  // Sync external value changes when not actively typing/focused
-  useEffect(() => {
-    if (!isFocusedRef.current) {
-      setText(value === undefined || value === '' ? '' : String(value));
-    }
-  }, [value]);
-
-  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    isFocusedRef.current = true;
-    e.currentTarget.select();
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
-    if (raw === '') {
-      setText('');
-      onChange('');
-      return;
-    }
-
-    // Only allow whole positive integers (digits only)
-    if (/^\d+$/.test(raw)) {
-      let num = parseInt(raw, 10);
-      if (max !== undefined && num > max) {
-        num = max;
-      }
-      setText(String(num));
-      onChange(num);
-    }
-  };
-
-  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    isFocusedRef.current = false;
-    if (text === '') {
-      if (required) {
-        const fallback = min;
-        setText(String(fallback));
-        onChange(fallback);
-      } else {
-        onChange('');
-      }
-    } else {
-      let num = parseInt(text, 10);
-      if (isNaN(num)) {
-        num = min;
-      } else if (num < min) {
-        num = min;
-      } else if (max !== undefined && num > max) {
-        num = max;
-      }
-      setText(String(num));
-      onChange(num);
-    }
-    onBlur?.();
-  };
+  const { text, show, focused } = useFieldText(value === undefined || value === '' ? '' : String(value), 'integer');
 
   return (
     <input
       type="text"
       inputMode="numeric"
+      autoComplete="off"
       id={id}
       name={name}
+      aria-label={ariaLabel}
       value={text}
-      onChange={handleChange}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
+      onFocus={(e) => { focused.current = true; e.currentTarget.select(); }}
+      onChange={(e) => {
+        const next = typingInteger(e.target.value, max);
+        if (next === null) return;
+        show(next);
+        onChange(next === '' ? '' : Number(next));
+      }}
+      onBlur={() => {
+        focused.current = false;
+        const n = finishInteger(text, min, max);
+        show(n === '' ? '' : String(n));
+        onChange(n);
+        onBlur?.();
+      }}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
       className={className}
@@ -125,99 +99,40 @@ export const EditableIntegerInput: React.FC<EditableIntegerInputProps> = ({
 };
 
 // --- 2. EditableMoneyInput ---
-export interface EditableMoneyInputProps {
+export interface EditableMoneyInputProps extends BaseProps {
+  /** GEL as text ("12.50"), '' = no amount. Convert with moneyToTetri() before sending. */
   value: string;
   onChange: (val: string) => void;
-  placeholder?: string;
-  className?: string;
-  autoFocus?: boolean;
-  disabled?: boolean;
-  id?: string;
-  name?: string;
-  onBlur?: () => void;
-  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
-  required?: boolean;
 }
 
 export const EditableMoneyInput: React.FC<EditableMoneyInputProps> = ({
-  value,
-  onChange,
-  placeholder = '0.00',
-  className = '',
-  autoFocus,
-  disabled,
-  id,
-  name,
-  onBlur,
-  onKeyDown,
-  required
+  value, onChange, placeholder = '0.00', className = '', autoFocus, disabled, id, name, onBlur, onKeyDown, required, ariaLabel,
 }) => {
-  const [text, setText] = useState<string>(value ?? '');
-  const isFocusedRef = useRef(false);
-
-  useEffect(() => {
-    if (!isFocusedRef.current) {
-      setText(value ?? '');
-    }
-  }, [value]);
-
-  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    isFocusedRef.current = true;
-    e.currentTarget.select();
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let raw = e.target.value.replace(',', '.');
-    // Allow empty string so user can clear without 0 sticking
-    if (raw === '') {
-      setText('');
-      onChange('');
-      return;
-    }
-
-    // Accept valid money typing: optional decimal with up to 2 decimal places
-    // Examples: "1", "1.", "1.2", "1.25", ".5", "0.50"
-    if (/^\d*\.?\d{0,2}$/.test(raw)) {
-      setText(raw);
-      onChange(raw);
-    }
-  };
-
-  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    isFocusedRef.current = false;
-    const trimmed = text.trim().replace(',', '.');
-    if (trimmed === '' || trimmed === '.') {
-      if (required) {
-        setText('0.00');
-        onChange('0.00');
-      } else {
-        setText('');
-        onChange('');
-      }
-    } else {
-      const num = parseFloat(trimmed);
-      if (!isNaN(num) && isFinite(num) && num >= 0) {
-        const formatted = num.toFixed(2);
-        setText(formatted);
-        onChange(formatted);
-      } else {
-        setText('');
-        onChange('');
-      }
-    }
-    onBlur?.();
-  };
+  const { text, show, focused } = useFieldText(value ?? '', 'money');
 
   return (
     <input
       type="text"
       inputMode="decimal"
+      autoComplete="off"
       id={id}
       name={name}
+      aria-label={ariaLabel}
       value={text}
-      onChange={handleChange}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
+      onFocus={(e) => { focused.current = true; e.currentTarget.select(); }}
+      onChange={(e) => {
+        const next = typingDecimal(e.target.value, 2);
+        if (next === null) return;
+        show(next);
+        onChange(next);
+      }}
+      onBlur={() => {
+        focused.current = false;
+        const finished = finishMoney(text);
+        show(finished);
+        onChange(finished);
+        onBlur?.();
+      }}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
       className={className}
@@ -229,112 +144,48 @@ export const EditableMoneyInput: React.FC<EditableMoneyInputProps> = ({
 };
 
 // --- 3. EditableWeightInput ---
-export interface EditableWeightInputProps {
+export interface EditableWeightInputProps extends BaseProps {
+  /** Kilograms as text ("0.375"), '' = no weight. Convert with weightToGrams() before sending. */
   value: string;
   onChange: (val: string) => void;
+  /** Upper limit in grams (e.g. stock on hand, or what is left to return). */
   maxGrams?: number;
-  placeholder?: string;
-  className?: string;
-  autoFocus?: boolean;
-  disabled?: boolean;
-  id?: string;
-  name?: string;
-  onBlur?: () => void;
-  onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
-  required?: boolean;
 }
 
 export const EditableWeightInput: React.FC<EditableWeightInputProps> = ({
-  value,
-  onChange,
-  maxGrams,
-  placeholder = '0.000',
-  className = '',
-  autoFocus,
-  disabled,
-  id,
-  name,
-  onBlur,
-  onKeyDown,
-  required
+  value, onChange, maxGrams, placeholder = '0.000', className = '', autoFocus, disabled, id, name, onBlur, onKeyDown, required, ariaLabel,
 }) => {
-  const [text, setText] = useState<string>(value ?? '');
-  const isFocusedRef = useRef(false);
-
-  useEffect(() => {
-    if (!isFocusedRef.current) {
-      setText(value ?? '');
-    }
-  }, [value]);
-
-  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
-    isFocusedRef.current = true;
-    e.currentTarget.select();
-  };
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let raw = e.target.value.replace(',', '.');
-    if (raw === '') {
-      setText('');
-      onChange('');
-      return;
-    }
-
-    // Accept valid weight typing: up to 3 decimal places (grams)
-    // Examples: "1", "1.", "1.2", "1.25", "1.250", ".5", "0.500"
-    if (/^\d*\.?\d{0,3}$/.test(raw)) {
-      if (maxGrams !== undefined && raw !== '.' && !raw.endsWith('.')) {
-        const num = parseFloat(raw);
-        if (!isNaN(num) && Math.round(num * 1000) > maxGrams) {
-          const maxStr = (maxGrams / 1000).toFixed(3);
-          setText(maxStr);
-          onChange(maxStr);
-          return;
-        }
-      }
-      setText(raw);
-      onChange(raw);
-    }
-  };
-
-  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
-    isFocusedRef.current = false;
-    const trimmed = text.trim().replace(',', '.');
-    if (trimmed === '' || trimmed === '.') {
-      if (required) {
-        setText('0.000');
-        onChange('0.000');
-      } else {
-        setText('');
-        onChange('');
-      }
-    } else {
-      let num = parseFloat(trimmed);
-      if (!isNaN(num) && isFinite(num) && num >= 0) {
-        if (maxGrams !== undefined && Math.round(num * 1000) > maxGrams) {
-          num = maxGrams / 1000;
-        }
-        const formatted = num.toFixed(3);
-        setText(formatted);
-        onChange(formatted);
-      } else {
-        setText('');
-        onChange('');
-      }
-    }
-    onBlur?.();
+  const { text, show, focused } = useFieldText(value ?? '', 'weight');
+  const capped = (t: string): string => {
+    if (maxGrams === undefined) return t;
+    const grams = weightToGrams(t);
+    return grams !== null && grams > maxGrams ? gramsToKg(Math.max(0, maxGrams), true) : t;
   };
 
   return (
     <input
       type="text"
       inputMode="decimal"
+      autoComplete="off"
       id={id}
       name={name}
+      aria-label={ariaLabel}
       value={text}
-      onChange={handleChange}
-      onFocus={handleFocus}
-      onBlur={handleBlur}
+      onFocus={(e) => { focused.current = true; e.currentTarget.select(); }}
+      onChange={(e) => {
+        const next = typingDecimal(e.target.value, 3);
+        if (next === null) return;
+        const shown = capped(next);
+        show(shown);
+        onChange(shown);
+      }}
+      onBlur={() => {
+        focused.current = false;
+        const finished = capped(finishWeight(text));
+        show(finished);
+        onChange(finished);
+        onBlur?.();
+      }}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
       className={className}

@@ -17,7 +17,7 @@ import { getDb, runInTransaction } from '../db/database.ts';
 import { Category, Product, ProductVariant, ProductCode, ProductImage, User } from '../../shared/types.ts';
 import { AuthService } from './authService.ts';
 import { deleteImageFileIfUnused, imageUrl, storeProductImage } from './productImages.ts';
-import { optionalAmount, optionalId, optionalString, requireAmount, requireCount, requireId, requireObject, requireString } from './validation.ts';
+import { optionalAmount, optionalId, optionalString, requireAmount, requireCount, requireGramCount, requireId, requireObject, requireString } from './validation.ts';
 import { UnitType } from '../../shared/types.ts';
 
 export interface CreateProductInput {
@@ -303,7 +303,12 @@ export class ProductsService {
   }
 
   private insertVariant(db: DatabaseSync, requester: User, productId: number, v: VariantInput, codes: Array<{ code_type: string; code_value: string }>, baseCost: number | null, unitType: UnitType, now: string): number {
-    const initialStock = v.initial_stock == null ? 0 : requireCount(v.initial_stock, 'საწყისი მარაგი');
+    // Weight products keep stock in integer grams (up to MAX_GRAMS), piece products in whole pieces.
+    const initialStock = v.initial_stock == null
+      ? 0
+      : unitType === 'kg'
+        ? requireGramCount(v.initial_stock, 'საწყისი მარაგი (გ)')
+        : requireCount(v.initial_stock, 'საწყისი მარაგი');
     const priceOverride = optionalAmount(v.price_override_tetri, 'ვარიანტის ფასი');
     const costOverride = optionalAmount(v.cost_override_tetri, 'ვარიანტის თვითღირებულება');
     const varRes = db.prepare(

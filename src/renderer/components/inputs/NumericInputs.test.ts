@@ -1,45 +1,60 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Renders the real numeric input components (server-side markup, no browser): an empty value is
+ * shown as an empty field with its placeholder, a real 0 is shown as 0, and the fields are plain
+ * text inputs (no browser number spinner that fights Backspace). Typing behaviour is covered by
+ * utils/numericInput.test.ts and the keyboard E2E test in e2e/numeric-inputs.mjs.
+ */
+
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from './NumericInputs.tsx';
 
-test('Numeric input formatting logic: integer formatting', () => {
-  // Clearing empty string
-  const rawEmpty = '';
-  assert.equal(rawEmpty === '' ? '' : parseInt(rawEmpty, 10), '');
+const noop = () => {};
+const html = (el: React.ReactElement) => renderToStaticMarkup(el);
+const valueOf = (markup: string) => /value="([^"]*)"/.exec(markup)?.[1];
 
-  // Numbers with leading zeros cleaned
-  const raw1 = '05';
-  assert.equal(parseInt(raw1, 10), 5);
-
-  // Max bound
-  const max = 10;
-  const num = 15;
-  assert.equal(Math.min(max, num), 10);
+test('integer input: empty value renders an empty field with the placeholder', () => {
+  const m = html(React.createElement(EditableIntegerInput, { value: '', onChange: noop, placeholder: '1' }));
+  assert.equal(valueOf(m), '');
+  assert.match(m, /placeholder="1"/);
+  assert.match(m, /type="text"/);
+  assert.match(m, /inputMode="numeric"/);
+  const u = html(React.createElement(EditableIntegerInput, { value: undefined, onChange: noop }));
+  assert.equal(valueOf(u), '');
 });
 
-test('Numeric input formatting logic: money formatting with dot or comma', () => {
-  const parseMoney = (raw: string) => {
-    const clean = raw.replace(',', '.');
-    if (!/^\d*\.?\d{0,2}$/.test(clean)) return null;
-    return clean;
-  };
-
-  assert.equal(parseMoney('12,50'), '12.50');
-  assert.equal(parseMoney('12.5'), '12.5');
-  assert.equal(parseMoney('0.50'), '0.50');
-  assert.equal(parseMoney(''), '');
-  assert.equal(parseMoney('12.345'), null); // max 2 decimals
+test('integer input: a real 0 is shown as 0, other values as typed', () => {
+  assert.equal(valueOf(html(React.createElement(EditableIntegerInput, { value: 0, onChange: noop }))), '0');
+  assert.equal(valueOf(html(React.createElement(EditableIntegerInput, { value: 42, onChange: noop }))), '42');
 });
 
-test('Numeric input formatting logic: weight formatting with 3 decimals', () => {
-  const parseWeight = (raw: string) => {
-    const clean = raw.replace(',', '.');
-    if (!/^\d*\.?\d{0,3}$/.test(clean)) return null;
-    return clean;
-  };
+test('money input: empty stays empty, amounts are shown as given', () => {
+  const m = html(React.createElement(EditableMoneyInput, { value: '', onChange: noop, placeholder: '0.00', required: true }));
+  assert.equal(valueOf(m), '', 'required does not pre-fill 0.00');
+  assert.match(m, /inputMode="decimal"/);
+  assert.match(m, /required=""/);
+  assert.equal(valueOf(html(React.createElement(EditableMoneyInput, { value: '12.50', onChange: noop }))), '12.50');
+});
 
-  assert.equal(parseWeight('1,250'), '1.250');
-  assert.equal(parseWeight('0.075'), '0.075');
-  assert.equal(parseWeight('0.5'), '0.5');
-  assert.equal(parseWeight(''), '');
-  assert.equal(parseWeight('1.2345'), null); // max 3 decimals
+test('weight input: empty stays empty, kg text is shown as given', () => {
+  const m = html(React.createElement(EditableWeightInput, { value: '', onChange: noop, ariaLabel: 'წონა' }));
+  assert.equal(valueOf(m), '');
+  assert.match(m, /placeholder="0.000"/);
+  assert.match(m, /aria-label="წონა"/);
+  assert.equal(valueOf(html(React.createElement(EditableWeightInput, { value: '0.375', onChange: noop }))), '0.375');
+});
+
+test('no numeric field uses type="number" (spinner, locale-dependent comma, sticky zero)', () => {
+  for (const el of [
+    React.createElement(EditableIntegerInput, { value: 1, onChange: noop }),
+    React.createElement(EditableMoneyInput, { value: '1.00', onChange: noop }),
+    React.createElement(EditableWeightInput, { value: '1.000', onChange: noop }),
+  ]) {
+    assert.doesNotMatch(html(el), /type="number"/);
+  }
 });

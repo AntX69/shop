@@ -12,8 +12,9 @@
 
 import React, { useState, useEffect } from 'react';
 import { Product, ProductVariant, User } from '../../shared/types.ts';
-import { formatTetri, gelToTetri } from '../../shared/money.ts';
-import { gramsToKg, kgToGrams, formatUnitQuantity, safeParseGrams } from '../../shared/quantity.ts';
+import { formatTetri } from '../../shared/money.ts';
+import { gramsToKg } from '../../shared/quantity.ts';
+import { weightToGrams, moneyToTetri } from '../utils/numericInput.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
 import { 
@@ -49,7 +50,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
   // Restock Modal
   const [isRestockOpen, setIsRestockOpen] = useState<boolean>(false);
   const [selectedVariantId, setSelectedVariantId] = useState<number | null>(null);
-  const [restockQty, setRestockQty] = useState<string>('5');
+  // Starts empty: a pre-filled number could be confirmed by accident (5 pieces, or 5 kg).
+  const [restockQty, setRestockQty] = useState<string>('');
   const [restockUnitCost, setRestockUnitCost] = useState<string>('');
   const [restockNotes, setRestockNotes] = useState<string>('');
 
@@ -107,16 +109,15 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
     const isKg = selVariant?.unit_type === 'kg';
     let qty: number;
     if (isKg) {
-      try {
-        qty = kgToGrams(restockQty);
-        if (qty <= 0) throw new Error('წონა უნდა აღემატებოდეს 0-ს');
-      } catch (err: any) {
-        setModalError(err.message || 'არასწორი წონა');
+      const grams = weightToGrams(restockQty);
+      if (grams === null || grams <= 0) {
+        setModalError('მიუთითეთ მიღებული წონა კილოგრამებში, 0-ზე მეტი (მაგ. 2.500)');
         return;
       }
+      qty = grams;
     } else {
       qty = Number(restockQty.trim());
-      if (!Number.isInteger(qty) || qty <= 0) {
+      if (restockQty.trim() === '' || !Number.isInteger(qty) || qty <= 0) {
         setModalError('რაოდენობა უნდა იყოს მთელი რიცხვი, 1 ან მეტი');
         return;
       }
@@ -124,10 +125,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
 
     let unitCostTetri: number | null = null;
     if (restockUnitCost.trim()) {
-      try {
-        unitCostTetri = gelToTetri(restockUnitCost);
-      } catch (err: any) {
-        setModalError(err.message);
+      unitCostTetri = moneyToTetri(restockUnitCost);
+      if (unitCostTetri === null) {
+        setModalError(`შესყიდვის ფასი არასწორია: "${restockUnitCost}" (მაგ. 12.50)`);
         return;
       }
     }
@@ -141,7 +141,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       });
 
       setIsRestockOpen(false);
-      setRestockQty('5');
+      setRestockQty('');
       setRestockUnitCost('');
       setRestockNotes('');
       loadData();
@@ -162,13 +162,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
     const isKg = corrVariant?.unit_type === 'kg';
     let counted: number;
     if (isKg) {
-      try {
-        counted = kgToGrams(countedQty);
-        if (counted < 0) throw new Error('წონა არ შეიძლება იყოს უარყოფითი');
-      } catch (err: any) {
-        setModalError(err.message || 'არასწორი წონა');
+      // Empty is not 0: clearing the field must never set the stock to zero.
+      const grams = weightToGrams(countedQty);
+      if (grams === null) {
+        setModalError('მიუთითეთ დათვლილი წონა კილოგრამებში (0 დასაშვებია, მაგ. 0 ან 1.250)');
         return;
       }
+      counted = grams;
     } else {
       counted = Number(countedQty.trim());
       if (countedQty.trim() === '' || !Number.isInteger(counted) || counted < 0) {
@@ -458,7 +458,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                   <select
                     required
                     value={selectedVariantId || ''}
-                    onChange={(e) => setSelectedVariantId(parseInt(e.target.value, 10))}
+                    onChange={(e) => { setSelectedVariantId(parseInt(e.target.value, 10)); setRestockQty(''); }}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   >
                     <option value="">-- აირჩიეთ --</option>
@@ -480,6 +480,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                     <EditableWeightInput
                       value={restockQty}
                       onChange={setRestockQty}
+                      ariaLabel="მიღებული წონა (კგ)"
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold"
                     />
                   ) : (
@@ -592,6 +593,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                     <EditableWeightInput
                       value={countedQty}
                       onChange={setCountedQty}
+                      ariaLabel="დათვლილი წონა (კგ)"
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-base font-bold"
                     />
                   ) : (

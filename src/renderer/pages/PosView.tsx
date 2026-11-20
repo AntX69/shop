@@ -23,7 +23,8 @@ import { photoSrc } from '../utils/imageResize.ts';
 import { ScanDetector, SCAN_NO_SUFFIX_FLUSH_MS } from '../utils/scannerInput.ts';
 import { WebcamModal } from '../components/WebcamModal.tsx';
 import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
-import { gramsToKg, kgToGrams, formatUnitQuantity, safeParseGrams } from '../../shared/quantity.ts';
+import { gramsToKg, formatUnitQuantity, lineTotalTetri } from '../../shared/quantity.ts';
+import { weightToGrams } from '../utils/numericInput.ts';
 import { 
   Barcode, 
   Search, 
@@ -390,6 +391,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   const confirmAddToCart = () => {
     if (!confirmModalData) return;
     const { product, variant, codeUsed, quantityToAdd } = confirmModalData;
+    // 0 = the seller cleared the quantity field: nothing to add until a quantity is entered.
+    if (!Number.isInteger(quantityToAdd) || quantityToAdd < 1) return;
 
     const unitPrice = variant.price_override_tetri ?? product.base_price_tetri;
     const unitType = product.unit_type || variant.unit_type || 'piece';
@@ -463,11 +466,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   };
 
   // Calculations (integer tetri; the main process recomputes everything from database prices)
-  const lineSubtotalOf = (c: CartItem) => {
-    return c.unit_type === 'kg'
-      ? Math.round((c.quantity * c.unit_price_tetri) / 1000)
-      : c.quantity * c.unit_price_tetri;
-  };
+  const lineSubtotalOf = (c: CartItem) => lineTotalTetri(c.unit_price_tetri, c.quantity, c.unit_type === 'kg' ? 'kg' : 'piece');
   const cartSubtotalTetri = cart.reduce((sum, item) => sum + lineSubtotalOf(item), 0);
   // A line discount never exceeds the line (quantity may have been lowered after it was set).
   const lineDiscountOf = (c: CartItem) => (isOwner ? Math.min(c.line_discount_tetri || 0, lineSubtotalOf(c)) : 0);
@@ -947,13 +946,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                             </button>
                             <EditableWeightInput
                               maxGrams={confirmModalData.variant.stock_quantity}
-                              value={gramsToKg(confirmModalData.quantityToAdd, false)}
+                              value={confirmModalData.quantityToAdd > 0 ? gramsToKg(confirmModalData.quantityToAdd, false) : ''}
                               onChange={(val: string) => {
-                                const parsed = safeParseGrams(val);
-                                if (parsed !== null && parsed > 0) {
-                                  setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, parsed) });
-                                }
+                                // Empty or 0 kg -> 0 (the add button stays disabled), never the old weight.
+                                const parsed = weightToGrams(val) ?? 0;
+                                setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(prev.variant.stock_quantity, parsed) });
                               }}
+                              ariaLabel="წონა კილოგრამებში"
                               className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                             />
                             <button
@@ -974,7 +973,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                             </button>
                           </div>
                           <div className="text-right text-xs text-emerald-400 font-bold mt-1.5">
-                            ჯამი: {formatTetri(Math.round((unitPrice * confirmModalData.quantityToAdd) / 1000))}
+                            {confirmModalData.quantityToAdd > 0
+                              ? <>ჯამი: {formatTetri(lineTotalTetri(unitPrice, confirmModalData.quantityToAdd, 'kg'))}</>
+                              : <span className="text-amber-400">მიუთითეთ წონა</span>}
                           </div>
                         </>
                       ) : (
@@ -989,12 +990,12 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                           <EditableIntegerInput
                             min={1}
                             max={confirmModalData.variant.stock_quantity}
-                            value={confirmModalData.quantityToAdd}
+                            value={confirmModalData.quantityToAdd > 0 ? confirmModalData.quantityToAdd : ''}
                             onChange={(val) => {
-                              if (val !== '') {
-                                setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, Math.max(1, val)) });
-                              }
+                              // Empty -> 0 (the add button stays disabled), never the old quantity.
+                              setConfirmModalData(prev => prev && { ...prev, quantityToAdd: val === '' ? 0 : Math.min(prev.variant.stock_quantity, val) });
                             }}
+                            ariaLabel="რაოდენობა"
                             className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                           />
                           <button
@@ -1022,7 +1023,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 <button
                   type="button"
                   onClick={confirmAddToCart}
-                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
+                  disabled={confirmModalData.quantityToAdd < 1}
+                  className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   კალათაში დამატება
                 </button>
@@ -1154,6 +1156,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     <EditableMoneyInput
                       value={cashReceivedInput}
                       onChange={(val) => setCashReceivedInput(val)}
+                      ariaLabel="მიღებული ნაღდი თანხა"
                       placeholder="0.00"
                       className="w-full px-3.5 py-2 sm:py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg sm:text-xl font-bold focus:outline-none focus:border-emerald-500 tabular-nums"
                     />

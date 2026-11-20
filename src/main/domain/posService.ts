@@ -16,6 +16,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getDb, runInTransaction } from '../db/database.ts';
 import { CheckoutPayload, Sale, User } from '../../shared/types.ts';
 import { allocateProportionally, formatTetri } from '../../shared/money.ts';
+import { lineTotalTetri } from '../../shared/quantity.ts';
 import { boundToUtc, localDate } from '../../shared/time.ts';
 import { AuthService } from './authService.ts';
 import {
@@ -124,8 +125,8 @@ export class PosService {
       const unitType: 'piece' | 'kg' = (v.variant_unit_type || v.product_unit_type || 'piece') === 'kg' ? 'kg' : 'piece';
       const isKg = unitType === 'kg';
 
-      // For KG: quantity is in grams; listPrice is price per 1 kg (1000 g)
-      // subtotal = Math.round(listPrice * grams / 1000)
+      // For KG: quantity is in grams; listPrice is price per 1 kg (1000 g).
+      // Line price: lineTotalTetri() (shared with the POS screen), nearest tetri, halves up.
       let quantity: number;
       if (isKg) {
         quantity = requireGrams(item.quantity, 'წონა (გ)');
@@ -134,10 +135,7 @@ export class PosService {
       }
 
       const listPrice: number = v.price_override_tetri ?? v.base_price_tetri;
-      // For KG: subtotal proportional to grams; for pieces: quantity * unitPrice
-      const subtotal = isKg
-        ? Math.round((listPrice * quantity) / 1000)
-        : quantity * listPrice;
+      const subtotal = lineTotalTetri(listPrice, quantity, unitType);
 
       let lineDiscount = item.line_discount_tetri == null ? 0 : requireAmount(item.line_discount_tetri, 'ფასდაკლება');
 
@@ -156,13 +154,8 @@ export class PosService {
               `ფასის შესაცვლელად შეცვალეთ პროდუქტის ბარათი.`
             );
           }
-          // For KG, unit_price_tetri is per-kg; recompute discount from price difference
-          if (isKg) {
-            const discountPerKg = listPrice - sent;
-            lineDiscount += Math.round((discountPerKg * quantity) / 1000);
-          } else {
-            lineDiscount += (listPrice - sent) * quantity;
-          }
+          // The line then costs exactly what the lower price gives (per kg for weight products).
+          lineDiscount += subtotal - lineTotalTetri(sent, quantity, unitType);
         }
       }
 

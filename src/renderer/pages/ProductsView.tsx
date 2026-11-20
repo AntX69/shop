@@ -14,7 +14,8 @@ import { formatUnitQuantity, gramsToKg } from '../../shared/quantity.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { ProductEditModal } from '../components/ProductEditModal.tsx';
 import { CategoryManagerModal } from '../components/CategoryManagerModal.tsx';
-import { EditableIntegerInput, EditableMoneyInput } from '../components/inputs/NumericInputs.tsx';
+import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
+import { finishInteger, weightToGrams } from '../utils/numericInput.ts';
 import { photoSrc, resizeImageFile } from '../utils/imageResize.ts';
 import {
   Package, 
@@ -78,7 +79,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
     color: string;
     price_override: string;
     cost_override: string;
-    initial_stock: number;
+    /** Text as typed: whole pieces, or kg for a weight product; empty = no initial stock. */
+    initial_stock: string;
     manual_5digit: string;
     barcode: string;
   }>>([
@@ -88,7 +90,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       color: '',
       price_override: '',
       cost_override: '',
-      initial_stock: 0,
+      initial_stock: '',
       manual_5digit: '',
       barcode: ''
     }
@@ -131,7 +133,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         color: '',
         price_override: '',
         cost_override: '',
-        initial_stock: 0,
+        initial_stock: '',
         manual_5digit: '',
         barcode: ''
       }
@@ -214,13 +216,27 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         costOverride = gelToTetri(v.cost_override);
       }
 
+      // Initial stock in the product's unit: whole pieces, or kg sent as integer grams.
+      // Empty means no initial stock (0); anything else must be a valid number.
+      let initialStock = 0;
+      if (v.initial_stock.trim()) {
+        const parsed = prodUnitType === 'kg' ? weightToGrams(v.initial_stock) : finishInteger(v.initial_stock, 0);
+        if (parsed === null || parsed === '') {
+          setFormError(prodUnitType === 'kg'
+            ? `საწყისი მარაგი კილოგრამებში უნდა იყოს (მაგ. 12.500). ვარიანტი: "${vName}"`
+            : `საწყისი მარაგი უნდა იყოს მთელი რიცხვი (ცალი). ვარიანტი: "${vName}"`);
+          return;
+        }
+        initialStock = parsed;
+      }
+
       payloadVariants.push({
         variant_name: vName,
         size: v.size.trim() || undefined,
         color: v.color.trim() || undefined,
         price_override_tetri: priceOverride,
         cost_override_tetri: costOverride,
-        initial_stock: Math.max(0, Math.floor(v.initial_stock || 0)),
+        initial_stock: initialStock,
         codes
       });
     }
@@ -252,7 +268,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         color: '',
         price_override: '',
         cost_override: '',
-        initial_stock: 0,
+        initial_stock: '',
         manual_5digit: '',
         barcode: ''
       }]);
@@ -596,7 +612,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                   <label className="block text-xs font-semibold text-slate-300 mb-1">ერთეულის ტიპი *</label>
                   <select
                     value={prodUnitType}
-                    onChange={(e) => setProdUnitType(e.target.value as UnitType)}
+                    onChange={(e) => {
+                      setProdUnitType(e.target.value as UnitType);
+                      // Pieces and kg are different numbers: clear typed initial stock rather than reinterpret it.
+                      setVariantsList(prev => prev.map(v => ({ ...v, initial_stock: '' })));
+                    }}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   >
                     <option value="piece">ცალი (ც)</option>
@@ -745,18 +765,35 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                         </div>
 
                         <div>
-                          <label className="block text-[11px] text-slate-400 mb-0.5">საწყისი მარაგი (ცალი)</label>
-                          <EditableIntegerInput
-                            min={0}
-                            value={v.initial_stock}
-                            onChange={(val) => {
-                              const updated = [...variantsList];
-                              updated[i].initial_stock = val === '' ? 0 : val;
-                              setVariantsList(updated);
-                            }}
-                            placeholder="0"
-                            className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
-                          />
+                          <label className="block text-[11px] text-slate-400 mb-0.5">
+                            {prodUnitType === 'kg' ? 'საწყისი მარაგი (კგ)' : 'საწყისი მარაგი (ცალი)'}
+                          </label>
+                          {prodUnitType === 'kg' ? (
+                            <EditableWeightInput
+                              value={v.initial_stock}
+                              onChange={(val) => {
+                                const updated = [...variantsList];
+                                updated[i] = { ...updated[i], initial_stock: val };
+                                setVariantsList(updated);
+                              }}
+                              placeholder="0.000"
+                              className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
+                              ariaLabel="საწყისი მარაგი კილოგრამებში"
+                            />
+                          ) : (
+                            <EditableIntegerInput
+                              min={0}
+                              value={/^\d+$/.test(v.initial_stock) ? Number(v.initial_stock) : ''}
+                              onChange={(val) => {
+                                const updated = [...variantsList];
+                                updated[i] = { ...updated[i], initial_stock: val === '' ? '' : String(val) };
+                                setVariantsList(updated);
+                              }}
+                              placeholder="0"
+                              className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
+                              ariaLabel="საწყისი მარაგი ცალობით"
+                            />
+                          )}
                         </div>
                       </div>
                     </div>
