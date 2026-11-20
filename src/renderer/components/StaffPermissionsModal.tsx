@@ -11,7 +11,8 @@ import { User } from '../../shared/types.ts';
 import { 
   PERMISSION_GROUPS, 
   DEFAULT_SELLER_PERMISSIONS, 
-  ALL_PERMISSION_IDS 
+  ALL_PERMISSION_IDS,
+  OWNER_ONLY_CAPABILITIES
 } from '../../shared/permissions.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { 
@@ -25,6 +26,9 @@ import {
   AlertTriangle,
   Lock
 } from 'lucide-react';
+
+/** Permissions that touch money or hidden figures: marked so the owner notices them. */
+const SENSITIVE = new Set(['sales.discount', 'debts.correct', 'reports.profit', 'reports.financial', 'expenses.manage', 'products.prices']);
 
 interface StaffPermissionsModalProps {
   user: User;
@@ -282,8 +286,11 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
                               className="mt-0.5 w-4 h-4 rounded text-emerald-600 bg-slate-800 border-slate-700 focus:ring-emerald-500 focus:ring-offset-slate-900 cursor-pointer"
                             />
                             <div className="flex-1 min-w-0">
-                              <div className="text-xs font-bold text-white leading-tight">
-                                {perm.name}
+                              <div className="text-xs font-bold text-white leading-tight flex items-center gap-1.5 flex-wrap">
+                                <span>{perm.name}</span>
+                                {SENSITIVE.has(perm.id) && (
+                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-950/70 border border-amber-800/60 text-amber-300">ფულს ეხება</span>
+                                )}
                               </div>
                               <div className="text-[11px] text-slate-400 leading-normal mt-0.5">
                                 {perm.description}
@@ -297,14 +304,27 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
                 );
               })}
 
-              {/* Owner-Only Notice */}
-              <div className="p-3.5 bg-amber-950/20 border border-amber-800/40 rounded-xl flex items-start space-x-3 text-amber-200/90 text-xs">
-                <Lock className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <div className="font-bold text-amber-300">მხოლოდ მფლობელის ექსკლუზიური ოპერაციები</div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">
-                    თანამშრომლების რეგისტრაცია, PIN-ების გადაყენება, ბაზის გასუფთავება და სარეზერვო ასლების (Backup) მართვა ხელმისაწვდომია მკაცრად მხოლოდ მფლობელის ანგარიშისთვის და გამყიდველს ვერ გადაეცემა.
+              {/* Owner-only: shown locked, never stored for a seller */}
+              <div className="bg-slate-950/50 border border-amber-800/40 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 bg-amber-950/20 border-b border-amber-800/40 flex items-center gap-2">
+                  <Lock className="w-4 h-4 text-amber-400 shrink-0" />
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-bold text-amber-300">მხოლოდ მფლობელი</h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      ეს მოქმედებები გამყიდველს ვერ გადაეცემა: მათით შესაძლებელი იქნებოდა საკუთარი უფლებების გაზრდა ან მფლობელის ჩაკეტვა.
+                    </p>
                   </div>
+                </div>
+                <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {OWNER_ONLY_CAPABILITIES.map((cap) => (
+                    <div key={cap.id} className="flex items-start space-x-3 p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/30 opacity-80">
+                      <Lock className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold text-slate-300 leading-tight">{cap.name}</div>
+                        <div className="text-[11px] text-slate-500 leading-normal mt-0.5">{cap.description}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </>

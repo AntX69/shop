@@ -227,6 +227,21 @@ export class BackupService {
   }
 
   /**
+   * Making a backup (and seeing the list) may be given to a seller ("backups.create"); restoring
+   * never: an old backup could bring back other PINs and permissions. Read from SQLite so a
+   * revoked permission applies at once. (No AuthService here: it imports this service.)
+   */
+  private checkCanCreateBackup(user: User): void {
+    if (user?.role === 'owner') return;
+    const granted = user && this.db.prepare(
+      "SELECT 1 FROM user_permissions up JOIN users u ON u.id = up.user_id WHERE up.user_id = ? AND up.permission = 'backups.create' AND u.is_active = 1 AND u.role = 'seller'"
+    ).get(user.id);
+    if (!granted) {
+      throw new Error('სარეზერვო ასლების მართვის უფლება აქვს მხოლოდ მფლობელს (Owner) ან უფლებამოსილ თანამშრომელს');
+    }
+  }
+
+  /**
    * Resolves the configured backup directory or falls back to <data>/backups.
    */
   getEffectiveBackupDirectory(): string {
@@ -314,7 +329,7 @@ export class BackupService {
     mirror_filepath?: string | null;
     mirror_error?: string | null;
   } {
-    this.checkOwner(user);
+    this.checkCanCreateBackup(user);
 
     const dbPath = this.getTargetDbPath();
     if (dbPath !== ':memory:' && !fs.existsSync(dbPath)) {
@@ -733,7 +748,7 @@ export class BackupService {
    * Lists all existing .posbackup files in the configured backup directory.
    */
   listBackups(user: User): BackupInfo[] {
-    this.checkOwner(user);
+    this.checkCanCreateBackup(user);
 
     const backupDir = this.getEffectiveBackupDirectory();
     if (!fs.existsSync(backupDir)) return [];

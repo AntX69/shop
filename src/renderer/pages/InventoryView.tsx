@@ -15,6 +15,11 @@ import { Product, ProductVariant, User } from '../../shared/types.ts';
 import { formatTetri } from '../../shared/money.ts';
 import { gramsToKg } from '../../shared/quantity.ts';
 import { weightToGrams, moneyToTetri } from '../utils/numericInput.ts';
+import { can, hasStockNumber } from '../utils/access.ts';
+
+/** Stock as text; a dash when this user may not see quantities ("inventory.quantities"). */
+const qtyText = (grams: number | null | undefined, unit: string | undefined, withUnit = true) =>
+  !hasStockNumber(grams) ? '—' : unit === 'kg' ? `${gramsToKg(grams)}${withUnit ? ' კგ' : ''}` : `${grams}${withUnit ? ' ცალი' : ''}`;
 import { invokeIpc } from '../api/ipcClient.ts';
 import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
 import { 
@@ -35,7 +40,9 @@ interface InventoryViewProps {
 }
 
 export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => {
-  const isOwner = currentUser.role === 'owner';
+  const canReceive = can(currentUser, 'inventory.receive');
+  const canAdjust = can(currentUser, 'inventory.adjust');
+  const canSeeQty = can(currentUser, 'inventory.quantities');
 
   const [activeTab, setActiveTab] = useState<'stock' | 'movements'>('stock');
   const [products, setProducts] = useState<Product[]>([]);
@@ -232,9 +239,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
             </button>
           </div>
 
-          {isOwner && (
+          {(canReceive || canAdjust) && (
             <>
-              <button
+              {canReceive && <button
                 onClick={() => {
                   setIsRestockOpen(true);
                   setModalError('');
@@ -243,9 +250,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
               >
                 <PlusCircle className="w-3.5 h-3.5" />
                 <span>შევსება</span>
-              </button>
+              </button>}
 
-              <button
+              {canAdjust && <button
                 onClick={() => {
                   setIsCorrectionOpen(true);
                   setModalError('');
@@ -254,7 +261,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
               >
                 <Sliders className="w-3.5 h-3.5" />
                 <span>კორექცია</span>
-              </button>
+              </button>}
             </>
           )}
         </div>
@@ -325,8 +332,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {allVariants.map((v) => {
-                    const isZero = v.stock_quantity <= 0;
-                    const isLow = v.stock_quantity > 0 && v.stock_quantity <= lowThreshold;
+                    const isZero = canSeeQty && v.stock_quantity <= 0;
+                    const isLow = canSeeQty && v.stock_quantity > 0 && v.stock_quantity <= lowThreshold;
                     const primaryCode = v.codes?.[0]?.code_value || '-';
                     const price = v.effective_price_tetri ?? 0;
 
@@ -346,7 +353,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                         </td>
                         <td className="py-3 px-4 text-right font-extrabold text-base">
                           <span className={isZero ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-slate-100'}>
-                            {v.unit_type === 'kg' ? gramsToKg(v.stock_quantity) : v.stock_quantity}
+                            {qtyText(v.stock_quantity, v.unit_type, false)}
                           </span> <span className="text-xs text-slate-400 font-normal">{v.unit_type === 'kg' ? 'კგ' : 'ც'}</span>
                         </td>
                         <td className="py-3 px-4 text-center">
@@ -408,13 +415,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                       </td>
                       <td className="py-2.5 px-4 text-right font-bold text-sm">
                         <span className={isPositive ? 'text-emerald-400' : 'text-red-400'}>
-                          {m.unit_type === 'kg'
+                          {!hasStockNumber(m.quantity_change) ? '—' : m.unit_type === 'kg'
                             ? (isPositive ? `+${gramsToKg(m.quantity_change)}` : `-${gramsToKg(Math.abs(m.quantity_change))}`)
                             : (isPositive ? `+${m.quantity_change}` : m.quantity_change)}
                         </span> <span className="text-xs text-slate-400 font-normal">{m.unit_type === 'kg' ? 'კგ' : 'ც'}</span>
                       </td>
                       <td className="py-2.5 px-4 text-right font-mono text-slate-200">
-                        {m.unit_type === 'kg' ? `${gramsToKg(m.resulting_stock)} კგ` : `${m.resulting_stock} ც`}
+                        {qtyText(m.resulting_stock, m.unit_type)}
                       </td>
                       <td className="py-2.5 px-4 text-slate-300">
                         {m.reason} {m.reference_id ? `(#${m.reference_id})` : ''}
@@ -464,7 +471,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                     <option value="">-- აირჩიეთ --</option>
                     {allVariants.map(v => (
                       <option key={v.id} value={v.id}>
-                        {v.product_name} - {v.variant_name} (მიმდინარე ნაშთი: {v.unit_type === 'kg' ? `${gramsToKg(v.stock_quantity)} კგ` : `${v.stock_quantity} ცალი`})
+                        {v.product_name} - {v.variant_name} (მიმდინარე ნაშთი: {qtyText(v.stock_quantity, v.unit_type)})
                       </option>
                     ))}
                   </select>
@@ -570,14 +577,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                       const id = parseInt(e.target.value, 10);
                       setCorrectionVariantId(id);
                       const v = allVariants.find(it => it.id === id);
-                      if (v) setCountedQty(v.unit_type === 'kg' ? gramsToKg(v.stock_quantity, false) : String(v.stock_quantity));
+                      if (v) setCountedQty(!hasStockNumber(v.stock_quantity) ? '' : v.unit_type === 'kg' ? gramsToKg(v.stock_quantity, false) : String(v.stock_quantity));
                     }}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   >
                     <option value="">-- აირჩიეთ --</option>
                     {allVariants.map(v => (
                       <option key={v.id} value={v.id}>
-                        {v.product_name} - {v.variant_name} (ბაზაში: {v.unit_type === 'kg' ? `${gramsToKg(v.stock_quantity)} კგ` : `${v.stock_quantity} ცალი`})
+                        {v.product_name} - {v.variant_name} (ბაზაში: {qtyText(v.stock_quantity, v.unit_type)})
                       </option>
                     ))}
                   </select>

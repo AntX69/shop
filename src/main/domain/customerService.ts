@@ -132,7 +132,7 @@ export class CustomerService {
     notes?: string;
     idempotency_key?: string;
   }): DebtRepayment {
-    this.requirePermission(user, 'debts.repayment', 'ნისიის დაფარვა');
+    this.requirePermission(user, 'debts.collect', 'ნისიის დაფარვა');
     const payload = requireObject<any>(rawPayload, 'დაფარვა');
     const customerId = requireId(payload.customer_id, 'კლიენტი');
     if (typeof payload.amount_tetri === 'number' && payload.amount_tetri <= 0) {
@@ -140,6 +140,7 @@ export class CustomerService {
     }
     const amount = requirePositiveAmount(payload.amount_tetri, 'დაფარვის თანხა');
     const saleId = optionalId(payload.sale_id, 'გაყიდვა');
+    if (saleId !== null) this.requirePermission(user, 'debts.select_receipt', 'კონკრეტული ჩეკის დაფარვა');
     const notes = optionalString(payload.notes, 500, 'შენიშვნა');
     const idempotencyKey = optionalIdempotencyKey(payload.idempotency_key);
 
@@ -273,7 +274,7 @@ export class CustomerService {
     customer_balance_before_tetri: number;
     customer_balance_after_tetri: number;
   } {
-    this.requirePermission(user, 'debts.correction', 'დაფარვის გაუქმება');
+    this.requirePermission(user, 'debts.correct', 'დაფარვის გაუქმება');
     const payload = requireObject<any>(rawPayload, 'დაფარვის გაუქმება');
     const repaymentId = requireId(payload.repayment_id, 'დაფარვა');
     const reason = requireString(payload.reason, 300, 'გაუქმების მიზეზი');
@@ -309,7 +310,7 @@ export class CustomerService {
    * Correction: writes off (forgives) part or all of the debt still open on one sale.
    */
   writeOffDebt(user: User, rawPayload: { sale_id: number; amount_tetri: number; reason: string; idempotency_key?: string }): any {
-    this.requirePermission(user, 'debts.correction', 'ნისიის ჩამოწერა');
+    this.requirePermission(user, 'debts.correct', 'ნისიის ჩამოწერა');
     const payload = requireObject<any>(rawPayload, 'ნისიის ჩამოწერა');
     const saleId = requireId(payload.sale_id, 'გაყიდვა');
     const amount = requirePositiveAmount(payload.amount_tetri, 'ჩამოსაწერი თანხა');
@@ -371,7 +372,7 @@ export class CustomerService {
 
   /** View of all debt corrections for a customer (write-offs and voided repayments). */
   getDebtCorrections(user: User, customerId: number): { write_offs: any[]; voided_repayments: any[] } {
-    this.requirePermission(user, 'debts.view', 'ნისიის კორექციების ნახვა');
+    this.requirePermission(user, 'debts.history', 'ნისიის კორექციების ნახვა');
     const write_offs = this.db.prepare(`
       SELECT da.*, s.receipt_number, u.name AS user_name
       FROM debt_adjustments da JOIN sales s ON s.id = da.sale_id JOIN users u ON u.id = da.user_id

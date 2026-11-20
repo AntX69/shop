@@ -19,7 +19,13 @@ import { SalesHistoryView } from './renderer/pages/SalesHistoryView.tsx';
 import { FinanceView } from './renderer/pages/FinanceView.tsx';
 import { StaffView } from './renderer/pages/StaffView.tsx';
 import { SettingsView } from './renderer/pages/SettingsView.tsx';
+import { SellerBackupView } from './renderer/pages/SellerBackupView.tsx';
 import { invokeIpc, setClientToken } from './renderer/api/ipcClient.ts';
+import { AppTab, canOpenTab, firstAllowedTab } from './renderer/utils/access.ts';
+
+const HOTKEY_TABS: Record<string, AppTab> = {
+  F1: 'pos', F2: 'products', F3: 'inventory', F4: 'debts', F5: 'history', F6: 'finance', F7: 'staff', F8: 'settings',
+};
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -41,8 +47,32 @@ export default function App() {
   // Handle Login
   const handleLoginSuccess = (session: UserSession) => {
     setCurrentUser(session.user);
-    setActiveTab('pos');
+    setActiveTab(firstAllowedTab(session.user) ?? 'pos');
   };
+
+  // The owner may change a seller's permissions at any time. The main process applies the change
+  // to the very next request; here the screen list is refreshed whenever the user switches screens
+  // or comes back to the window. A revoked session locks the screen.
+  const refreshUser = () => {
+    invokeIpc<User>('auth:me')
+      .then((me) => setCurrentUser((prev) => (prev && prev.id === me.id ? me : prev)))
+      .catch(() => handleLockSession());
+  };
+  useEffect(() => {
+    if (currentUser) refreshUser();
+  }, [activeTab]);
+  useEffect(() => {
+    const onFocus = () => { if (currentUser) refreshUser(); };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [currentUser?.id]);
+  // If the current screen is no longer allowed, move to the first allowed one.
+  useEffect(() => {
+    if (currentUser && !canOpenTab(currentUser, activeTab)) {
+      const next = firstAllowedTab(currentUser);
+      if (next) setActiveTab(next);
+    }
+  }, [currentUser, activeTab]);
 
   // Lock session: the session is revoked in the main process, not only forgotten here
   const handleLockSession = () => {
@@ -81,30 +111,10 @@ export default function App() {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
       if (!currentUser) return;
 
-      if (e.key === 'F1') {
+      const tab = HOTKEY_TABS[e.key];
+      if (tab) {
         e.preventDefault();
-        setActiveTab('pos');
-      } else if (e.key === 'F2') {
-        e.preventDefault();
-        setActiveTab('products');
-      } else if (e.key === 'F3') {
-        e.preventDefault();
-        setActiveTab('inventory');
-      } else if (e.key === 'F4') {
-        e.preventDefault();
-        setActiveTab('debts');
-      } else if (e.key === 'F5') {
-        e.preventDefault();
-        setActiveTab('history');
-      } else if (e.key === 'F6' && currentUser.role === 'owner') {
-        e.preventDefault();
-        setActiveTab('finance');
-      } else if (e.key === 'F7' && currentUser.role === 'owner') {
-        e.preventDefault();
-        setActiveTab('staff');
-      } else if (e.key === 'F8' && currentUser.role === 'owner') {
-        e.preventDefault();
-        setActiveTab('settings');
+        if (canOpenTab(currentUser, tab)) setActiveTab(tab);
       } else if (e.key === 'F12') {
         e.preventDefault();
         handleLockSession();
@@ -131,19 +141,29 @@ export default function App() {
       />
 
       <main className="flex-1 flex flex-col overflow-hidden min-h-0">
-        {activeTab === 'pos' && <PosView currentUser={currentUser} />}
-        {activeTab === 'products' && <ProductsView currentUser={currentUser} />}
-        {activeTab === 'inventory' && <InventoryView currentUser={currentUser} />}
-        {activeTab === 'debts' && <DebtsView currentUser={currentUser} />}
-        {activeTab === 'history' && <SalesHistoryView currentUser={currentUser} />}
-        {activeTab === 'finance' && currentUser.role === 'owner' && <FinanceView currentUser={currentUser} />}
-        {activeTab === 'staff' && currentUser.role === 'owner' && <StaffView currentUser={currentUser} />}
-        {activeTab === 'settings' && currentUser.role === 'owner' && (
+        {!firstAllowedTab(currentUser) && (
+          <div className="flex-1 flex items-center justify-center p-6 text-center">
+            <div className="max-w-md space-y-2">
+              <div className="text-lg font-bold text-white">ამ ანგარიშს ჯერ არცერთი უფლება არ აქვს</div>
+              <div className="text-sm text-slate-400">მიმართეთ მფლობელს: უფლებებს ის ანიჭებს „პერსონალის“ ეკრანზე.</div>
+            </div>
+          </div>
+        )}
+        {activeTab === 'pos' && canOpenTab(currentUser, 'pos') && <PosView currentUser={currentUser} />}
+        {activeTab === 'products' && canOpenTab(currentUser, 'products') && <ProductsView currentUser={currentUser} />}
+        {activeTab === 'inventory' && canOpenTab(currentUser, 'inventory') && <InventoryView currentUser={currentUser} />}
+        {activeTab === 'debts' && canOpenTab(currentUser, 'debts') && <DebtsView currentUser={currentUser} />}
+        {activeTab === 'history' && canOpenTab(currentUser, 'history') && <SalesHistoryView currentUser={currentUser} />}
+        {activeTab === 'finance' && canOpenTab(currentUser, 'finance') && <FinanceView currentUser={currentUser} />}
+        {activeTab === 'staff' && canOpenTab(currentUser, 'staff') && <StaffView currentUser={currentUser} />}
+        {activeTab === 'settings' && canOpenTab(currentUser, 'settings') && (currentUser.role === 'owner' ? (
           <SettingsView
             currentUser={currentUser}
             onStoreNameChanged={(name) => setStoreName(name)}
           />
-        )}
+        ) : (
+          <SellerBackupView currentUser={currentUser} />
+        ))}
       </main>
     </div>
   );

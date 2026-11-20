@@ -109,7 +109,7 @@ export class ProductsService {
     }
   }
 
-  private requirePermission(requester: User, permission: string, message: string): void {
+  private requirePermission(requester: User, permission: string | string[], message: string): void {
     if (requester.role === 'owner') return;
     const auth = new AuthService(this.db);
     if (!auth.hasPermission(requester, permission)) {
@@ -387,11 +387,10 @@ export class ProductsService {
   // --- Product Creation ---
 
   createProduct(requester: User, rawInput: CreateProductInput): Product {
+    // Entering the purchase cost of a new product is data entry (allowed with products.create);
+    // reading costs back needs reports.profit (filtered out of every response otherwise).
     this.requirePermission(requester, 'products.create', 'პროდუქტის დამატების უფლება არ გაქვთ');
     const input = requireObject<CreateProductInput>(rawInput, 'პროდუქტი');
-    if (input.base_cost_tetri != null && input.base_cost_tetri > 0) {
-      this.requirePermission(requester, 'products.change_cost', 'თვითღირებულების შეცვლის უფლება არ გაქვთ');
-    }
 
     const trimmedName = typeof input.name === 'string' ? input.name.trim() : '';
     if (!trimmedName) {
@@ -452,16 +451,10 @@ export class ProductsService {
 
   /** Changes name, category, description, price or purchase cost. History is not touched. */
   updateProduct(requester: User, rawInput: UpdateProductInput): Product {
-    this.requirePermission(requester, 'products.edit', 'პროდუქტის რედაქტირების უფლება არ გაქვთ');
+    // Entry: any of the three; each changed field then needs its own permission below.
+    this.requirePermission(requester, ['products.edit', 'products.prices', 'reports.profit'], 'პროდუქტის რედაქტირების უფლება არ გაქვთ');
     const input = requireObject<UpdateProductInput>(rawInput, 'პროდუქტი');
     const productId = requireId(input.productId, 'პროდუქტი');
-
-    if (has(input, 'base_price_tetri')) {
-      this.requirePermission(requester, 'products.change_price', 'ფასის შეცვლის უფლება არ გაქვთ');
-    }
-    if (has(input, 'base_cost_tetri')) {
-      this.requirePermission(requester, 'products.change_cost', 'თვითღირებულების შეცვლის უფლება არ გაქვთ');
-    }
 
     return runInTransaction((db) => {
       const before = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as any;
@@ -482,18 +475,29 @@ export class ProductsService {
       if (has(input, 'unit_type') && input.unit_type !== undefined) {
         const newUnitType = input.unit_type === 'kg' ? 'kg' : 'piece';
         if (newUnitType !== (before.unit_type || 'piece')) {
-          // Block unit_type change if product has sales history
-          const hasSales = (db.prepare(
-            "SELECT COUNT(*) AS n FROM sale_items si JOIN product_variants pv ON si.variant_id = pv.id WHERE pv.product_id = ?"
-          ).get(productId) as any).n > 0;
-          if (hasSales) {
-            throw new Error('გაყიდვების ისტორიის მქონე პროდუქტს ერთეულის ტიპი ვეღარ შეეცვლება');
+          // Pieces and grams are different numbers: 10 pieces must never become 10 g. The unit
+          // can change only while the product has no stock, no stock history and no sales.
+          const used = db.prepare(`
+            SELECT
+              (SELECT COALESCE(SUM(ABS(stock_quantity)), 0) FROM product_variants WHERE product_id = ?) AS stock,
+              (SELECT COUNT(*) FROM inventory_movements im JOIN product_variants pv ON im.variant_id = pv.id WHERE pv.product_id = ?) AS movements,
+              (SELECT COUNT(*) FROM inventory_lots il JOIN product_variants pv ON il.variant_id = pv.id WHERE pv.product_id = ?) AS lots,
+              (SELECT COUNT(*) FROM sale_items si JOIN product_variants pv ON si.variant_id = pv.id WHERE pv.product_id = ?) AS sales
+          `).get(productId, productId, productId, productId) as any;
+          if (used.sales > 0) throw new Error('გაყიდვების ისტორიის მქონე პროდუქტს ერთეულის ტიპი ვეღარ შეეცვლება');
+          if (used.stock > 0 || used.movements > 0 || used.lots > 0) {
+            throw new Error('ერთეულის (ცალი/კგ) შეცვლა შეუძლებელია: პროდუქტს აქვს მარაგი ან მარაგის ისტორია. შექმენით ახალი პროდუქტი სწორი ერთეულით');
           }
           next.unit_type = newUnitType;
         }
       }
 
       const changed = ['name', 'category_id', 'description', 'base_price_tetri', 'base_cost_tetri', 'unit_type'].filter((k) => before[k] !== next[k]);
+      // Price and cost need their own permission only when they really change (the edit form
+      // sends every field back).
+      if (changed.some((k) => ['name', 'category_id', 'description', 'unit_type'].includes(k))) this.requirePermission(requester, 'products.edit', 'პროდუქტის რედაქტირების უფლება არ გაქვთ');
+      if (changed.includes('base_price_tetri')) this.requirePermission(requester, 'products.prices', 'ფასის შეცვლის უფლება არ გაქვთ');
+      if (changed.includes('base_cost_tetri')) this.requirePermission(requester, 'reports.profit', 'თვითღირებულების შეცვლის უფლება არ გაქვთ');
       if (changed.length === 0) return this.getProductById(productId, { includeArchived: true })!;
 
       const now = new Date().toISOString();
@@ -526,9 +530,10 @@ export class ProductsService {
   }
 
   addVariant(requester: User, productId: number, rawVariant: VariantInput): Product {
-    this.requirePermission(requester, 'products.edit', 'ვარიანტის დამატების უფლება არ გაქვთ');
+    this.requirePermission(requester, 'products.variants', 'ვარიანტის დამატების უფლება არ გაქვთ');
     const id = requireId(productId, 'პროდუქტი');
     const v = requireObject<VariantInput>(rawVariant, 'ვარიანტი');
+    if (v.price_override_tetri != null) this.requirePermission(requester, 'products.prices', 'ფასის შეცვლის უფლება არ გაქვთ');
     const product = this.db.prepare("SELECT id, base_cost_tetri, unit_type FROM products WHERE id = ?").get(id) as any;
     if (!product) throw new Error('პროდუქტი ვერ მოიძებნა');
     const codes = this.normalizeVariantCodes(v, new Set());
@@ -544,16 +549,9 @@ export class ProductsService {
    * restock/correction so that every change has a movement and FIFO layer.
    */
   updateVariant(requester: User, rawInput: UpdateVariantInput): Product {
-    this.requirePermission(requester, 'products.edit', 'ვარიანტის რედაქტირების უფლება არ გაქვთ');
+    this.requirePermission(requester, ['products.variants', 'products.prices', 'reports.profit'], 'ვარიანტის რედაქტირების უფლება არ გაქვთ');
     const input = requireObject<UpdateVariantInput>(rawInput, 'ვარიანტი');
     const variantId = requireId(input.variantId, 'ვარიანტი');
-
-    if (has(input, 'price_override_tetri')) {
-      this.requirePermission(requester, 'products.change_price', 'ფასის შეცვლის უფლება არ გაქვთ');
-    }
-    if (has(input, 'cost_override_tetri')) {
-      this.requirePermission(requester, 'products.change_cost', 'თვითღირებულების შეცვლის უფლება არ გაქვთ');
-    }
 
     return runInTransaction((db) => {
       const before = db.prepare("SELECT * FROM product_variants WHERE id = ?").get(variantId) as any;
@@ -570,6 +568,9 @@ export class ProductsService {
 
       const fields = ['variant_name', 'size', 'color', 'price_override_tetri', 'cost_override_tetri'];
       const changed = fields.filter((k) => before[k] !== next[k]);
+      if (changed.some((k) => ['variant_name', 'size', 'color'].includes(k))) this.requirePermission(requester, 'products.variants', 'ვარიანტის რედაქტირების უფლება არ გაქვთ');
+      if (changed.includes('price_override_tetri')) this.requirePermission(requester, 'products.prices', 'ფასის შეცვლის უფლება არ გაქვთ');
+      if (changed.includes('cost_override_tetri')) this.requirePermission(requester, 'reports.profit', 'თვითღირებულების შეცვლის უფლება არ გაქვთ');
       db.prepare(
         "UPDATE product_variants SET variant_name = ?, size = ?, color = ?, price_override_tetri = ?, cost_override_tetri = ? WHERE id = ?"
       ).run(next.variant_name, next.size, next.color, next.price_override_tetri, next.cost_override_tetri, variantId);
@@ -580,6 +581,7 @@ export class ProductsService {
         const value = raw == null || String(raw).trim() === '' ? null
           : type === 'manual_5digit' ? this.validateManualCode(String(raw)) : this.validateBarcode(String(raw));
         if ((current?.code_value ?? null) === value) return;
+        this.requirePermission(requester, 'products.variants', 'ვარიანტის კოდების შეცვლის უფლება არ გაქვთ');
         if (value) this.checkCodeUniqueness(value, variantId);
         if (current) db.prepare("DELETE FROM product_codes WHERE id = ?").run(current.id);
         if (value) db.prepare("INSERT INTO product_codes (variant_id, code_type, code_value) VALUES (?, ?, ?)").run(variantId, type, value);
@@ -603,7 +605,7 @@ export class ProductsService {
   }
 
   setVariantActive(requester: User, variantId: number, isActive: boolean): Product {
-    this.requirePermission(requester, 'products.archive', 'ვარიანტის დაარქივების უფლება არ გაქვთ');
+    this.requirePermission(requester, 'products.variants', 'ვარიანტის დაარქივების უფლება არ გაქვთ');
     const id = requireId(variantId, 'ვარიანტი');
     const row = this.db.prepare("SELECT id, product_id, is_active FROM product_variants WHERE id = ?").get(id) as any;
     if (!row) throw new Error('ვარიანტი ვერ მოიძებნა');
@@ -779,7 +781,8 @@ export class ProductsService {
    * Add image to existing product (a data: URL from the renderer; stored as a file).
    */
   addImage(requester: User, productId: number, image: string, isPrimary: boolean = false): ProductImage {
-    this.requirePermission(requester, 'products.edit', 'სურათის მართვის უფლება არ გაქვთ');
+    // Photos are added right after a product is created, so products.create also allows it.
+    this.requirePermission(requester, ['products.edit', 'products.create'], 'სურათის მართვის უფლება არ გაქვთ');
     const id = requireId(productId, 'პროდუქტი');
     if (!this.db.prepare("SELECT 1 FROM products WHERE id = ?").get(id)) throw new Error('პროდუქტი ვერ მოიძებნა');
     if (typeof image !== 'string' || !image.trim()) {

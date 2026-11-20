@@ -25,6 +25,13 @@ import { WebcamModal } from '../components/WebcamModal.tsx';
 import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
 import { gramsToKg, formatUnitQuantity, lineTotalTetri } from '../../shared/quantity.ts';
 import { weightToGrams } from '../utils/numericInput.ts';
+import { can, hasStockNumber, stockLimit } from '../utils/access.ts';
+
+/** Stock as a UI limit; hidden stock (no "inventory.quantities") is not a limit here, the main process checks it. */
+const stockOf = (v: { stock_quantity?: number | null }) => stockLimit(v.stock_quantity);
+/** Stock as text, or a dash when this user may not see quantities. */
+const stockText = (stock: number | null | undefined, isKg: boolean) =>
+  hasStockNumber(stock) ? (isKg ? `${gramsToKg(stock)} კგ` : `${stock} ცალი`) : '—';
 import { 
   Barcode, 
   Search, 
@@ -91,6 +98,10 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   const [cashReceivedInput, setCashReceivedInput] = useState<string>('');
   // Owner-only discounts (the main process rejects them from sellers)
   const isOwner = currentUser.role === 'owner';
+  const canDiscount = can(currentUser, 'sales.discount');
+  const canPay = { cash: can(currentUser, 'sales.cash'), debt: can(currentUser, 'sales.debt'), mixed: can(currentUser, 'sales.mixed') };
+  const canCreateCustomer = can(currentUser, 'customers.create');
+  const firstPayMethod = (['cash', 'debt', 'mixed'] as const).find((m) => canPay[m]) ?? 'cash';
   const [cartDiscountInput, setCartDiscountInput] = useState<string>('');
   const [discountReason, setDiscountReason] = useState<string>('');
   const [lineDiscountEditor, setLineDiscountEditor] = useState<number | null>(null);
@@ -137,6 +148,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   };
 
   const loadCustomers = async () => {
+    // Customers are needed only to sell on debt / mixed (the main process refuses the list otherwise).
+    if (!canPay.debt && !canPay.mixed && !can(currentUser, 'debts.view')) return;
     try {
       const custs = await invokeIpc<Customer[]>('customers:list');
       setCustomers(custs);
@@ -258,7 +271,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
     setSearchError('');
     const current = confirmRef.current;
     const isKg = (product.unit_type || variant.unit_type || 'piece') === 'kg';
-    const defaultQty = isKg ? Math.min(1000, variant.stock_quantity) : 1;
+    const defaultQty = isKg ? Math.min(1000, stockOf(variant)) : 1;
     const step = isKg ? 1000 : 1;
 
     if (!current) {
@@ -267,13 +280,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
     }
     if (current.variant.id === variant.id) {
       // Same product scanned again: one more unit (or 1 kg), still to be confirmed by the seller.
-      const next = Math.min(variant.stock_quantity, current.quantityToAdd + step);
+      const next = Math.min(stockOf(variant), current.quantityToAdd + step);
       showConfirm({
         ...current,
         quantityToAdd: next,
         scanNote: next > current.quantityToAdd
           ? (isKg ? `იგივე პროდუქტი კიდევ ერთხელ: წონა ${gramsToKg(next)} კგ` : `იგივე პროდუქტი კიდევ ერთხელ: რაოდენობა ${next}`)
-          : (isKg ? `მარაგში მეტი არ არის (${gramsToKg(variant.stock_quantity)} კგ)` : `მარაგში მეტი არ არის (${variant.stock_quantity} ცალი)`)
+          : (isKg ? `მარაგში მეტი არ არის (${gramsToKg(stockOf(variant))} კგ)` : `მარაგში მეტი არ არის (${stockOf(variant)} ცალი)`)
       });
       return;
     }
@@ -289,7 +302,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
     const next = confirmQueueRef.current.shift();
     setQueuedCount(confirmQueueRef.current.length);
     if (next) {
-      const quantityToAdd = Math.max(1, Math.min(next.variant.stock_quantity, next.quantity));
+      const quantityToAdd = Math.max(1, Math.min(stockOf(next.variant), next.quantity));
       showConfirm({
         product: next.product,
         variant: next.variant,
@@ -402,16 +415,16 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
     if (existingIndex >= 0) {
       const existing = cart[existingIndex];
       const newQty = existing.quantity + quantityToAdd;
-      if (newQty > variant.stock_quantity) {
-        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(variant.stock_quantity) + ' კგ' : variant.stock_quantity + ' ცალი'}`);
+      if (newQty > stockOf(variant)) {
+        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(stockOf(variant)) + ' კგ' : stockOf(variant) + ' ცალი'}`);
         return;
       }
       const updatedCart = [...cart];
       updatedCart[existingIndex] = { ...existing, quantity: newQty };
       setCart(updatedCart);
     } else {
-      if (quantityToAdd > variant.stock_quantity) {
-        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(variant.stock_quantity) + ' კგ' : variant.stock_quantity + ' ცალი'}`);
+      if (quantityToAdd > stockOf(variant)) {
+        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(stockOf(variant)) + ' კგ' : stockOf(variant) + ' ცალი'}`);
         return;
       }
       setCart(prev => [
@@ -425,7 +438,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           unit_price_tetri: unitPrice,
           unit_type: unitType,
           quantity: quantityToAdd,
-          available_stock: variant.stock_quantity
+          available_stock: stockOf(variant)
         }
       ]);
     }
@@ -469,9 +482,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   const lineSubtotalOf = (c: CartItem) => lineTotalTetri(c.unit_price_tetri, c.quantity, c.unit_type === 'kg' ? 'kg' : 'piece');
   const cartSubtotalTetri = cart.reduce((sum, item) => sum + lineSubtotalOf(item), 0);
   // A line discount never exceeds the line (quantity may have been lowered after it was set).
-  const lineDiscountOf = (c: CartItem) => (isOwner ? Math.min(c.line_discount_tetri || 0, lineSubtotalOf(c)) : 0);
+  const lineDiscountOf = (c: CartItem) => (canDiscount ? Math.min(c.line_discount_tetri || 0, lineSubtotalOf(c)) : 0);
   const lineDiscountTotalTetri = cart.reduce((sum, item) => sum + lineDiscountOf(item), 0);
-  const parsedCartDiscount = isOwner ? safeParseTetri(cartDiscountInput) : null;
+  const parsedCartDiscount = canDiscount ? safeParseTetri(cartDiscountInput) : null;
   const cartDiscountTetri = parsedCartDiscount !== null && parsedCartDiscount > 0 ? parsedCartDiscount : 0;
   const totalDiscountTetri = lineDiscountTotalTetri + cartDiscountTetri;
   const cartTotalTetri = Math.max(0, cartSubtotalTetri - totalDiscountTetri);
@@ -499,8 +512,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   const handleOpenCheckout = () => {
     if (cart.length === 0) return;
     checkoutIdempotencyKeyRef.current = crypto.randomUUID();
-    setPaymentMethod('cash');
-    setCashReceivedInput((cartTotalTetri / 100).toFixed(2));
+    setPaymentMethod(firstPayMethod);
+    setCashReceivedInput(firstPayMethod === 'cash' ? (cartTotalTetri / 100).toFixed(2) : firstPayMethod === 'debt' ? '0' : (Math.floor(cartTotalTetri / 200) || 1).toFixed(2));
     setCheckoutError('');
     setIsCheckoutModalOpen(true);
   };
@@ -531,7 +544,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       setCheckoutError('ნაღდი თანხა არასწორადაა შეყვანილი (მაგ. 25.50 ან 25,50)');
       return;
     }
-    if (isOwner && cartDiscountInput.trim() && parsedCartDiscount === null) {
+    if (canDiscount && cartDiscountInput.trim() && parsedCartDiscount === null) {
       setCheckoutError('ფასდაკლების თანხა არასწორადაა შეყვანილი');
       return;
     }
@@ -555,8 +568,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         customer_id: selectedCustomerId,
         cash_received_tetri: paymentMethod === 'debt' ? 0 : parsedCashReceived,
         idempotency_key: idempotencyKey,
-        ...(isOwner && cartDiscountTetri > 0 ? { cart_discount_tetri: cartDiscountTetri } : {}),
-        ...(isOwner && totalDiscountTetri > 0 && discountReason.trim() ? { discount_reason: discountReason.trim() } : {})
+        ...(canDiscount && cartDiscountTetri > 0 ? { cart_discount_tetri: cartDiscountTetri } : {}),
+        ...(canDiscount && totalDiscountTetri > 0 && discountReason.trim() ? { discount_reason: discountReason.trim() } : {})
       });
 
       // Clear cart, reset idempotency key, close checkout modal, show receipt
@@ -659,7 +672,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
             {(searchInput ? filteredVariants : catalogueProducts.flatMap(p => (p.variants || []).map(v => ({ variant: v, product: p })))).map(({ variant, product }) => {
               const primaryCode = variant.codes?.[0]?.code_value || '-';
               const effectivePrice = variant.price_override_tetri ?? product.base_price_tetri;
-              const isOutOfStock = variant.stock_quantity <= 0;
+              const isOutOfStock = stockOf(variant) <= 0;
 
               return (
                 <div
@@ -694,7 +707,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       {formatTetri(effectivePrice)}
                     </div>
                     <div className={`text-xs font-medium ${isOutOfStock ? 'text-red-400' : 'text-slate-400'}`}>
-                      მარაგი: <span className={isOutOfStock ? 'font-bold' : 'text-slate-200'}>{variant.stock_quantity}</span> ც
+                      მარაგი: <span className={isOutOfStock ? 'font-bold' : 'text-slate-200'}>{stockText(variant.stock_quantity, (product.unit_type || variant.unit_type) === 'kg')}</span>
                     </div>
                   </div>
                 </div>
@@ -749,20 +762,20 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       {item.unit_type === 'kg' ? (
                         <>
                           {formatTetri(item.unit_price_tetri)}/კგ &times; {gramsToKg(item.quantity)} კგ = {formatTetri(lineSubtotalOf(item))}
-                          {isOwner && (item.line_discount_tetri || 0) > 0 && (
+                          {canDiscount && (item.line_discount_tetri || 0) > 0 && (
                             <span className="ml-1.5 text-amber-400">− {formatTetri(item.line_discount_tetri)} = {formatTetri(lineSubtotalOf(item) - (item.line_discount_tetri || 0))}</span>
                           )}
                         </>
                       ) : (
                         <>
                           {formatTetri(item.unit_price_tetri)} &times; {item.quantity} = {formatTetri(lineSubtotalOf(item))}
-                          {isOwner && (item.line_discount_tetri || 0) > 0 && (
+                          {canDiscount && (item.line_discount_tetri || 0) > 0 && (
                             <span className="ml-1.5 text-amber-400">− {formatTetri(item.line_discount_tetri)} = {formatTetri(lineSubtotalOf(item) - (item.line_discount_tetri || 0))}</span>
                           )}
                         </>
                       )}
                     </div>
-                    {isOwner && (
+                    {canDiscount && (
                       lineDiscountEditor === item.variant_id ? (
                         <input
                           autoFocus
@@ -912,7 +925,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       <div>
                         <div className="text-[11px] text-slate-400 uppercase font-semibold">ნაშთი მარაგში</div>
                         <div className="text-xl font-bold text-slate-200 mt-0.5">
-                          {isKg ? `${gramsToKg(confirmModalData.variant.stock_quantity)} კგ` : `${confirmModalData.variant.stock_quantity} ცალი`}
+                          {stockText(confirmModalData.variant.stock_quantity, isKg)}
                         </div>
                       </div>
                     </div>
@@ -945,19 +958,19 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                               -100გ
                             </button>
                             <EditableWeightInput
-                              maxGrams={confirmModalData.variant.stock_quantity}
+                              maxGrams={stockOf(confirmModalData.variant)}
                               value={confirmModalData.quantityToAdd > 0 ? gramsToKg(confirmModalData.quantityToAdd, false) : ''}
                               onChange={(val: string) => {
                                 // Empty or 0 kg -> 0 (the add button stays disabled), never the old weight.
                                 const parsed = weightToGrams(val) ?? 0;
-                                setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(prev.variant.stock_quantity, parsed) });
+                                setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(stockOf(prev.variant), parsed) });
                               }}
                               ariaLabel="წონა კილოგრამებში"
                               className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                             />
                             <button
                               type="button"
-                              onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, prev.quantityToAdd + 100) })}
+                              onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(stockOf(confirmModalData.variant), prev.quantityToAdd + 100) })}
                               className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
                               title="+100 გრამი"
                             >
@@ -965,7 +978,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                             </button>
                             <button
                               type="button"
-                              onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, prev.quantityToAdd + 500) })}
+                              onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(stockOf(confirmModalData.variant), prev.quantityToAdd + 500) })}
                               className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
                               title="+500 გრამი"
                             >
@@ -989,18 +1002,18 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                           </button>
                           <EditableIntegerInput
                             min={1}
-                            max={confirmModalData.variant.stock_quantity}
+                            max={stockOf(confirmModalData.variant)}
                             value={confirmModalData.quantityToAdd > 0 ? confirmModalData.quantityToAdd : ''}
                             onChange={(val) => {
                               // Empty -> 0 (the add button stays disabled), never the old quantity.
-                              setConfirmModalData(prev => prev && { ...prev, quantityToAdd: val === '' ? 0 : Math.min(prev.variant.stock_quantity, val) });
+                              setConfirmModalData(prev => prev && { ...prev, quantityToAdd: val === '' ? 0 : Math.min(stockOf(prev.variant), val) });
                             }}
                             ariaLabel="რაოდენობა"
                             className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                           />
                           <button
                             type="button"
-                            onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, prev.quantityToAdd + 1) })}
+                            onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(stockOf(confirmModalData.variant), prev.quantityToAdd + 1) })}
                             className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-lg flex items-center justify-center cursor-pointer"
                           >
                             +
@@ -1074,7 +1087,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     setCashReceivedInput((cartTotalTetri / 100).toFixed(2));
                     setCheckoutError('');
                   }}
-                  className={`py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                  disabled={!canPay.cash}
+                  title={canPay.cash ? undefined : 'ნაღდი გაყიდვის უფლება არ გაქვთ'}
+                  className={`disabled:opacity-30 disabled:cursor-not-allowed py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
                     paymentMethod === 'cash'
                       ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-900/30'
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-white'
@@ -1090,7 +1105,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     setCashReceivedInput('0');
                     setCheckoutError('');
                   }}
-                  className={`py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                  disabled={!canPay.debt}
+                  title={canPay.debt ? undefined : 'ნისიით გაყიდვის უფლება არ გაქვთ'}
+                  className={`disabled:opacity-30 disabled:cursor-not-allowed py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
                     paymentMethod === 'debt'
                       ? 'bg-amber-600 text-white border-amber-500 shadow-lg shadow-amber-900/30'
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-white'
@@ -1106,7 +1123,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     setCashReceivedInput((Math.floor(cartTotalTetri / 200) || 1).toFixed(2));
                     setCheckoutError('');
                   }}
-                  className={`py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                  disabled={!canPay.mixed}
+                  title={canPay.mixed ? undefined : 'შერეული გადახდის უფლება არ გაქვთ'}
+                  className={`disabled:opacity-30 disabled:cursor-not-allowed py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
                     paymentMethod === 'mixed'
                       ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-900/30'
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-white'
@@ -1122,14 +1141,14 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   <label className="text-xs font-semibold text-slate-300">
                     კლიენტი {paymentMethod !== 'cash' ? <span className="text-red-400 font-bold">* (სავალდებულოა)</span> : <span className="text-slate-400 font-normal">(სურვილისამებრ)</span>}
                   </label>
-                  <button
+                  {canCreateCustomer && <button
                     type="button"
                     onClick={() => setIsNewCustomerModalOpen(true)}
                     className="text-xs text-emerald-400 hover:underline flex items-center space-x-1 cursor-pointer"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
                     <span>+ ახალი კლიენტი</span>
-                  </button>
+                  </button>}
                 </div>
 
                 <select
@@ -1210,9 +1229,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 </div>
               )}
 
-              {isOwner && (
+              {canDiscount && (
                 <div className="bg-slate-950/50 border border-amber-900/50 p-3 rounded-xl space-y-2">
-                  <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wide">ფასდაკლება (მხოლოდ მფლობელი)</div>
+                  <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wide">ფასდაკლება</div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <EditableMoneyInput
                       value={cartDiscountInput}

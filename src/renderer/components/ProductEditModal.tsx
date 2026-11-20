@@ -9,7 +9,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Category, Product, ProductVariant, UnitType } from '../../shared/types.ts';
+import { Category, Product, ProductVariant, UnitType, User } from '../../shared/types.ts';
+import { can, hasStockNumber } from '../utils/access.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { SmartDigitInput } from './SmartDigitInput.tsx';
@@ -20,6 +21,7 @@ import { Archive, ArchiveRestore, CheckCircle, Info, Pencil, Plus, Save, X, Aler
 
 interface ProductEditModalProps {
   productId: number;
+  currentUser: User;
   categories: Category[];
   onClose: () => void;
   onChanged: () => void;
@@ -65,7 +67,13 @@ function parseOptionalGel(value: string, label: string): number | null {
 const input = 'w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500';
 const label = 'block text-[11px] font-semibold text-slate-400 mb-1';
 
-export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, categories, onClose, onChanged }) => {
+export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, currentUser, categories, onClose, onChanged }) => {
+  // Each part of the dialog follows its own permission; the main process checks every change again.
+  const canEdit = can(currentUser, 'products.edit');
+  const canPrices = can(currentUser, 'products.prices');
+  const canCost = can(currentUser, 'reports.profit');
+  const canVariants = can(currentUser, 'products.variants');
+  const canArchive = can(currentUser, 'products.archive');
   const [product, setProduct] = useState<Product | null>(null);
   const [name, setName] = useState('');
   const [categoryId, setCategoryId] = useState<number | ''>('');
@@ -125,12 +133,14 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
     if (basePrice === null || basePrice <= 0) throw new Error('გასაყიდი ფასი უნდა აღემატებოდეს 0-ს');
     return invokeIpc<Product>('products:update', {
       productId,
-      name: name.trim(),
-      category_id: categoryId === '' ? null : categoryId,
-      description: description.trim() || null,
-      base_price_tetri: basePrice,
-      base_cost_tetri: parseOptionalGel(cost, 'თვითღირებულება'),
-      unit_type: unitType,
+      ...(canEdit ? {
+        name: name.trim(),
+        category_id: categoryId === '' ? null : categoryId,
+        description: description.trim() || null,
+        unit_type: unitType,
+      } : {}),
+      ...(canPrices ? { base_price_tetri: basePrice } : {}),
+      ...(canCost ? { base_cost_tetri: parseOptionalGel(cost, 'თვითღირებულება') } : {}),
     });
   }, 'პროდუქტის მონაცემები შენახულია');
 
@@ -139,13 +149,15 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
     if (d.manual && !/^[1-9]\d{4}$/.test(d.manual)) throw new Error('5-ნიშნა კოდი უნდა იყოს 10000-დან 99999-მდე');
     return invokeIpc<Product>('products:updateVariant', {
       variantId: v.id,
-      variant_name: d.variant_name,
-      size: d.size || null,
-      color: d.color || null,
-      price_override_tetri: parseOptionalGel(d.price, 'ვარიანტის ფასი'),
-      cost_override_tetri: parseOptionalGel(d.cost, 'ვარიანტის თვითღირებულება'),
-      manual_code: d.manual,
-      barcode: d.barcode,
+      ...(canVariants ? {
+        variant_name: d.variant_name,
+        size: d.size || null,
+        color: d.color || null,
+        manual_code: d.manual,
+        barcode: d.barcode,
+      } : {}),
+      ...(canPrices ? { price_override_tetri: parseOptionalGel(d.price, 'ვარიანტის ფასი') } : {}),
+      ...(canCost ? { cost_override_tetri: parseOptionalGel(d.cost, 'ვარიანტის თვითღირებულება') } : {}),
     });
   }, `ვარიანტი "${drafts[v.id]?.variant_name || v.variant_name}" შენახულია`);
 
@@ -180,7 +192,7 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
         variant_name: d.variant_name.trim() || [d.size, d.color].filter(Boolean).join(' / ') || 'ვარიანტი',
         size: d.size || undefined,
         color: d.color || undefined,
-        price_override_tetri: parseOptionalGel(d.price, 'ვარიანტის ფასი'),
+        price_override_tetri: canPrices ? parseOptionalGel(d.price, 'ვარიანტის ფასი') : null,
         cost_override_tetri: parseOptionalGel(d.cost, 'ვარიანტის თვითღირებულება'),
         initial_stock: stock,
         codes,
@@ -235,18 +247,18 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <div className="md:col-span-2">
                     <label className={label}>დასახელება</label>
-                    <input className={input} value={name} onChange={(e) => setName(e.target.value)} maxLength={120} />
+                    <input className={input} value={name} onChange={(e) => setName(e.target.value)} maxLength={120} disabled={!canEdit} />
                   </div>
                   <div>
                     <label className={label}>კატეგორია</label>
-                    <select className={input} value={categoryId} onChange={(e) => setCategoryId(e.target.value ? Number(e.target.value) : '')}>
+                    <select className={input} value={categoryId} onChange={(e) => setCategoryId(e.target.value ? Number(e.target.value) : '')} disabled={!canEdit}>
                       <option value="">ზოგადი</option>
                       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </div>
                   <div>
                     <label className={label}>ერთეულის ტიპი</label>
-                    <select className={input} value={unitType} onChange={(e) => setUnitType(e.target.value as UnitType)}>
+                    <select className={input} value={unitType} onChange={(e) => setUnitType(e.target.value as UnitType)} disabled={!canEdit}>
                       <option value="piece">ცალი (ც)</option>
                       <option value="kg">კილოგრამი (კგ)</option>
                     </select>
@@ -254,16 +266,16 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                   <div className="grid grid-cols-2 gap-2 md:col-span-2">
                     <div>
                       <label className={label}>{unitType === 'kg' ? 'ფასი 1 კგ-ზე (₾)' : 'ფასი (₾)'}</label>
-                      <EditableMoneyInput className={input} value={price} onChange={setPrice} placeholder="0.00" />
+                      <EditableMoneyInput className={input} value={price} onChange={setPrice} placeholder="0.00" disabled={!canPrices} />
                     </div>
-                    <div>
+                    {canCost && <div>
                       <label className={label}>{unitType === 'kg' ? 'თვითღირ. 1 კგ-ზე (₾)' : 'თვითღირ. (₾)'}</label>
                       <EditableMoneyInput className={input} value={cost} onChange={setCost} placeholder="უცნობი" />
-                    </div>
+                    </div>}
                   </div>
                   <div className="md:col-span-2">
                     <label className={label}>აღწერა</label>
-                    <input className={input} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} />
+                    <input className={input} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} disabled={!canEdit} />
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 mt-3">
@@ -271,16 +283,16 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                     <Info className="w-3.5 h-3.5" />
                     ფასის ან თვითღირებულების შეცვლა უკვე შესრულებულ გაყიდვებს და არსებულ მარაგს არ ცვლის.
                   </p>
-                  <button onClick={saveProduct} disabled={busy} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer">
+                  {(canEdit || canPrices || canCost) && <button onClick={saveProduct} disabled={busy} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer">
                     <Save className="w-3.5 h-3.5" /> შენახვა
-                  </button>
+                  </button>}
                 </div>
               </section>
 
               <section>
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-sm font-bold text-white">ვარიანტები (ზომა / ფერი / კოდები)</h4>
-                  {!newVariant && (
+                  {!newVariant && canVariants && (
                     <button onClick={() => setNewVariant(emptyDraft())} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer">
                       <Plus className="w-3.5 h-3.5" /> ვარიანტის დამატება
                     </button>
@@ -296,24 +308,24 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                         <div className="grid grid-cols-2 md:grid-cols-6 gap-2 items-end">
                           <div className="md:col-span-2">
                             <label className={label}>ვარიანტი</label>
-                            <input className={input} value={d.variant_name} onChange={(e) => setDraft(v.id, { variant_name: e.target.value })} />
+                            <input className={input} value={d.variant_name} onChange={(e) => setDraft(v.id, { variant_name: e.target.value })} disabled={!canVariants} />
                           </div>
                           <div>
                             <label className={label}>ზომა</label>
-                            <input className={input} value={d.size} onChange={(e) => setDraft(v.id, { size: e.target.value })} />
+                            <input className={input} value={d.size} onChange={(e) => setDraft(v.id, { size: e.target.value })} disabled={!canVariants} />
                           </div>
                           <div>
                             <label className={label}>ფერი</label>
-                            <input className={input} value={d.color} onChange={(e) => setDraft(v.id, { color: e.target.value })} />
+                            <input className={input} value={d.color} onChange={(e) => setDraft(v.id, { color: e.target.value })} disabled={!canVariants} />
                           </div>
                           <div>
                             <label className={label}>საკუთარი ფასი (₾)</label>
-                            <EditableMoneyInput className={input} value={d.price} onChange={(p) => setDraft(v.id, { price: p })} placeholder={formatTetri(product.base_price_tetri, false)} />
+                            <EditableMoneyInput className={input} value={d.price} onChange={(p) => setDraft(v.id, { price: p })} placeholder={formatTetri(product.base_price_tetri, false)} disabled={!canPrices} />
                           </div>
-                          <div>
+                          {canCost && <div>
                             <label className={label}>თვითღირ. (₾)</label>
                             <EditableMoneyInput className={input} value={d.cost} onChange={(c) => setDraft(v.id, { cost: c })} placeholder="პროდუქტის" />
-                          </div>
+                          </div>}
                           <div className="col-span-2">
                             <label className={label}>5-ნიშნა კოდი</label>
                             <SmartDigitInput length={5} value={d.manual} onChange={(code) => setDraft(v.id, { manual: code.replace(/\D/g, '') })} ariaLabel="5-ნიშნა კოდი" />
@@ -323,15 +335,15 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                             <input className={`${input} font-mono`} value={d.barcode} onChange={(e) => setDraft(v.id, { barcode: e.target.value.replace(/\D/g, '') })} inputMode="numeric" />
                           </div>
                           <div className="text-[11px] text-slate-400">
-                            მარაგი: <span className="font-bold text-white">{formatUnitQuantity(v.stock_quantity, product.unit_type === 'kg' ? 'kg' : 'piece')}</span>
+                            მარაგი: <span className="font-bold text-white">{hasStockNumber(v.stock_quantity) ? formatUnitQuantity(v.stock_quantity, product.unit_type === 'kg' ? 'kg' : 'piece') : '—'}</span>
                           </div>
                           <div className="flex gap-1.5 justify-end">
-                            <button onClick={() => saveVariant(v)} disabled={busy} className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold cursor-pointer" title="შენახვა">
+                            {(canVariants || canPrices || canCost) && <button onClick={() => saveVariant(v)} disabled={busy} className="px-2.5 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold cursor-pointer" title="შენახვა">
                               <Save className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => toggleVariant(v)} disabled={busy} className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg text-[11px] font-bold cursor-pointer" title={archived ? 'აღდგენა' : 'დაარქივება'}>
+                            </button>}
+                            {canVariants && <button onClick={() => toggleVariant(v)} disabled={busy} className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg text-[11px] font-bold cursor-pointer" title={archived ? 'აღდგენა' : 'დაარქივება'}>
                               {archived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
-                            </button>
+                            </button>}
                           </div>
                         </div>
                       </div>
@@ -355,7 +367,7 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                         </div>
                         <div>
                           <label className={label}>საკუთარი ფასი (₾)</label>
-                          <EditableMoneyInput className={input} value={newVariant.price} onChange={(p) => setNewVariant({ ...newVariant, price: p })} placeholder="0.00" />
+                          <EditableMoneyInput className={input} value={newVariant.price} onChange={(p) => setNewVariant({ ...newVariant, price: p })} placeholder="0.00" disabled={!canPrices} />
                         </div>
                         <div>
                           <label className={label}>{product?.unit_type === 'kg' ? 'საწყისი მარაგი (კგ)' : 'საწყისი მარაგი (ცალი)'}</label>
@@ -395,7 +407,7 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
         </div>
 
         <div className="flex justify-between items-center border-t border-slate-800 px-4 sm:px-6 py-3 shrink-0">
-          {product ? (
+          {product && canArchive ? (
             <button onClick={toggleProduct} disabled={busy} className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${product.is_active === 1 ? 'bg-amber-950/60 border border-amber-800/60 text-amber-300 hover:bg-amber-900/50' : 'bg-emerald-950/60 border border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/50'}`}>
               {product.is_active === 1 ? <><Archive className="w-3.5 h-3.5" /> პროდუქტის დაარქივება</> : <><ArchiveRestore className="w-3.5 h-3.5" /> პროდუქტის აღდგენა</>}
             </button>

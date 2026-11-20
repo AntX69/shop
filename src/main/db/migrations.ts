@@ -620,6 +620,65 @@ export const migrations: Migration[] = [
       addColumnIfMissing(db, 'inventory_movements', 'unit_type', "TEXT NOT NULL DEFAULT 'piece'");
       addColumnIfMissing(db, 'inventory_lots', 'unit_type', "TEXT NOT NULL DEFAULT 'piece'");
     }
+  },
+  {
+    version: 9,
+    name: 'staff_permissions_v11',
+    up: (db: DatabaseSync) => {
+      // Migration 7 (unreleased draft) stored its own permission IDs; V1.1 uses the owner's groups.
+      // Each draft ID is translated to what it means now; an unlisted ID is dropped, never widened.
+      // Draft "reports.financial" included profit, so it maps to both new report permissions.
+      // Sellers upgraded from RC3 got migration 7's defaults, which translate exactly to
+      // DEFAULT_SELLER_PERMISSIONS (what an RC3 seller could do). Frozen copy: do not edit.
+      const LEGACY: Record<string, string[]> = {
+        'sales.create': ['pos.access', 'sales.cash'],
+        'debts.create': ['sales.debt', 'sales.mixed'],
+        'sales.view_history': ['sales.history'],
+        'sales.return': ['returns.process'],
+        'sales.exchange': ['returns.exchange'],
+        'sales.discount': ['sales.discount'],
+        'customers.view': ['debts.view'],
+        'customers.create': ['customers.create'],
+        'debts.view': ['debts.view', 'debts.history'],
+        'debts.repayment': ['debts.collect', 'debts.select_receipt'],
+        'debts.correction': ['debts.correct'],
+        'products.view': ['products.view'],
+        'products.create': ['products.create'],
+        'products.edit': ['products.edit', 'products.variants'],
+        'products.archive': ['products.archive'],
+        'products.change_price': ['products.prices'],
+        'inventory.view': ['inventory.view', 'inventory.quantities'],
+        'inventory.view_movements': ['inventory.view'],
+        'inventory.restock': ['inventory.receive'],
+        'inventory.adjust': ['inventory.adjust'],
+        'categories.create': ['categories.manage'],
+        'categories.edit': ['categories.manage'],
+        'categories.delete': ['categories.manage'],
+        'reports.sales': ['reports.financial', 'reports.export'],
+        'reports.financial': ['reports.financial', 'reports.profit'],
+        'expenses.view': ['reports.financial'],
+        'expenses.manage': ['expenses.manage'],
+      };
+      const now = new Date().toISOString();
+      const rows = db.prepare(
+        "SELECT up.user_id, up.permission FROM user_permissions up JOIN users u ON u.id = up.user_id WHERE u.role = 'seller'"
+      ).all() as Array<{ user_id: number; permission: string }>;
+      const next = new Map<number, Set<string>>();
+      for (const r of rows) {
+        if (!next.has(r.user_id)) next.set(r.user_id, new Set());
+        for (const p of LEGACY[r.permission] || []) next.get(r.user_id)!.add(p);
+      }
+      db.exec("DELETE FROM user_permissions;");
+      const insert = db.prepare("INSERT INTO user_permissions (user_id, permission, created_at) VALUES (?, ?, ?)");
+      for (const [userId, perms] of next) {
+        for (const p of [...perms].sort()) insert.run(userId, p, now);
+      }
+      if (rows.length > 0) {
+        db.prepare(
+          "INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (NULL, 'PERMISSIONS_MIGRATED', 'users', '', ?, ?)"
+        ).run(`Permissions of ${next.size} seller(s) translated to the V1.1 permission list`, now);
+      }
+    }
   }
 ];
 

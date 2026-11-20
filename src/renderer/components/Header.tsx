@@ -9,6 +9,7 @@
 
 import React from 'react';
 import { User } from '../../shared/types.ts';
+import { canOpenTab } from '../utils/access.ts';
 import { 
   ShoppingCart, 
   Package, 
@@ -47,23 +48,20 @@ export const Header: React.FC<HeaderProps> = ({
   storeName,
   onLockSession,
 }) => {
-  const isOwner = currentUser?.role === 'owner';
-
-  const navItems: Array<{ 
+    const navItems: Array<{ 
     id: NavTab; 
     label: string; 
     icon: React.ReactNode; 
     hotkey: string; 
-    ownerOnly?: boolean 
   }> = [
     { id: 'pos', label: 'სალარო', icon: <ShoppingCart className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F1' },
     { id: 'products', label: 'პროდუქცია', icon: <Package className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F2' },
     { id: 'inventory', label: 'მარაგები', icon: <Boxes className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F3' },
     { id: 'debts', label: 'ნისიები', icon: <Users className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F4' },
     { id: 'history', label: 'ისტორია', icon: <History className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F5' },
-    { id: 'finance', label: 'ფინანსები', icon: <TrendingUp className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F6', ownerOnly: true },
-    { id: 'staff', label: 'პერსონალი', icon: <UserCheck className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F7', ownerOnly: true },
-    { id: 'settings', label: 'პარამეტრები', icon: <Settings className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F8', ownerOnly: true },
+    { id: 'finance', label: 'ფინანსები', icon: <TrendingUp className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F6' },
+    { id: 'staff', label: 'პერსონალი', icon: <UserCheck className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F7' },
+    { id: 'settings', label: 'პარამეტრები', icon: <Settings className="w-3.5 h-3.5 shrink-0" />, hotkey: 'F8' },
   ];
 
   return (
@@ -88,7 +86,8 @@ export const Header: React.FC<HeaderProps> = ({
           {/* mx-auto centres the tabs when they fit and, unlike justify-center, never cuts off the first tab */}
           <div className="flex items-center gap-1 xl:gap-1.5 shrink-0 mx-auto">
             {navItems.map((item) => {
-              if (item.ownerOnly && !isOwner) return null;
+              // Only the screens this user may open (the main process authorises every action anyway).
+              if (!canOpenTab(currentUser, item.id)) return null;
               const isActive = activeTab === item.id;
               return (
                 <button

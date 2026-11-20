@@ -24,6 +24,16 @@ import { getDb } from '../db/database.ts';
 import { Expense, FinancialSummary, User } from '../../shared/types.ts';
 import { isValidLocalDate, localDate, PeriodInput, resolvePeriod } from '../../shared/time.ts';
 import { AuthService } from './authService.ts';
+import { permissionName } from '../../shared/permissions.ts';
+
+/** Summary fields computed from purchase costs (COGS, profit, losses valued at cost). */
+export const PROFIT_FIELDS = [
+  'cost_of_goods_sold_tetri', 'cogs_reversed_by_returns_tetri', 'net_cogs_tetri',
+  'has_unknown_costs', 'unknown_cost_items_count', 'unknown_cost_returned_items_count',
+  'estimated_gross_profit_tetri', 'gross_profit_partial_tetri',
+  'damaged_goods_writeoff_tetri', 'operating_result_tetri', 'operating_result_partial_tetri',
+  'inventory_value_tetri', 'inventory_value_known_tetri',
+];
 import { optionalString, requirePositiveAmount, requireObject, requireString } from './validation.ts';
 
 function csvCell(value: unknown): string {
@@ -42,7 +52,7 @@ export class FinanceService {
     if (user.role === 'owner') return;
     const authService = new AuthService(this.db);
     if (!authService.hasPermission(user, permission)) {
-      throw new Error(`${action} მოითხოვს '${permission}' უფლებას`);
+      throw new Error(`${action}: საჭიროა უფლება „${permissionName(permission)}“ (შეუძლია მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს)`);
     }
   }
 
@@ -172,7 +182,7 @@ export class FinanceService {
     const cashRefunded: number = returnsRow.cash_refund_tetri;
     const cashFlow = cashFromSales + cashFromRepayments - cashRefunded;
 
-    return {
+    const summary: Record<string, any> = {
       period_preset: period.preset,
       period_start: period.from || 'დასაწყისიდან',
       period_end: period.to || 'დღემდე',
@@ -219,11 +229,17 @@ export class FinanceService {
       outstanding_debt_tetri: debtNowRow.outstanding_tetri,
       customers_with_debt_count: debtNowRow.customers_with_debt
     };
+    // Figures derived from purchase costs reveal the margin: only with "reports.profit".
+    // (The IPC filter removes cost-named fields too; these names do not all say "cost".)
+    if (!new AuthService(this.db).hasPermission(user, 'reports.profit')) {
+      for (const k of PROFIT_FIELDS) delete summary[k];
+    }
+    return summary as any;
   }
 
   /** Owner-authorized discounts in a period, newest first. */
   listDiscounts(user: User, period?: PeriodInput, limit: number = 200): any[] {
-    this.requirePermission(user, 'reports.sales', 'ფასდაკლებების ნახვა');
+    this.requirePermission(user, 'reports.financial', 'ფასდაკლებების ნახვა');
     const p = resolvePeriod(period || { preset: 'all' });
     const clauses = ['s.discount_tetri > 0'];
     const params: any[] = [];
@@ -293,7 +309,7 @@ export class FinanceService {
   }
 
   listExpenses(user: User, limit: number = 100): Expense[] {
-    this.requirePermission(user, 'expenses.view', 'ხარჯების ნახვა');
+    this.requirePermission(user, 'reports.financial', 'ხარჯების ნახვა');
     return this.db.prepare(`
       SELECT e.*, u.name as user_name
       FROM expenses e
@@ -307,7 +323,7 @@ export class FinanceService {
    * Generates a UTF-8 BOM CSV export for Sales.
    */
   exportSalesCSV(user: User): string {
-    this.requirePermission(user, 'reports.sales', 'გაყიდვების ექსპორტი');
+    this.requirePermission(user, 'reports.export', 'გაყიდვების ექსპორტი');
     const sales = this.db.prepare(`
       SELECT s.receipt_number, s.created_at, u.name as seller,
              c.first_name || ' ' || COALESCE(c.last_name, '') as customer,

@@ -47,7 +47,7 @@ export class InventoryService {
    * unit_cost_tetri for KG products represents the cost per 1000 g (1 kg).
    */
   restockVariant(requester: User, rawPayload: RestockPayload): { new_stock: number } {
-    this.requirePermission(requester, 'inventory.restock', 'მარაგის შევსების უფლება არ გაქვთ');
+    this.requirePermission(requester, 'inventory.receive', 'მარაგის შევსების უფლება არ გაქვთ');
     const payload = requireObject<any>(rawPayload, 'მარაგის შევსება');
     const variantId = requireId(payload.variant_id, 'პროდუქტის ვარიანტი');
     if (typeof payload.added_quantity === 'number' && payload.added_quantity <= 0) {

@@ -23,6 +23,7 @@ import { OcrService } from '../domain/ocrService.ts';
 import { saveOcrSample } from '../ocr/samples.ts';
 import { noteActivity } from '../activity.ts';
 import { User } from '../../shared/types.ts';
+import { userCan } from '../../shared/permissions.ts';
 
 export interface IpcRequest {
   channel: string;
@@ -47,8 +48,14 @@ interface Ctx {
 interface Route {
   access: Access;
   handler: (ctx: Ctx) => any;
-  permission?: string;
+  /** Needed by a seller (owners always pass). A list means any one of them. */
+  permission?: string | readonly string[];
 }
+
+/** Product data is read by the POS, the products and inventory screens and the exchange dialog. */
+const PRODUCT_READ = ['products.view', 'pos.access', 'inventory.view', 'inventory.receive', 'inventory.adjust', 'returns.exchange'] as const;
+/** Customers (with balances) are needed to sell on debt and to collect repayments. */
+const CUSTOMER_READ = ['debts.view', 'debts.collect', 'sales.debt', 'sales.mixed'] as const;
 
 /** Desktop-only capabilities (native dialogs) registered by the Electron main process. */
 export interface NativeHost {
@@ -114,28 +121,29 @@ const routes: Record<string, Route> = {
   'products:deleteCategory': { access: 'user', permission: 'categories.manage', handler: (c) => products().deleteCategory(c.user, p(c).categoryId, p(c).reassignToCategoryId) },
   'products:list': {
     access: 'user',
-    permission: 'products.view',
+    permission: PRODUCT_READ,
     handler: (c) => {
       const q = { ...p(c) };
-      if (c.user.role !== 'owner') { delete q.includeArchived; delete q.archivedOnly; }
+      // Archived products are seen by whoever may archive/restore them.
+      if (!userCan(c.user, 'products.archive')) { delete q.includeArchived; delete q.archivedOnly; }
       return products().listProducts(q);
     }
   },
   'products:getById': {
     access: 'user',
-    permission: 'products.view',
-    handler: (c) => products().getProductById(p(c).productId, { includeArchived: c.user.role === 'owner' && !!p(c).includeArchived })
+    permission: PRODUCT_READ,
+    handler: (c) => products().getProductById(p(c).productId, { includeArchived: userCan(c.user, 'products.archive') && !!p(c).includeArchived })
   },
-  'products:lookupCode': { access: 'user', permission: 'products.view', handler: (c) => products().lookupByCode(String(p(c).code ?? '')) },
+  'products:lookupCode': { access: 'user', permission: PRODUCT_READ, handler: (c) => products().lookupByCode(String(p(c).code ?? '')) },
   'products:create': { access: 'user', permission: 'products.create', handler: (c) => products().createProduct(c.user, c.payload) },
-  'products:addImage': { access: 'user', permission: 'products.create', handler: (c) => products().addImage(c.user, p(c).productId, p(c).filePath, p(c).isPrimary) },
+  'products:addImage': { access: 'user', permission: ['products.create', 'products.edit'], handler: (c) => products().addImage(c.user, p(c).productId, p(c).filePath, p(c).isPrimary) },
   'products:deleteImage': { access: 'user', permission: 'products.edit', handler: (c) => { products().deleteImage(c.user, p(c).imageId); return { deleted: true }; } },
   'products:setPrimaryImage': { access: 'user', permission: 'products.edit', handler: (c) => { products().setPrimaryImage(c.user, p(c).imageId); return { updated: true }; } },
-  'products:update': { access: 'user', permission: 'products.edit', handler: (c) => products().updateProduct(c.user, c.payload) },
+  'products:update': { access: 'user', permission: ['products.edit', 'products.prices', 'reports.profit'], handler: (c) => products().updateProduct(c.user, c.payload) },
   'products:setActive': { access: 'user', permission: 'products.archive', handler: (c) => products().setProductActive(c.user, p(c).productId, !!p(c).isActive) },
-  'products:addVariant': { access: 'user', permission: 'products.edit', handler: (c) => products().addVariant(c.user, p(c).productId, p(c).variant) },
-  'products:updateVariant': { access: 'user', permission: 'products.edit', handler: (c) => products().updateVariant(c.user, c.payload) },
-  'products:setVariantActive': { access: 'user', permission: 'products.edit', handler: (c) => products().setVariantActive(c.user, p(c).variantId, !!p(c).isActive) },
+  'products:addVariant': { access: 'user', permission: 'products.variants', handler: (c) => products().addVariant(c.user, p(c).productId, p(c).variant) },
+  'products:updateVariant': { access: 'user', permission: ['products.variants', 'products.prices', 'reports.profit'], handler: (c) => products().updateVariant(c.user, c.payload) },
+  'products:setVariantActive': { access: 'user', permission: 'products.variants', handler: (c) => products().setVariantActive(c.user, p(c).variantId, !!p(c).isActive) },
 
   // 5. OCR (offline ONNX, on the OCR worker thread)
   'ocr:isModelReady': {
@@ -156,31 +164,31 @@ const routes: Record<string, Route> = {
   },
 
   // 6. Inventory
-  'inventory:restock': { access: 'user', permission: 'inventory.restock', handler: (c) => inventory().restockVariant(c.user, c.payload) },
+  'inventory:restock': { access: 'user', permission: 'inventory.receive', handler: (c) => inventory().restockVariant(c.user, c.payload) },
   'inventory:correct': { access: 'user', permission: 'inventory.adjust', handler: (c) => inventory().correctStock(c.user, c.payload) },
-  'inventory:getMovements': { access: 'user', permission: 'inventory.view_movements', handler: (c) => inventory().getMovements(p(c).variantId, p(c).limit) },
+  'inventory:getMovements': { access: 'user', permission: 'inventory.view', handler: (c) => inventory().getMovements(p(c).variantId, p(c).limit) },
 
   // 7. POS & Checkout
-  'pos:checkout': { access: 'user', permission: 'sales.create', handler: (c) => pos().checkout(c.user, c.payload) },
-  'pos:searchSales': { access: 'user', permission: 'sales.view_history', handler: (c) => pos().searchSales(c.payload) },
-  'pos:getSale': { access: 'user', permission: 'sales.view_history', handler: (c) => pos().getSaleById(p(c).saleId) },
+  'pos:checkout': { access: 'user', permission: 'pos.access', handler: (c) => pos().checkout(c.user, c.payload) },
+  'pos:searchSales': { access: 'user', permission: 'sales.history', handler: (c) => pos().searchSales(c.payload) },
+  'pos:getSale': { access: 'user', permission: 'sales.history', handler: (c) => pos().getSaleById(p(c).saleId) },
 
   // 8. Customers & Debts
-  'customers:list': { access: 'user', permission: 'customers.view', handler: (c) => customers().listCustomers(p(c).searchTerm) },
-  'customers:get': { access: 'user', permission: 'customers.view', handler: (c) => customers().getCustomerById(p(c).customerId) },
+  'customers:list': { access: 'user', permission: CUSTOMER_READ, handler: (c) => customers().listCustomers(p(c).searchTerm) },
+  'customers:get': { access: 'user', permission: CUSTOMER_READ, handler: (c) => customers().getCustomerById(p(c).customerId) },
   'customers:create': { access: 'user', permission: 'customers.create', handler: (c) => customers().createCustomer(c.user, c.payload) },
-  'customers:repay': { access: 'user', permission: 'debts.repayment', handler: (c) => customers().recordRepayment(c.user, c.payload) },
-  'customers:getRepayments': { access: 'user', permission: 'debts.view', handler: (c) => customers().getRepayments(p(c).customerId) },
-  'customers:getLedger': { access: 'user', permission: 'debts.view', handler: (c) => customers().getCustomerLedger(p(c).customerId) },
-  'customers:getActiveSales': { access: 'user', permission: 'customers.view', handler: (c) => customers().getCustomerActiveSales(p(c).customerId) },
-  'debts:voidRepayment': { access: 'user', permission: 'debts.correction', handler: (c) => customers().voidRepayment(c.user, c.payload) },
-  'debts:writeOff': { access: 'user', permission: 'debts.correction', handler: (c) => customers().writeOffDebt(c.user, c.payload) },
-  'debts:getCorrections': { access: 'user', permission: 'debts.view', handler: (c) => customers().getDebtCorrections(c.user, p(c).customerId) },
+  'customers:repay': { access: 'user', permission: 'debts.collect', handler: (c) => customers().recordRepayment(c.user, c.payload) },
+  'customers:getRepayments': { access: 'user', permission: 'debts.history', handler: (c) => customers().getRepayments(p(c).customerId) },
+  'customers:getLedger': { access: 'user', permission: 'debts.history', handler: (c) => customers().getCustomerLedger(p(c).customerId) },
+  'customers:getActiveSales': { access: 'user', permission: CUSTOMER_READ, handler: (c) => customers().getCustomerActiveSales(p(c).customerId) },
+  'debts:voidRepayment': { access: 'user', permission: 'debts.correct', handler: (c) => customers().voidRepayment(c.user, c.payload) },
+  'debts:writeOff': { access: 'user', permission: 'debts.correct', handler: (c) => customers().writeOffDebt(c.user, c.payload) },
+  'debts:getCorrections': { access: 'user', permission: 'debts.history', handler: (c) => customers().getDebtCorrections(c.user, p(c).customerId) },
 
   // 9. Returns & Exchanges
-  'returns:process': { access: 'user', permission: 'sales.return', handler: (c) => returns().processReturn(c.user, c.payload) },
-  'returns:exchange': { access: 'user', permission: 'sales.exchange', handler: (c) => returns().processExchange(c.user, c.payload) },
-  'returns:list': { access: 'user', permission: 'sales.view_history', handler: (c) => returns().listReturns(c.payload) },
+  'returns:process': { access: 'user', permission: 'returns.process', handler: (c) => returns().processReturn(c.user, c.payload) },
+  'returns:exchange': { access: 'user', permission: 'returns.exchange', handler: (c) => returns().processExchange(c.user, c.payload) },
+  'returns:list': { access: 'user', permission: 'sales.history', handler: (c) => returns().listReturns(c.payload) },
 
   // 10. Finance & Expenses
   'finance:summary': {
@@ -195,16 +203,16 @@ const routes: Record<string, Route> = {
   },
   'finance:listDiscounts': {
     access: 'user',
-    permission: 'reports.sales',
+    permission: 'reports.financial',
     handler: (c) => finance().listDiscounts(c.user, { preset: p(c).preset, from: p(c).from, to: p(c).to }, p(c).limit)
   },
   'finance:createExpense': { access: 'user', permission: 'expenses.manage', handler: (c) => finance().createExpense(c.user, c.payload) },
-  'finance:listExpenses': { access: 'user', permission: 'expenses.view', handler: (c) => finance().listExpenses(c.user, p(c).limit) },
-  'finance:exportSalesCSV': { access: 'user', permission: 'reports.sales', handler: (c) => finance().exportSalesCSV(c.user) },
+  'finance:listExpenses': { access: 'user', permission: 'reports.financial', handler: (c) => finance().listExpenses(c.user, p(c).limit) },
+  'finance:exportSalesCSV': { access: 'user', permission: 'reports.export', handler: (c) => finance().exportSalesCSV(c.user) },
 
-  // 11. Backup, Settings & Logs (owner)
-  'backup:create': { access: 'owner', handler: (c) => backup().createBackupWithMirror(c.user) },
-  'backup:list': { access: 'owner', handler: (c) => backup().listBackups(c.user) },
+  // 11. Backup, Settings & Logs (owner; making a backup and its list can be given to a seller)
+  'backup:create': { access: 'user', permission: 'backups.create', handler: (c) => backup().createBackupWithMirror(c.user) },
+  'backup:list': { access: 'user', permission: 'backups.create', handler: (c) => backup().listBackups(c.user) },
   'backup:verify': { access: 'owner', handler: (c) => backup().verifyBackup(c.user, p(c).dataString, p(c).filename) },
   'backup:runDaily': { access: 'owner', handler: () => backup().checkAndRunDailyBackup() },
   'backup:restore': { access: 'owner', handler: (c) => backup().restoreBackup(c.user, p(c).base64Data, p(c).expectedChecksum) },
@@ -242,29 +250,58 @@ const routes: Record<string, Route> = {
   'system:clearErrorLogs': { access: 'owner', handler: (c) => { backup().clearErrorLogs(c.user); return { cleared: true }; } },
 };
 
+/** Who may call each channel (for the permission tests; handlers are not exposed). */
+export function routeTable(): Array<{ channel: string; access: Access; permission?: string | readonly string[] }> {
+  return Object.entries(routes).map(([channel, r]) => ({ channel, access: r.access, permission: r.permission }));
+}
+
 /** Registers additional routes (used by features that live outside this file). */
 export function registerRoute(channel: string, route: Route): void {
   routes[channel] = route;
 }
 
-const OWNER_ONLY_FIELD = /cost|profit|cogs/i;
-const NEVER_SENT_FIELD = /^(pin_hash|pin_salt)$/;
+/** Purchase costs, COGS, profit, margins, stock valuation: only with "reports.profit". */
+const COST_FIELD = /cost|profit|cogs|margin|valuation|inventory_value|operating_result|damaged_goods_writeoff/i;
+/** Stock on hand and its movements: only with "inventory.quantities". */
+const STOCK_FIELD = /^(stock_quantity|available_stock|total_stock|resulting_stock|remaining_quantity|initial_quantity|quantity_change|stock_after|stock_before|units_in_stock|grams_in_stock)$/;
+/** Never sent to anyone, whatever a service returns. */
+const NEVER_SENT_FIELD = /^(pin_hash|pin_salt|pin)$/;
 
-/** Removes fields a session must not see: PIN hashes for everyone, costs/profit for sellers. */
-export function filterResponse(value: any, user: User | null, depth = 0): any {
+interface Viewer {
+  costs: boolean;
+  stock: boolean;
+}
+
+/** What this session may see; decided once per response from the request's fresh user record. */
+export function viewerOf(user: User | null): Viewer {
+  return {
+    costs: userCan(user, 'reports.profit'),
+    stock: userCan(user, 'inventory.quantities'),
+  };
+}
+
+function filterValue(value: any, viewer: Viewer, depth: number): any {
   if (value === null || typeof value !== 'object' || depth > 25) return value;
   // Binary data (OCR diagnostics images) has no named fields to filter and must stay binary.
   if (ArrayBuffer.isView(value)) return value;
-  if (Array.isArray(value)) return value.map((v) => filterResponse(v, user, depth + 1));
-  const isOwner = user?.role === 'owner';
-  const canSeeFinancials = isOwner || (user ? new AuthService().hasPermission(user, 'reports.financial') : false);
+  if (Array.isArray(value)) return value.map((v) => filterValue(v, viewer, depth + 1));
   const out: Record<string, any> = {};
   for (const [k, v] of Object.entries(value)) {
     if (NEVER_SENT_FIELD.test(k)) continue;
-    if (!canSeeFinancials && OWNER_ONLY_FIELD.test(k)) continue;
-    out[k] = filterResponse(v, user, depth + 1);
+    if (!viewer.costs && COST_FIELD.test(k)) continue;
+    if (!viewer.stock && STOCK_FIELD.test(k)) continue;
+    out[k] = filterValue(v, viewer, depth + 1);
   }
   return out;
+}
+
+/**
+ * Removes fields a session must not see: PIN hashes for everyone; purchase costs/profit without
+ * "reports.profit"; stock quantities without "inventory.quantities". The user's permissions are
+ * evaluated once for the whole response (no database query per object).
+ */
+export function filterResponse(value: any, user: User | null): any {
+  return filterValue(value, viewerOf(user), 0);
 }
 
 const VALIDATION_HINTS = ['PIN', 'მარაგი', 'ფორმატი', 'ნაკლებია', 'სავალდებულოა', 'არასწორია', 'უფლება', 'მხოლოდ მფლობელს', 'აღემატება', 'მთელი რიცხვი', 'ვერ მოიძებნა', 'უკვე'];
@@ -303,10 +340,10 @@ export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
     if (route.access === 'owner' && currentUser.role !== 'owner') {
       return { success: false, error: 'ამ მოქმედების უფლება აქვს მხოლოდ მფლობელს' };
     }
-    if (route.permission && currentUser.role !== 'owner') {
-      if (!new AuthService().hasPermission(currentUser, route.permission)) {
-        return { success: false, error: 'თქვენ არ გაქვთ ამ მოქმედების შესრულების უფლება (მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს)' };
-      }
+    // currentUser was just re-read from SQLite by resolveSession (role, active flag and
+    // permissions), so a change by the owner applies to the very next request.
+    if (route.permission && !userCan(currentUser, route.permission)) {
+      return { success: false, error: 'თქვენ არ გაქვთ ამ მოქმედების შესრულების უფლება (მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს)' };
     }
 
     const data = await route.handler({ user: currentUser, payload: req.payload, token });

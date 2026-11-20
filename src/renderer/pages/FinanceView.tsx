@@ -16,6 +16,7 @@ import React, { useState, useEffect } from 'react';
 import { Expense, FinancialSummary, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
+import { can } from '../utils/access.ts';
 import { EditableMoneyInput } from '../components/inputs/NumericInputs.tsx';
 import { 
   TrendingUp, 
@@ -75,6 +76,11 @@ const Stat: React.FC<{ label: string; value: number | null | undefined; hint?: s
 );
 
 export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
+  // Parts of this screen follow separate permissions; the main process filters the data itself.
+  const canReport = can(currentUser, 'reports.financial');
+  const canProfit = canReport && can(currentUser, 'reports.profit');
+  const canExport = can(currentUser, 'reports.export');
+  const canExpense = can(currentUser, 'expenses.manage');
   const [summary, setSummary] = useState<FinancialSummary | null>(null);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -94,6 +100,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
   const [expenseError, setExpenseError] = useState<string>('');
 
   const loadData = async () => {
+    if (!canReport) { setLoading(false); return; }
     if (periodPreset === 'custom' && !customFrom && !customTo) return;
     const period = periodPreset === 'custom'
       ? { preset: 'custom', from: customFrom || undefined, to: customTo || undefined }
@@ -211,21 +218,21 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
             </div>
           )}
 
-          <button
+          {canExpense && <button
             onClick={() => setIsExpenseModalOpen(true)}
             className="px-3 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>ხარჯის დამატება</span>
-          </button>
+          </button>}
 
-          <button
+          {canExport && <button
             onClick={handleExportCSV}
             className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
             <span>CSV ექსპორტი</span>
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -243,7 +250,13 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
           </div>
         )}
 
-        {summary?.has_unknown_costs && (
+        {!canReport && (
+          <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl text-slate-300 text-xs">
+            ფინანსური ანგარიშის ნახვის უფლება არ გაქვთ. ამ ეკრანზე ხელმისაწვდომია მხოლოდ ზემოთ მოცემული ღილაკები.
+          </div>
+        )}
+
+        {canProfit && summary?.has_unknown_costs && (
           <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl text-amber-200 text-xs flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
@@ -255,7 +268,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
         )}
 
         {/* 1. Sales */}
-        <FinanceSection title="გაყიდვები">
+        {canReport && <FinanceSection title="გაყიდვები">
           <Stat label="მთლიანი გაყიდვები" value={summary?.total_sales_revenue_tetri}
             hint={`${summary?.total_sales_count || 0} გაყიდვა${(summary?.exchange_sales_count || 0) > 0 ? `, მათ შორის ${summary?.exchange_sales_count} გაცვლა` : ''}`} />
           <Stat label="ფასდაკლებები" value={summary?.total_discounts_tetri} tone="amber"
@@ -264,10 +277,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
             hint={`${summary?.total_returns_count || 0} დაბრუნება/გაცვლა, გადახდილი ფასით`} />
           <Stat label="წმინდა გაყიდვები" value={summary?.net_sales_tetri} tone="white" strong
             hint="მთლიანი გაყიდვები − დაბრუნებები" />
-        </FinanceSection>
+        </FinanceSection>}
 
-        {/* 2. Cost and gross profit */}
-        <FinanceSection title="თვითღირებულება (FIFO) და მთლიანი მოგება">
+        {/* 2. Cost and gross profit (reports.profit) */}
+        {canProfit && <FinanceSection title="თვითღირებულება (FIFO) და მთლიანი მოგება">
           <Stat label="გაყიდულის თვითღირებულება" value={summary?.cost_of_goods_sold_tetri} hint="შესყიდვის ფასი პარტიების მიხედვით" />
           <Stat label="დაბრუნებით უკუგატარებული" value={summary?.cogs_reversed_by_returns_tetri} tone="cyan" hint="დაბრუნებული ნივთების თავდაპირველი თვითღირებულება" />
           <Stat label="წმინდა თვითღირებულება" value={summary?.net_cogs_tetri} hint="გაყიდული − უკუგატარებული" />
@@ -276,23 +289,23 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
           ) : (
             <Stat label="მთლიანი მოგება" value={summary?.estimated_gross_profit_tetri} tone="emerald" strong hint="წმინდა გაყიდვები − წმინდა თვითღირებულება" />
           )}
-        </FinanceSection>
+        </FinanceSection>}
 
         {/* 3. Operating result */}
-        <FinanceSection title="საოპერაციო შედეგი">
-          <Stat label="დაზიანებული საქონელი" value={summary?.damaged_goods_writeoff_tetri} tone="red"
-            hint={`${summary?.damaged_goods_units || 0} ერთეული ჩამოიწერა (თვითღირებულებით)`} />
+        {canReport && <FinanceSection title="საოპერაციო შედეგი">
+          {canProfit && <Stat label="დაზიანებული საქონელი" value={summary?.damaged_goods_writeoff_tetri} tone="red"
+            hint={`${summary?.damaged_goods_units || 0} ერთეული ჩამოიწერა (თვითღირებულებით)`} />}
           <Stat label="ჩამოწერილი ნისია" value={summary?.debt_written_off_tetri} tone="red" hint="მფლობელის მიერ ჩამოწერილი ვალი" />
           <Stat label="საოპერაციო ხარჯები" value={summary?.total_expenses_tetri} tone="red" hint="ქირა, კომუნალური, ტრანსპორტი და სხვა" />
-          {summary?.operating_result_tetri === null ? (
+          {!canProfit ? null : summary?.operating_result_tetri === null ? (
             <Stat label="საოპერაციო შედეგი (არასრული)" value={summary?.operating_result_partial_tetri} tone="amber" strong hint="ზოგიერთი ფასი უცნობია" />
           ) : (
             <Stat label="საოპერაციო შედეგი" value={summary?.operating_result_tetri} tone="emerald" strong hint="მოგება − დანაკარგები − ხარჯები" />
           )}
-        </FinanceSection>
+        </FinanceSection>}
 
         {/* 4. Cash */}
-        <FinanceSection title="ნაღდი ფული და ნისიები">
+        {canReport && <FinanceSection title="ნაღდი ფული და ნისიები">
           <Stat label="ნაღდი გაყიდვებიდან" value={summary?.cash_collected_direct_tetri} tone="emerald" hint="მიღებული ნაღდი − ხურდა" />
           <Stat label="ნისიების დაფარვიდან" value={summary?.cash_collected_debts_tetri} tone="emerald"
             hint={`${summary?.repayments_count || 0} დაფარვა (გაყიდვად არ ითვლება)`} />
@@ -303,7 +316,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
           <Stat label="ახალი ნისიები პერიოდში" value={summary?.total_new_debt_tetri} tone="amber" hint="გაყიდვებზე გაფორმებული ვალი" />
           <Stat label="კლიენტების დარჩენილი ვალი (ახლა)" value={summary?.outstanding_debt_tetri} tone="amber" strong
             hint={`${summary?.customers_with_debt_count || 0} კლიენტი`} />
-        </FinanceSection>
+        </FinanceSection>}
 
         {discounts.length > 0 && (
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
@@ -339,19 +352,19 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
           </div>
         )}
 
-        {/* Expenses List */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
+        {/* Expenses List (part of the financial report) */}
+        {canReport && <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
           <div className="flex flex-wrap justify-between items-center gap-2 mb-3 sm:mb-4">
             <h2 className="text-xs sm:text-sm font-bold text-white uppercase tracking-wider">
               მაღაზიის დაფიქსირებული ხარჯები
             </h2>
-            <button
+            {canExpense && <button
               onClick={() => setIsExpenseModalOpen(true)}
               className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>+ ახალი ხარჯი</span>
-            </button>
+            </button>}
           </div>
 
           <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto min-h-0">
@@ -390,7 +403,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
               </tbody>
             </table>
           </div>
-        </div>
+        </div>}
 
       </div>
 

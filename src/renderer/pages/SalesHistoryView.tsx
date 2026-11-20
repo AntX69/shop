@@ -19,6 +19,7 @@ import { invokeIpc } from '../api/ipcClient.ts';
 import { EditableIntegerInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
 import { formatUnitQuantity, lineTotalTetri, UnitType } from '../../shared/quantity.ts';
 import { gramsToField, weightToGrams } from '../utils/numericInput.ts';
+import { can, hasStockNumber, stockLimit } from '../utils/access.ts';
 
 const unitOf = (u?: string | null): UnitType => (u === 'kg' ? 'kg' : 'piece');
 
@@ -78,6 +79,10 @@ interface SalesHistoryViewProps {
 type HistoryTab = 'all_sales' | 'returns' | 'exchanges' | 'debts';
 
 export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser }) => {
+  // What this user may do here; the main process checks every action again.
+  const canReturn = can(currentUser, 'returns.process');
+  const canExchange = can(currentUser, 'returns.exchange');
+  const canPayExchange = { cash: true, debt: can(currentUser, 'sales.debt'), mixed: can(currentUser, 'sales.mixed') };
   const [activeTab, setActiveTab] = useState<HistoryTab>('all_sales');
   const [sales, setSales] = useState<Sale[]>([]);
   const [returnsList, setReturnsList] = useState<ReturnRecord[]>([]);
@@ -283,7 +288,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
         : 'მიუთითეთ ახალი პროდუქტის რაოდენობა');
       return;
     }
-    if (newVariantQty > selectedNewVariant.variant.stock_quantity) {
+    if (newVariantQty > stockLimit(selectedNewVariant.variant.stock_quantity)) {
       setExchangeError(`ახალი პროდუქტის მარაგი არ კმარა (${formatUnitQuantity(selectedNewVariant.variant.stock_quantity, unitOf(selectedNewVariant.product.unit_type))})`);
       return;
     }
@@ -649,23 +654,23 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                   )}
                 </div>
 
-                {selectedSale.status !== 'returned' && (
+                {selectedSale.status !== 'returned' && (canReturn || canExchange) && (
                   <div className="flex items-center space-x-2">
-                    <button
+                    {canReturn && <button
                       onClick={openReturnModal}
                       className="px-3 py-1.5 sm:px-3.5 sm:py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-md shadow-amber-950/40 cursor-pointer"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       <span>დაბრუნება</span>
-                    </button>
+                    </button>}
 
-                    <button
+                    {canExchange && <button
                       onClick={openExchangeModal}
                       className="px-3 py-1.5 sm:px-3.5 sm:py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-md shadow-blue-950/40 cursor-pointer"
                     >
                       <ArrowRightLeft className="w-3.5 h-3.5" />
                       <span>გაცვლა</span>
-                    </button>
+                    </button>}
                   </div>
                 )}
               </div>
@@ -1006,7 +1011,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                           <div className="text-right">
                             <span className="font-bold text-emerald-400">{formatTetri(effectivePrice)}</span>
                             {unitOf(product.unit_type) === 'kg' && <span className="text-[10px] text-slate-400"> / კგ</span>}
-                            <span className="text-[10px] text-slate-400 ml-2">მარაგი: {formatUnitQuantity(variant.stock_quantity, unitOf(product.unit_type))}</span>
+                            {hasStockNumber(variant.stock_quantity) && <span className="text-[10px] text-slate-400 ml-2">მარაგი: {formatUnitQuantity(variant.stock_quantity, unitOf(product.unit_type))}</span>}
                           </div>
                         </div>
                       );
@@ -1020,7 +1025,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                     </label>
                     {unitOf(selectedNewVariant.product.unit_type) === 'kg' ? (
                       <EditableWeightInput
-                        maxGrams={selectedNewVariant.variant.stock_quantity}
+                        maxGrams={stockLimit(selectedNewVariant.variant.stock_quantity)}
                         value={newVariantQty > 0 ? gramsToField(newVariantQty) : ''}
                         onChange={(val) => setNewVariantQty(weightToGrams(val) ?? 0)}
                         className="w-24 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
@@ -1029,7 +1034,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                     ) : (
                       <EditableIntegerInput
                         min={1}
-                        max={selectedNewVariant.variant.stock_quantity}
+                        max={stockLimit(selectedNewVariant.variant.stock_quantity)}
                         value={newVariantQty > 0 ? newVariantQty : ''}
                         onChange={(val) => setNewVariantQty(val === '' ? 0 : val)}
                         className="w-20 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
@@ -1074,7 +1079,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                           <button
                             key={m}
                             type="button"
-                            disabled={m !== 'cash' && !selectedSale.customer_id}
+                            disabled={(m !== 'cash' && !selectedSale.customer_id) || !canPayExchange[m]}
                             onClick={() => setExchangePayMethod(m)}
                             className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${exchangePayMethod === m ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300'}`}
                           >

@@ -25,6 +25,7 @@ import { proratedLineAmount } from '../../shared/money.ts';
 import { boundToUtc } from '../../shared/time.ts';
 import { PosService } from './posService.ts';
 import { AuthService } from './authService.ts';
+import { permissionName } from '../../shared/permissions.ts';
 import {
   oneOf, optionalAmount, optionalIdempotencyKey, optionalString,
   requireArray, requireId, requireObject, requireQuantity, requireGrams,
@@ -56,7 +57,7 @@ export class ReturnsService {
     if (user.role === 'owner') return;
     const authService = new AuthService(this.db);
     if (!authService.hasPermission(user, permission)) {
-      throw new Error(`${action} მოითხოვს '${permission}' უფლებას`);
+      throw new Error(`${action}: საჭიროა უფლება „${permissionName(permission)}“ (შეუძლია მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს)`);
     }
   }
 
@@ -81,7 +82,7 @@ export class ReturnsService {
   }
 
   private createReturn(user: User, rawPayload: ReturnPayload, mode: 'refund' | 'exchange', exchangeNewValueTetri: number = 0): ReturnResult {
-    const requiredPerm = mode === 'refund' ? 'sales.return' : 'sales.exchange';
+    const requiredPerm = mode === 'refund' ? 'returns.process' : 'returns.exchange';
     const actionLabel = mode === 'refund' ? 'დაბრუნების გაფორმება' : 'გაცვლის გაფორმება';
     this.requirePermission(user, requiredPerm, actionLabel);
 

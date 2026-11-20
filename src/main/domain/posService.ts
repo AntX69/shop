@@ -19,6 +19,7 @@ import { allocateProportionally, formatTetri } from '../../shared/money.ts';
 import { lineTotalTetri } from '../../shared/quantity.ts';
 import { boundToUtc, localDate } from '../../shared/time.ts';
 import { AuthService } from './authService.ts';
+import { permissionName } from '../../shared/permissions.ts';
 import {
   oneOf, optionalId, optionalIdempotencyKey, optionalString,
   requireAmount, requireArray, requireId, requireObject, requireQuantity, requireGrams,
@@ -64,7 +65,7 @@ export class PosService {
     if (user.role === 'owner') return;
     const authService = new AuthService(db);
     if (!authService.hasPermission(user, permission)) {
-      throw new Error(`${action} მოითხოვს '${permission}' უფლებას`);
+      throw new Error(`${action}: საჭიროა უფლება „${permissionName(permission)}“ (შეუძლია მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს)`);
     }
   }
 
@@ -211,7 +212,9 @@ export class PosService {
    * `exchange` is supplied only by ReturnsService.processExchange, inside its transaction.
    */
   checkout(user: User, rawPayload: CheckoutPayload, exchange?: ExchangeSaleContext): Sale {
-    this.requirePermission(user, 'sales.create', 'გაყიდვის გაფორმება');
+    // An exchange is authorised by returns.exchange (checked by ReturnsService); a normal sale
+    // needs the POS itself. The payment method is checked below, once the debt part is known.
+    if (!exchange) this.requirePermission(user, 'pos.access', 'გაყიდვის გაფორმება');
     const payload = requireObject<CheckoutPayload & Record<string, any>>(rawPayload, 'გაყიდვა');
     if (!Array.isArray(payload.items) || payload.items.length === 0) {
       throw new Error('კალათა ცარიელია');
@@ -311,9 +314,9 @@ export class PosService {
         debtAmountTetri = dueTetri - cashReceivedTetri;
       }
 
-      if (debtAmountTetri > 0) {
-        this.requirePermission(user, 'debts.create', 'ნისიის გაფორმება', db);
-      }
+      if (paymentMethod === 'debt') this.requirePermission(user, 'sales.debt', 'ნისიით გაყიდვა', db);
+      else if (paymentMethod === 'mixed') this.requirePermission(user, 'sales.mixed', 'შერეული გადახდა', db);
+      else if (!exchange) this.requirePermission(user, 'sales.cash', 'ნაღდი გაყიდვა', db);
 
       if (customerId) {
         const customer = db.prepare("SELECT id FROM customers WHERE id = ?").get(customerId);

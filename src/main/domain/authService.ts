@@ -17,7 +17,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getDb, runInTransaction } from '../db/database.ts';
 import { User, UserRole, UserSession } from '../../shared/types.ts';
 import { generateSalt, hashPin, isValidPin, pinHashNeedsUpgrade, verifyPin } from '../../shared/auth.ts';
-import { ALL_PERMISSION_IDS, DEFAULT_SELLER_PERMISSIONS } from '../../shared/permissions.ts';
+import { ALL_PERMISSION_IDS, DEFAULT_SELLER_PERMISSIONS, userCan } from '../../shared/permissions.ts';
 import { BackupService } from './backupService.ts';
 import { oneOf, requireId, requireString } from './validation.ts';
 import {
@@ -103,14 +103,21 @@ export class AuthService {
     const rows = this.db.prepare(
       "SELECT permission FROM user_permissions WHERE user_id = ? ORDER BY permission ASC"
     ).all(userId) as Array<{ permission: string }>;
-    return rows.map(r => r.permission);
+    // Only IDs of the current list count (an unknown stored ID never grants anything).
+    const known = new Set(ALL_PERMISSION_IDS);
+    return rows.map(r => r.permission).filter((p) => known.has(p));
   }
 
-  hasPermission(user: User, permission?: string): boolean {
+  /**
+   * Permission check against SQLite (not the session copy), so a change by the owner applies to
+   * the seller's very next request. `permission` may be a list: any one of them is enough.
+   */
+  hasPermission(user: User, permission?: string | readonly string[]): boolean {
     if (!permission) return true;
-    if (user.role === 'owner') return true;
-    const perms = this.getUserPermissions(user.id);
-    return perms.includes(permission);
+    const row = this.loadUser(user.id);
+    if (!row || row.is_active !== 1) return false;
+    if (row.role === 'owner') return true;
+    return userCan({ role: row.role, permissions: this.getUserPermissions(row.id) }, permission);
   }
 
   setUserPermissions(requester: User, targetUserId: number, permissions: string[]): string[] {
@@ -124,8 +131,15 @@ export class AuthService {
       throw new Error('მფლობელის უფლებების შეზღუდვა შეუძლებელია');
     }
 
+    if (!Array.isArray(permissions)) throw new Error('უფლებების სია არასწორია');
     const validSet = new Set(ALL_PERMISSION_IDS);
-    const sanitized = Array.from(new Set((permissions || []).filter(p => typeof p === 'string' && validSet.has(p))));
+    const unknown = permissions.filter((p) => typeof p !== 'string' || !validSet.has(p));
+    if (unknown.length > 0) {
+      // Never stored silently: an owner-only or misspelled ID is an error, not a no-op.
+      throw new Error(`უცნობი ან გადაუცემადი უფლება: ${unknown.map((u) => String(u)).join(', ')}`);
+    }
+    const sanitized = Array.from(new Set(permissions as string[])).sort();
+    const before = this.getUserPermissions(targetId);
 
     runInTransaction((db) => {
       db.prepare("DELETE FROM user_permissions WHERE user_id = ?").run(targetId);
@@ -134,7 +148,9 @@ export class AuthService {
       for (const perm of sanitized) {
         insertStmt.run(targetId, perm, now);
       }
-      this.audit(requester.id, 'PERMISSIONS_UPDATE', String(targetId), `Updated permissions for ${target.name}: ${sanitized.join(', ')}`);
+      const added = sanitized.filter((p) => !before.includes(p));
+      const removed = before.filter((p) => !sanitized.includes(p));
+      this.audit(requester.id, 'PERMISSIONS_UPDATE', String(targetId), JSON.stringify({ user: target.name, added, removed, after: sanitized }));
     }, this.db);
 
     return sanitized;
@@ -314,7 +330,7 @@ export class AuthService {
     if (safeRole === 'seller') {
       const validSet = new Set(ALL_PERMISSION_IDS);
       grantedPerms = initialPermissions && Array.isArray(initialPermissions)
-        ? initialPermissions.filter(p => validSet.has(p))
+        ? Array.from(new Set(initialPermissions.filter((p) => typeof p === 'string' && validSet.has(p))))
         : [...DEFAULT_SELLER_PERMISSIONS];
       const insertStmt = this.db.prepare("INSERT INTO user_permissions (user_id, permission, created_at) VALUES (?, ?, ?)");
       for (const p of grantedPerms) {

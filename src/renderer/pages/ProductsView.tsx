@@ -16,6 +16,7 @@ import { ProductEditModal } from '../components/ProductEditModal.tsx';
 import { CategoryManagerModal } from '../components/CategoryManagerModal.tsx';
 import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
 import { finishInteger, weightToGrams } from '../utils/numericInput.ts';
+import { can, hasStockNumber } from '../utils/access.ts';
 import { photoSrc, resizeImageFile } from '../utils/imageResize.ts';
 import {
   Package, 
@@ -43,7 +44,13 @@ interface ProductsViewProps {
 }
 
 export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
-  const isOwner = currentUser.role === 'owner';
+  // What this user may see and do here (the main process checks every action again).
+  const canCreate = can(currentUser, 'products.create');
+  const canArchive = can(currentUser, 'products.archive');
+  const canCategories = can(currentUser, 'categories.manage');
+  const canSeeCost = can(currentUser, 'reports.profit');
+  const canEditAny = can(currentUser, ['products.edit', 'products.prices', 'products.variants', 'products.archive']);
+  const canPhotos = can(currentUser, 'products.edit');
 
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -107,7 +114,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         invokeIpc<Product[]>('products:list', {
           searchTerm: searchTerm || undefined,
           categoryId: selectedCategory || undefined,
-          archivedOnly: isOwner && showArchived ? true : undefined
+          archivedOnly: canArchive && showArchived ? true : undefined
         })
       ]);
       setCategories(cats);
@@ -336,27 +343,27 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         </div>
 
         <div className="flex items-center space-x-2.5 sm:space-x-3">
-          {isOwner && (
+          {(canArchive || canCategories || canCreate) && (
             <>
-              <button
+              {canArchive && <button
                 onClick={() => setShowArchived((v) => !v)}
                 className={`px-3 sm:px-3.5 py-2 border text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer ${showArchived ? 'bg-amber-950/60 border-amber-700/60 text-amber-300' : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200'}`}
                 title="დაარქივებული პროდუქტების ჩვენება"
               >
                 <Archive className="w-3.5 h-3.5" />
                 <span>{showArchived ? 'აქტიურები' : 'არქივი'}</span>
-              </button>
+              </button>}
 
-              <button
+              {canCategories && <button
                 onClick={() => setIsCategoryManagerOpen(true)}
                 className="px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer"
                 title="კატეგორიების მართვა, ფერები, რედაქტირება და წაშლა"
               >
                 <Tag className="w-3.5 h-3.5 text-emerald-400" />
                 <span>კატეგორიების მართვა</span>
-              </button>
+              </button>}
 
-              <button
+              {canCreate && <button
                 onClick={() => {
                   setIsNewProductOpen(true);
                   setFormError('');
@@ -365,7 +372,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               >
                 <Plus className="w-4 h-4" />
                 <span>ახალი პროდუქტი</span>
-              </button>
+              </button>}
             </>
           )}
         </div>
@@ -424,9 +431,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                 <th className="py-3 px-4">კატეგორია</th>
                 <th className="py-3 px-4">ვარიანტები და კოდები</th>
                 <th className="py-3 px-4 text-right">გასაყიდი ფასი</th>
-                {isOwner && <th className="py-3 px-4 text-right">თვითღირებულება</th>}
+                {canSeeCost && <th className="py-3 px-4 text-right">თვითღირებულება</th>}
                 <th className="py-3 px-4 text-right">მარაგი</th>
-                {isOwner && <th className="py-3 px-4 text-center w-20">მართვა</th>}
+                {canEditAny && <th className="py-3 px-4 text-center w-20">მართვა</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
@@ -439,7 +446,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                 </tr>
               ) : (
                 products.map((p) => {
-                  const totalStock = (p.variants || []).reduce((acc, v) => acc + v.stock_quantity, 0);
+                  const stockKnown = (p.variants || []).every((v) => hasStockNumber(v.stock_quantity));
+                  const totalStock = (p.variants || []).reduce((acc, v) => acc + (hasStockNumber(v.stock_quantity) ? v.stock_quantity : 0), 0);
                   const hasImages = p.images && p.images.length > 0;
                   return (
                     <tr key={p.id} className="hover:bg-slate-800/40 transition-colors">
@@ -492,7 +500,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                                 </span>
                               ))}
                               <span className="text-slate-400 font-medium">
-                                ({p.unit_type === 'kg' ? `${gramsToKg(v.stock_quantity)} კგ` : `${v.stock_quantity} ც`})
+                                {hasStockNumber(v.stock_quantity) ? `(${p.unit_type === 'kg' ? `${gramsToKg(v.stock_quantity)} კგ` : `${v.stock_quantity} ც`})` : ''}
                               </span>
                             </div>
                           ))}
@@ -501,7 +509,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                       <td className="py-3 px-4 text-right font-bold text-white text-sm">
                         {formatTetri(p.base_price_tetri)}{p.unit_type === 'kg' ? ' / კგ' : ''}
                       </td>
-                      {isOwner && (
+                      {canSeeCost && (
                         <td className="py-3 px-4 text-right text-slate-400">
                           {p.base_cost_tetri !== null && p.base_cost_tetri !== undefined ? (
                             <>{formatTetri(p.base_cost_tetri)}{p.unit_type === 'kg' ? ' / კგ' : ''}</>
@@ -518,10 +526,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             ? 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
                             : 'bg-red-950/60 text-red-400 border border-red-800/40'
                         }`}>
-                          {p.unit_type === 'kg' ? `${gramsToKg(totalStock)} კგ` : `${totalStock} ცალი`}
+                          {!stockKnown ? '—' : p.unit_type === 'kg' ? `${gramsToKg(totalStock)} კგ` : `${totalStock} ცალი`}
                         </span>
                       </td>
-                      {isOwner && (
+                      {canEditAny && (
                         <td className="py-3 px-4 text-center">
                           <button
                             type="button"
@@ -545,6 +553,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
       {editingProductId !== null && (
         <ProductEditModal
+          currentUser={currentUser}
           productId={editingProductId}
           categories={categories}
           onClose={() => setEditingProductId(null)}
@@ -871,7 +880,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                       </button>
                     </>
                   )}
-                  {isOwner && (
+                  {canPhotos && (
                     <button
                       type="button"
                       onClick={() => handleDeleteGalleryImage(galleryProduct.images![activeImageIndex].id)}
@@ -910,7 +919,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
             {/* Bottom Actions */}
             <div className="flex items-center justify-between border-t border-slate-800 pt-4 mt-4">
-              {isOwner ? (
+              {canPhotos ? (
                 <label className="flex items-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold cursor-pointer transition">
                   <Upload className="w-4 h-4 text-emerald-400" />
                   <span>ახალი ფოტოს დამატება</span>

@@ -12,6 +12,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Customer, DebtRepayment, CustomerLedgerEntry, Sale, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
+import { can } from '../utils/access.ts';
 import { EditableMoneyInput } from '../components/inputs/NumericInputs.tsx';
 import { 
   Users, 
@@ -49,6 +50,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
   const [loadingDetails, setLoadingDetails] = useState<boolean>(false);
 
   // Repayment Modal
+  // What this user may do here; the main process checks every action again.
+  const canCollect = can(currentUser, 'debts.collect');
+  const canChooseReceipt = can(currentUser, 'debts.select_receipt');
+  const canHistory = can(currentUser, 'debts.history');
+  const canCorrect = can(currentUser, 'debts.correct');
+  const canCreateCustomer = can(currentUser, 'customers.create');
   const [isRepayOpen, setIsRepayOpen] = useState<boolean>(false);
   const [repayAmountInput, setRepayAmountInput] = useState<string>('');
   const [repayNotes, setRepayNotes] = useState<string>('');
@@ -108,9 +115,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
     try {
       setLoadingDetails(true);
       const [led, act, reps] = await Promise.all([
-        invokeIpc<CustomerLedgerEntry[]>('customers:getLedger', { customerId: custId }),
+        canHistory ? invokeIpc<CustomerLedgerEntry[]>('customers:getLedger', { customerId: custId }) : Promise.resolve([] as CustomerLedgerEntry[]),
         invokeIpc<Sale[]>('customers:getActiveSales', { customerId: custId }),
-        invokeIpc<DebtRepayment[]>('customers:getRepayments', { customerId: custId })
+        canHistory ? invokeIpc<DebtRepayment[]>('customers:getRepayments', { customerId: custId }) : Promise.resolve([] as DebtRepayment[])
       ]);
       setLedgerEntries(led);
       setActiveSales(act);
@@ -219,7 +226,6 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
   };
 
   // Owner corrections: void a mistaken repayment or write off debt (reason required, audited)
-  const isOwner = currentUser.role === 'owner';
   const [correction, setCorrection] = useState<{ kind: 'void'; repayment: DebtRepayment } | { kind: 'writeoff'; sale: Sale } | null>(null);
   const [correctionReason, setCorrectionReason] = useState<string>('');
   const [correctionAmount, setCorrectionAmount] = useState<string>('');
@@ -289,14 +295,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
             </div>
           </div>
 
-          <button
+          {canCreateCustomer && <button
             onClick={() => setIsNewCustOpen(true)}
             className="px-3.5 py-2 sm:px-4 sm:py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
             <span className="hidden sm:inline">ახალი კლიენტის დამატება</span>
             <span className="sm:hidden">+ კლიენტი</span>
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -388,7 +394,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                     </div>
                   </div>
 
-                  {(selectedCustomer.total_debt_tetri || 0) > 0 && (
+                  {canCollect && (selectedCustomer.total_debt_tetri || 0) > 0 && (
                     <button
                       onClick={() => openRepayModal(null)}
                       className="px-3.5 py-2 sm:px-4 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
@@ -565,17 +571,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                                 )}
                               </td>
                               <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-1.5">
-                                <button
+                                {canCollect && canChooseReceipt && <button
                                   onClick={() => openRepayModal(s.id)}
                                   className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-700/50 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
                                 >
                                   ამ ჩეკის დაფარვა
-                                </button>
-                                {isOwner && (
+                                </button>}
+                                {canCorrect && (
                                   <button
                                     onClick={() => openCorrection({ kind: 'writeoff', sale: s })}
                                     className="px-2.5 py-1 bg-purple-900/30 hover:bg-purple-800/40 text-purple-200 border border-purple-700/50 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
-                                    title="ვალის ჩამოწერა (მხოლოდ მფლობელი)"
+                                    title="ვალის ჩამოწერა"
                                   >
                                     ჩამოწერა
                                   </button>
@@ -602,7 +608,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                           <th className="py-2.5 px-3">განაწილება ჩეკებზე</th>
                           <th className="py-2.5 px-3">შენიშვნა</th>
                           <th className="py-2.5 px-3">თანამშრომელი</th>
-                          {isOwner && <th className="py-2.5 px-3 text-right">კორექცია</th>}
+                          {canCorrect && <th className="py-2.5 px-3 text-right">კორექცია</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
@@ -647,7 +653,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                             <td className="py-2.5 px-3 text-slate-400 whitespace-nowrap">
                               {r.user_name || '-'}
                             </td>
-                            {isOwner && (
+                            {canCorrect && (
                               <td className="py-2.5 px-3 text-right whitespace-nowrap">
                                 {!r.voided_at && (
                                   <button
