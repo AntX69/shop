@@ -23,6 +23,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getDb } from '../db/database.ts';
 import { Expense, FinancialSummary, User } from '../../shared/types.ts';
 import { isValidLocalDate, localDate, PeriodInput, resolvePeriod } from '../../shared/time.ts';
+import { AuthService } from './authService.ts';
 import { optionalString, requirePositiveAmount, requireObject, requireString } from './validation.ts';
 
 function csvCell(value: unknown): string {
@@ -37,9 +38,11 @@ export class FinanceService {
     this.db = db;
   }
 
-  private checkOwner(user: User): void {
-    if (user.role !== 'owner') {
-      throw new Error('ფინანსური მონაცემების ნახვის უფლება აქვს მხოლოდ მფლობელს');
+  private requirePermission(user: User, permission: string, action: string): void {
+    if (user.role === 'owner') return;
+    const authService = new AuthService(this.db);
+    if (!authService.hasPermission(user, permission)) {
+      throw new Error(`${action} მოითხოვს '${permission}' უფლებას`);
     }
   }
 
@@ -48,7 +51,7 @@ export class FinanceService {
    * Accepts { preset, from, to } (local days); legacy startDate/endDate strings are accepted too.
    */
   getFinancialSummary(user: User, periodOrStart?: PeriodInput | string, legacyEnd?: string): FinancialSummary {
-    this.checkOwner(user);
+    this.requirePermission(user, 'reports.financial', 'ფინანსური ანგარიშის ნახვა');
 
     let input: PeriodInput;
     if (typeof periodOrStart === 'string' || legacyEnd) {
@@ -220,7 +223,7 @@ export class FinanceService {
 
   /** Owner-authorized discounts in a period, newest first. */
   listDiscounts(user: User, period?: PeriodInput, limit: number = 200): any[] {
-    this.checkOwner(user);
+    this.requirePermission(user, 'reports.sales', 'ფასდაკლებების ნახვა');
     const p = resolvePeriod(period || { preset: 'all' });
     const clauses = ['s.discount_tetri > 0'];
     const params: any[] = [];
@@ -246,7 +249,7 @@ export class FinanceService {
     amount_tetri: number;
     expense_date?: string;
   }): Expense {
-    this.checkOwner(user);
+    this.requirePermission(user, 'expenses.manage', 'ხარჯის დამატება');
     const payload = requireObject<any>(rawPayload, 'ხარჯი');
 
     if (typeof payload.amount_tetri === 'number' && payload.amount_tetri <= 0) {
@@ -290,7 +293,7 @@ export class FinanceService {
   }
 
   listExpenses(user: User, limit: number = 100): Expense[] {
-    this.checkOwner(user);
+    this.requirePermission(user, 'expenses.view', 'ხარჯების ნახვა');
     return this.db.prepare(`
       SELECT e.*, u.name as user_name
       FROM expenses e
@@ -304,7 +307,7 @@ export class FinanceService {
    * Generates a UTF-8 BOM CSV export for Sales.
    */
   exportSalesCSV(user: User): string {
-    this.checkOwner(user);
+    this.requirePermission(user, 'reports.sales', 'გაყიდვების ექსპორტი');
     const sales = this.db.prepare(`
       SELECT s.receipt_number, s.created_at, u.name as seller,
              c.first_name || ' ' || COALESCE(c.last_name, '') as customer,

@@ -15,6 +15,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { getDb, runInTransaction } from '../db/database.ts';
 import { Customer, DebtRepayment, User } from '../../shared/types.ts';
+import { AuthService } from './authService.ts';
 import {
   optionalId, optionalIdempotencyKey, optionalString, requireId, requireObject,
   requirePositiveAmount, requireString,
@@ -29,9 +30,11 @@ export class CustomerService {
     this.db = db;
   }
 
-  private requireOwner(user: User, action: string): void {
-    if (user.role !== 'owner') {
-      throw new Error(`${action} შეუძლია მხოლოდ მფლობელს`);
+  private requirePermission(user: User, permission: string, action: string): void {
+    if (user.role === 'owner') return;
+    const authService = new AuthService(this.db);
+    if (!authService.hasPermission(user, permission)) {
+      throw new Error(`${action} შეუძლია მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს`);
     }
   }
 
@@ -46,6 +49,7 @@ export class CustomerService {
     address?: string;
     notes?: string;
   }): Customer {
+    this.requirePermission(requester, 'customers.create', 'კლიენტის დამატება');
     const input = requireObject<any>(rawInput, 'კლიენტი');
     const firstName = optionalString(input.first_name, 100, 'კლიენტის სახელი');
     if (!firstName) {
@@ -128,6 +132,7 @@ export class CustomerService {
     notes?: string;
     idempotency_key?: string;
   }): DebtRepayment {
+    this.requirePermission(user, 'debts.repayment', 'ნისიის დაფარვა');
     const payload = requireObject<any>(rawPayload, 'დაფარვა');
     const customerId = requireId(payload.customer_id, 'კლიენტი');
     if (typeof payload.amount_tetri === 'number' && payload.amount_tetri <= 0) {
@@ -260,7 +265,7 @@ export class CustomerService {
   }
 
   /**
-   * Owner correction: voids a mistaken repayment (wrong amount, wrong customer, entered twice).
+   * Correction: voids a mistaken repayment (wrong amount, wrong customer, entered twice).
    * The repayment stays in history marked as voided; its allocations stop counting.
    */
   voidRepayment(user: User, rawPayload: { repayment_id: number; reason: string }): {
@@ -268,7 +273,7 @@ export class CustomerService {
     customer_balance_before_tetri: number;
     customer_balance_after_tetri: number;
   } {
-    this.requireOwner(user, 'დაფარვის გაუქმება');
+    this.requirePermission(user, 'debts.correction', 'დაფარვის გაუქმება');
     const payload = requireObject<any>(rawPayload, 'დაფარვის გაუქმება');
     const repaymentId = requireId(payload.repayment_id, 'დაფარვა');
     const reason = requireString(payload.reason, 300, 'გაუქმების მიზეზი');
@@ -301,10 +306,10 @@ export class CustomerService {
   }
 
   /**
-   * Owner correction: writes off (forgives) part or all of the debt still open on one sale.
+   * Correction: writes off (forgives) part or all of the debt still open on one sale.
    */
   writeOffDebt(user: User, rawPayload: { sale_id: number; amount_tetri: number; reason: string; idempotency_key?: string }): any {
-    this.requireOwner(user, 'ნისიის ჩამოწერა');
+    this.requirePermission(user, 'debts.correction', 'ნისიის ჩამოწერა');
     const payload = requireObject<any>(rawPayload, 'ნისიის ჩამოწერა');
     const saleId = requireId(payload.sale_id, 'გაყიდვა');
     const amount = requirePositiveAmount(payload.amount_tetri, 'ჩამოსაწერი თანხა');
@@ -364,9 +369,9 @@ export class CustomerService {
     }, this.db);
   }
 
-  /** Owner view of all debt corrections for a customer (write-offs and voided repayments). */
+  /** View of all debt corrections for a customer (write-offs and voided repayments). */
   getDebtCorrections(user: User, customerId: number): { write_offs: any[]; voided_repayments: any[] } {
-    this.requireOwner(user, 'ნისიის კორექციების ნახვა');
+    this.requirePermission(user, 'debts.view', 'ნისიის კორექციების ნახვა');
     const write_offs = this.db.prepare(`
       SELECT da.*, s.receipt_number, u.name AS user_name
       FROM debt_adjustments da JOIN sales s ON s.id = da.sale_id JOIN users u ON u.id = da.user_id

@@ -16,6 +16,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Sale, User, ReturnRecord, Product, ProductVariant } from '../../shared/types.ts';
 import { formatTetri, gelToTetri, proratedLineAmount, safeParseTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
+import { EditableIntegerInput } from '../components/inputs/NumericInputs.tsx';
 import { 
   History, 
   Search, 
@@ -783,16 +784,15 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                         <div className="grid grid-cols-2 gap-3 pt-1">
                           <div>
                             <label className="block text-[11px] text-slate-400 mb-1">დასაბრუნებელი რაოდენობა</label>
-                            <input
-                              type="number"
-                              min="0"
+                            <EditableIntegerInput
+                              min={0}
                               max={maxReturnable}
                               value={st.qty}
-                              onChange={(e) => {
-                                const val = parseInt(e.target.value, 10) || 0;
+                              onChange={(val) => {
+                                const num = val === '' ? 0 : val;
                                 setReturnItemsState(prev => ({
                                   ...prev,
-                                  [item.id]: { ...st, qty: Math.min(maxReturnable, Math.max(0, val)) }
+                                  [item.id]: { ...st, qty: Math.min(maxReturnable, Math.max(0, num)) }
                                 }));
                               }}
                               className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-bold tabular-nums"
@@ -898,16 +898,15 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                         </div>
 
                         <div className="flex items-center space-x-2">
-                          <input
-                            type="number"
-                            min="0"
+                          <EditableIntegerInput
+                            min={0}
                             max={maxReturnable}
                             value={st.qty}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value, 10) || 0;
+                            onChange={(val) => {
+                              const num = val === '' ? 0 : val;
                               setExchangeReturnItems(prev => ({
                                 ...prev,
-                                [item.id]: { ...st, qty: Math.min(maxReturnable, Math.max(0, val)) }
+                                ...{ [item.id]: { ...st, qty: Math.min(maxReturnable, Math.max(0, num)) } }
                               }));
                             }}
                             className="w-16 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"

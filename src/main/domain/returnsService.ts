@@ -24,9 +24,10 @@ import { ExchangePayload, ReturnPayload, ReturnRecord, User } from '../../shared
 import { proratedLineAmount } from '../../shared/money.ts';
 import { boundToUtc } from '../../shared/time.ts';
 import { PosService } from './posService.ts';
+import { AuthService } from './authService.ts';
 import {
   oneOf, optionalAmount, optionalIdempotencyKey, optionalString,
-  requireArray, requireId, requireObject, requireQuantity,
+  requireArray, requireId, requireObject, requireQuantity, requireGrams,
 } from './validation.ts';
 
 export interface ReturnResult {
@@ -51,6 +52,14 @@ export class ReturnsService {
     this.posService = new PosService(db);
   }
 
+  private requirePermission(user: User, permission: string, action: string): void {
+    if (user.role === 'owner') return;
+    const authService = new AuthService(this.db);
+    if (!authService.hasPermission(user, permission)) {
+      throw new Error(`${action} მოითხოვს '${permission}' უფლებას`);
+    }
+  }
+
   /**
    * Processes a return for a historical sale.
    */
@@ -72,6 +81,10 @@ export class ReturnsService {
   }
 
   private createReturn(user: User, rawPayload: ReturnPayload, mode: 'refund' | 'exchange', exchangeNewValueTetri: number = 0): ReturnResult {
+    const requiredPerm = mode === 'refund' ? 'sales.return' : 'sales.exchange';
+    const actionLabel = mode === 'refund' ? 'დაბრუნების გაფორმება' : 'გაცვლის გაფორმება';
+    this.requirePermission(user, requiredPerm, actionLabel);
+
     const payload = requireObject<ReturnPayload>(rawPayload, 'დაბრუნება');
     const saleId = requireId(payload.sale_id, 'გაყიდვა');
     if (!Array.isArray(payload.items) || payload.items.length === 0) {
@@ -107,7 +120,6 @@ export class ReturnsService {
       const requestedBySaleItem = new Map<number, number>();
       for (const raw of rawItems) {
         const item = requireObject<any>(raw, 'დასაბრუნებელი პოზიცია');
-        const quantity = requireQuantity(item.quantity, 'დასაბრუნებელი რაოდენობა');
         const condition: Condition = item.condition == null
           ? 'resellable'
           : oneOf(item.condition, ['resellable', 'damaged'] as const, 'ნივთის მდგომარეობა');
@@ -123,6 +135,15 @@ export class ReturnsService {
         }
         if (!saleItem) {
           throw new Error(`გაყიდული პოზიცია არ ეკუთვნის ამ გაყიდვას`);
+        }
+
+        // KG items: quantity is grams; piece items: whole pieces
+        const isKg = (saleItem.unit_type || 'piece') === 'kg';
+        let quantity: number;
+        if (isKg) {
+          quantity = requireGrams(item.quantity, 'დასაბრუნებელი წონა (გ)');
+        } else {
+          quantity = requireQuantity(item.quantity, 'დასაბრუნებელი რაოდენობა');
         }
 
         const requested = (requestedBySaleItem.get(saleItem.id) || 0) + quantity;
@@ -192,11 +213,13 @@ export class ReturnsService {
         cogsReversedTetri += knownCost;
         const avgCost = unknownQty === 0 ? Math.round(knownCost / line.quantity) : null;
 
+        const unitType = line.saleItem.unit_type || 'piece';
+
         db.prepare(`
           INSERT INTO return_items (
             return_id, sale_item_id, variant_id, quantity, unit_price_tetri, total_tetri,
-            condition, cost_total_tetri, unknown_cost_quantity
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            unit_type, condition, cost_total_tetri, unknown_cost_quantity
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           returnId,
           line.saleItem.id,
@@ -204,6 +227,7 @@ export class ReturnsService {
           line.quantity,
           Math.round(line.refund / line.quantity),
           line.refund,
+          unitType,
           line.condition,
           knownCost,
           unknownQty

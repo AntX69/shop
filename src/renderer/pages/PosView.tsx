@@ -22,6 +22,8 @@ import { invokeIpc } from '../api/ipcClient.ts';
 import { photoSrc } from '../utils/imageResize.ts';
 import { ScanDetector, SCAN_NO_SUFFIX_FLUSH_MS } from '../utils/scannerInput.ts';
 import { WebcamModal } from '../components/WebcamModal.tsx';
+import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
+import { gramsToKg, kgToGrams, formatUnitQuantity, safeParseGrams } from '../../shared/quantity.ts';
 import { 
   Barcode, 
   Search, 
@@ -254,26 +256,30 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   const openConfirmationModal = (product: Product, variant: ProductVariant, codeUsed: string) => {
     setSearchError('');
     const current = confirmRef.current;
+    const isKg = (product.unit_type || variant.unit_type || 'piece') === 'kg';
+    const defaultQty = isKg ? Math.min(1000, variant.stock_quantity) : 1;
+    const step = isKg ? 1000 : 1;
+
     if (!current) {
-      showConfirm({ product, variant, codeUsed, quantityToAdd: 1 });
+      showConfirm({ product, variant, codeUsed, quantityToAdd: defaultQty });
       return;
     }
     if (current.variant.id === variant.id) {
-      // Same product scanned again: one more unit, still to be confirmed by the seller.
-      const next = Math.min(variant.stock_quantity, current.quantityToAdd + 1);
+      // Same product scanned again: one more unit (or 1 kg), still to be confirmed by the seller.
+      const next = Math.min(variant.stock_quantity, current.quantityToAdd + step);
       showConfirm({
         ...current,
         quantityToAdd: next,
         scanNote: next > current.quantityToAdd
-          ? `იგივე პროდუქტი კიდევ ერთხელ: რაოდენობა ${next}`
-          : `მარაგში მეტი არ არის (${variant.stock_quantity} ცალი)`
+          ? (isKg ? `იგივე პროდუქტი კიდევ ერთხელ: წონა ${gramsToKg(next)} კგ` : `იგივე პროდუქტი კიდევ ერთხელ: რაოდენობა ${next}`)
+          : (isKg ? `მარაგში მეტი არ არის (${gramsToKg(variant.stock_quantity)} კგ)` : `მარაგში მეტი არ არის (${variant.stock_quantity} ცალი)`)
       });
       return;
     }
     // Another product: never replaces the open one, it waits for its own confirmation.
     const queued = confirmQueueRef.current.find((q) => q.variant.id === variant.id);
-    if (queued) queued.quantity += 1;
-    else confirmQueueRef.current.push({ product, variant, codeUsed, quantity: 1 });
+    if (queued) queued.quantity += step;
+    else confirmQueueRef.current.push({ product, variant, codeUsed, quantity: defaultQty });
     setQueuedCount(confirmQueueRef.current.length);
   };
 
@@ -386,13 +392,15 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
     const { product, variant, codeUsed, quantityToAdd } = confirmModalData;
 
     const unitPrice = variant.price_override_tetri ?? product.base_price_tetri;
+    const unitType = product.unit_type || variant.unit_type || 'piece';
+    const isKg = unitType === 'kg';
     const existingIndex = cart.findIndex(c => c.variant_id === variant.id);
 
     if (existingIndex >= 0) {
       const existing = cart[existingIndex];
       const newQty = existing.quantity + quantityToAdd;
       if (newQty > variant.stock_quantity) {
-        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${variant.stock_quantity}`);
+        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(variant.stock_quantity) + ' კგ' : variant.stock_quantity + ' ცალი'}`);
         return;
       }
       const updatedCart = [...cart];
@@ -400,7 +408,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       setCart(updatedCart);
     } else {
       if (quantityToAdd > variant.stock_quantity) {
-        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${variant.stock_quantity}`);
+        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(variant.stock_quantity) + ' კგ' : variant.stock_quantity + ' ცალი'}`);
         return;
       }
       setCart(prev => [
@@ -412,6 +420,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           variant_name: variant.variant_name,
           code_used: codeUsed,
           unit_price_tetri: unitPrice,
+          unit_type: unitType,
           quantity: quantityToAdd,
           available_stock: variant.stock_quantity
         }
@@ -426,10 +435,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
     setCart(prev => {
       return prev.map(item => {
         if (item.variant_id === variantId) {
-          const newQty = item.quantity + delta;
-          if (newQty <= 0) return null;
+          const isKg = item.unit_type === 'kg';
+          const step = isKg ? (delta > 0 ? 100 : -100) : delta;
+          const minQty = 1;
+          const newQty = item.quantity + step;
+          if (newQty < minQty) return null;
           if (newQty > item.available_stock) {
-            alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${item.available_stock}`);
+            alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(item.available_stock) + ' კგ' : item.available_stock + ' ცალი'}`);
             return item;
           }
           return { ...item, quantity: newQty };
@@ -451,21 +463,26 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   };
 
   // Calculations (integer tetri; the main process recomputes everything from database prices)
-  const cartSubtotalTetri = cart.reduce((sum, item) => sum + (item.quantity * item.unit_price_tetri), 0);
+  const lineSubtotalOf = (c: CartItem) => {
+    return c.unit_type === 'kg'
+      ? Math.round((c.quantity * c.unit_price_tetri) / 1000)
+      : c.quantity * c.unit_price_tetri;
+  };
+  const cartSubtotalTetri = cart.reduce((sum, item) => sum + lineSubtotalOf(item), 0);
   // A line discount never exceeds the line (quantity may have been lowered after it was set).
-  const lineDiscountOf = (c: CartItem) => (isOwner ? Math.min(c.line_discount_tetri || 0, c.quantity * c.unit_price_tetri) : 0);
+  const lineDiscountOf = (c: CartItem) => (isOwner ? Math.min(c.line_discount_tetri || 0, lineSubtotalOf(c)) : 0);
   const lineDiscountTotalTetri = cart.reduce((sum, item) => sum + lineDiscountOf(item), 0);
   const parsedCartDiscount = isOwner ? safeParseTetri(cartDiscountInput) : null;
   const cartDiscountTetri = parsedCartDiscount !== null && parsedCartDiscount > 0 ? parsedCartDiscount : 0;
   const totalDiscountTetri = lineDiscountTotalTetri + cartDiscountTetri;
   const cartTotalTetri = Math.max(0, cartSubtotalTetri - totalDiscountTetri);
-  const cartItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const cartItemCount = cart.reduce((sum, item) => sum + (item.unit_type === 'kg' ? 1 : item.quantity), 0);
 
   const setLineDiscount = (variantId: number, input: string) => {
     const parsed = safeParseTetri(input);
     setCart(prev => prev.map(c => {
       if (c.variant_id !== variantId) return c;
-      const max = c.quantity * c.unit_price_tetri;
+      const max = lineSubtotalOf(c);
       return { ...c, line_discount_tetri: parsed === null ? 0 : Math.min(Math.max(0, parsed), max) };
     }));
   };
@@ -730,9 +747,20 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       {item.variant_name} &bull; <span className="font-mono text-emerald-400">{item.code_used}</span>
                     </div>
                     <div className="text-xs text-slate-300 font-semibold mt-0.5 tabular-nums">
-                      {formatTetri(item.unit_price_tetri)} &times; {item.quantity} = {formatTetri(item.quantity * item.unit_price_tetri)}
-                      {isOwner && (item.line_discount_tetri || 0) > 0 && (
-                        <span className="ml-1.5 text-amber-400">− {formatTetri(item.line_discount_tetri)} = {formatTetri(item.quantity * item.unit_price_tetri - (item.line_discount_tetri || 0))}</span>
+                      {item.unit_type === 'kg' ? (
+                        <>
+                          {formatTetri(item.unit_price_tetri)}/კგ &times; {gramsToKg(item.quantity)} კგ = {formatTetri(lineSubtotalOf(item))}
+                          {isOwner && (item.line_discount_tetri || 0) > 0 && (
+                            <span className="ml-1.5 text-amber-400">− {formatTetri(item.line_discount_tetri)} = {formatTetri(lineSubtotalOf(item) - (item.line_discount_tetri || 0))}</span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          {formatTetri(item.unit_price_tetri)} &times; {item.quantity} = {formatTetri(lineSubtotalOf(item))}
+                          {isOwner && (item.line_discount_tetri || 0) > 0 && (
+                            <span className="ml-1.5 text-amber-400">− {formatTetri(item.line_discount_tetri)} = {formatTetri(lineSubtotalOf(item) - (item.line_discount_tetri || 0))}</span>
+                          )}
+                        </>
                       )}
                     </div>
                     {isOwner && (
@@ -772,9 +800,15 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     >
                       <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                     </button>
-                    <span className="w-5 sm:w-6 text-center text-xs sm:text-sm font-bold text-white tabular-nums">
-                      {item.quantity}
-                    </span>
+                    {item.unit_type === 'kg' ? (
+                      <span className="min-w-14 text-center text-xs font-bold text-white tabular-nums px-1">
+                        {gramsToKg(item.quantity)} კგ
+                      </span>
+                    ) : (
+                      <span className="w-5 sm:w-6 text-center text-xs sm:text-sm font-bold text-white tabular-nums">
+                        {item.quantity}
+                      </span>
+                    )}
                     <button
                       onClick={() => updateCartQuantity(item.variant_id, 1)}
                       aria-label="რაოდენობის გაზრდა"
@@ -864,57 +898,118 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800">
-                <div>
-                  <div className="text-[11px] text-slate-400 uppercase font-semibold">ერთეულის ფასი</div>
-                  <div className="text-xl font-black text-white mt-0.5">
-                    {formatTetri(confirmModalData.variant.price_override_tetri ?? confirmModalData.product.base_price_tetri)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[11px] text-slate-400 uppercase font-semibold">ნაშთი მარაგში</div>
-                  <div className="text-xl font-bold text-slate-200 mt-0.5">
-                    {confirmModalData.variant.stock_quantity} ცალი
-                  </div>
-                </div>
-              </div>
+              {(() => {
+                const isKg = (confirmModalData.product.unit_type || confirmModalData.variant.unit_type || 'piece') === 'kg';
+                const unitPrice = confirmModalData.variant.price_override_tetri ?? confirmModalData.product.base_price_tetri;
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                      <div>
+                        <div className="text-[11px] text-slate-400 uppercase font-semibold">ერთეულის ფასი</div>
+                        <div className="text-xl font-black text-white mt-0.5">
+                          {formatTetri(unitPrice)}{isKg ? ' / კგ' : ''}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-slate-400 uppercase font-semibold">ნაშთი მარაგში</div>
+                        <div className="text-xl font-bold text-slate-200 mt-0.5">
+                          {isKg ? `${gramsToKg(confirmModalData.variant.stock_quantity)} კგ` : `${confirmModalData.variant.stock_quantity} ცალი`}
+                        </div>
+                      </div>
+                    </div>
 
-              {/* Quantity Picker */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">
-                  რაოდენობა
-                </label>
-                {confirmModalData.scanNote && (
-                  <div className="text-[11px] font-semibold text-emerald-300 mb-2">{confirmModalData.scanNote}</div>
-                )}
-                <div className="flex items-center space-x-3">
-                  <button
-                    onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.max(1, prev.quantityToAdd - 1) })}
-                    className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-lg flex items-center justify-center cursor-pointer"
-                  >
-                    -
-                  </button>
-                  <input
-                    type="number"
-                    min="1"
-                    max={confirmModalData.variant.stock_quantity}
-                    value={confirmModalData.quantityToAdd}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value, 10);
-                      if (!isNaN(val)) {
-                        setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, Math.max(1, val)) });
-                      }
-                    }}
-                    className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
-                  />
-                  <button
-                    onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, prev.quantityToAdd + 1) })}
-                    className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-lg flex items-center justify-center cursor-pointer"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
+                    {/* Quantity Picker */}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">
+                        {isKg ? 'წონა (კილოგრამი / კგ)' : 'რაოდენობა (ცალი)'}
+                      </label>
+                      {confirmModalData.scanNote && (
+                        <div className="text-[11px] font-semibold text-emerald-300 mb-2">{confirmModalData.scanNote}</div>
+                      )}
+                      {isKg ? (
+                        <>
+                          <div className="flex items-center space-x-2">
+                            <button
+                              type="button"
+                              onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.max(1, prev.quantityToAdd - 500) })}
+                              className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                              title="-500 გრამი"
+                            >
+                              -500გ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.max(1, prev.quantityToAdd - 100) })}
+                              className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                              title="-100 გრამი"
+                            >
+                              -100გ
+                            </button>
+                            <EditableWeightInput
+                              maxGrams={confirmModalData.variant.stock_quantity}
+                              value={gramsToKg(confirmModalData.quantityToAdd, false)}
+                              onChange={(val: string) => {
+                                const parsed = safeParseGrams(val);
+                                if (parsed !== null && parsed > 0) {
+                                  setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, parsed) });
+                                }
+                              }}
+                              className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, prev.quantityToAdd + 100) })}
+                              className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                              title="+100 გრამი"
+                            >
+                              +100გ
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, prev.quantityToAdd + 500) })}
+                              className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                              title="+500 გრამი"
+                            >
+                              +500გ
+                            </button>
+                          </div>
+                          <div className="text-right text-xs text-emerald-400 font-bold mt-1.5">
+                            ჯამი: {formatTetri(Math.round((unitPrice * confirmModalData.quantityToAdd) / 1000))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="flex items-center space-x-3">
+                          <button
+                            type="button"
+                            onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.max(1, prev.quantityToAdd - 1) })}
+                            className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-lg flex items-center justify-center cursor-pointer"
+                          >
+                            -
+                          </button>
+                          <EditableIntegerInput
+                            min={1}
+                            max={confirmModalData.variant.stock_quantity}
+                            value={confirmModalData.quantityToAdd}
+                            onChange={(val) => {
+                              if (val !== '') {
+                                setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, Math.max(1, val)) });
+                              }
+                            }}
+                            className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(confirmModalData.variant.stock_quantity, prev.quantityToAdd + 1) })}
+                            className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-lg flex items-center justify-center cursor-pointer"
+                          >
+                            +
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
 
               <div className="pt-2 flex space-x-3">
                 <button
@@ -1056,11 +1151,10 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
                       {paymentMethod === 'cash' ? 'მიღებული ნაღდი თანხა (₾)' : 'ახლა გადახდილი ნაღდი თანხა (₾)'}
                     </label>
-                    <input
-                      type="text"
-                      inputMode="decimal"
+                    <EditableMoneyInput
                       value={cashReceivedInput}
-                      onChange={(e) => setCashReceivedInput(e.target.value)}
+                      onChange={(val) => setCashReceivedInput(val)}
+                      placeholder="0.00"
                       className="w-full px-3.5 py-2 sm:py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg sm:text-xl font-bold focus:outline-none focus:border-emerald-500 tabular-nums"
                     />
                   </div>
@@ -1117,10 +1211,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 <div className="bg-slate-950/50 border border-amber-900/50 p-3 rounded-xl space-y-2">
                   <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wide">ფასდაკლება (მხოლოდ მფლობელი)</div>
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <input
-                      inputMode="decimal"
+                    <EditableMoneyInput
                       value={cartDiscountInput}
-                      onChange={(e) => setCartDiscountInput(e.target.value)}
+                      onChange={(val) => setCartDiscountInput(val)}
                       placeholder="კალათაზე ₾"
                       className="w-28 px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-amber-500 tabular-nums"
                     />
@@ -1302,7 +1395,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 {completedSale.items?.map((it) => (
                   <div key={it.id} className="flex justify-between items-center">
                     <span className="text-slate-300 truncate pr-2">
-                      {it.product_name_snap} ({it.variant_name_snap}) &times; {it.quantity}
+                      {it.product_name_snap} ({it.variant_name_snap}) &times; {it.unit_type === 'kg' ? `${gramsToKg(it.quantity)} კგ` : `${it.quantity} ც`}
                     </span>
                     <span className="font-semibold text-white shrink-0 tabular-nums">{formatTetri(it.total_price_tetri)}</span>
                   </div>

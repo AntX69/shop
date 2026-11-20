@@ -17,6 +17,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getDb, runInTransaction } from '../db/database.ts';
 import { User, UserRole, UserSession } from '../../shared/types.ts';
 import { generateSalt, hashPin, isValidPin, pinHashNeedsUpgrade, verifyPin } from '../../shared/auth.ts';
+import { ALL_PERMISSION_IDS, DEFAULT_SELLER_PERMISSIONS } from '../../shared/permissions.ts';
 import { BackupService } from './backupService.ts';
 import { oneOf, requireId, requireString } from './validation.ts';
 import {
@@ -78,7 +79,65 @@ export class AuthService {
   }
 
   private toUser(row: UserRow): User {
-    return { id: row.id, name: row.name, role: row.role, is_active: row.is_active, created_at: row.created_at };
+    return {
+      id: row.id,
+      name: row.name,
+      role: row.role,
+      is_active: row.is_active,
+      permissions: this.getUserPermissions(row.id),
+      created_at: row.created_at
+    };
+  }
+
+  getUserById(userId: number): User | null {
+    const row = this.loadUser(userId);
+    return row ? this.toUser(row) : null;
+  }
+
+  getUserPermissions(userId: number): string[] {
+    const row = this.loadUser(userId);
+    if (!row) return [];
+    if (row.role === 'owner') {
+      return [...ALL_PERMISSION_IDS];
+    }
+    const rows = this.db.prepare(
+      "SELECT permission FROM user_permissions WHERE user_id = ? ORDER BY permission ASC"
+    ).all(userId) as Array<{ permission: string }>;
+    return rows.map(r => r.permission);
+  }
+
+  hasPermission(user: User, permission?: string): boolean {
+    if (!permission) return true;
+    if (user.role === 'owner') return true;
+    const perms = this.getUserPermissions(user.id);
+    return perms.includes(permission);
+  }
+
+  setUserPermissions(requester: User, targetUserId: number, permissions: string[]): string[] {
+    this.requireOwner(requester, 'უფლებების მართვა შეუძლია მხოლოდ მფლობელს');
+    const targetId = requireId(targetUserId, 'მომხმარებელი');
+    const target = this.loadUser(targetId);
+    if (!target) {
+      throw new Error('მომხმარებელი ვერ მოიძებნა');
+    }
+    if (target.role === 'owner') {
+      throw new Error('მფლობელის უფლებების შეზღუდვა შეუძლებელია');
+    }
+
+    const validSet = new Set(ALL_PERMISSION_IDS);
+    const sanitized = Array.from(new Set((permissions || []).filter(p => typeof p === 'string' && validSet.has(p))));
+
+    runInTransaction((db) => {
+      db.prepare("DELETE FROM user_permissions WHERE user_id = ?").run(targetId);
+      const insertStmt = db.prepare("INSERT INTO user_permissions (user_id, permission, created_at) VALUES (?, ?, ?)");
+      const now = new Date().toISOString();
+      for (const perm of sanitized) {
+        insertStmt.run(targetId, perm, now);
+      }
+      this.audit(requester.id, 'PERMISSIONS_UPDATE', String(targetId), `Updated permissions for ${target.name}: ${sanitized.join(', ')}`);
+    }, this.db);
+
+    return sanitized;
   }
 
   /**
@@ -227,7 +286,7 @@ export class AuthService {
   /**
    * Adds a new employee/seller (Owner only).
    */
-  addUser(requester: User, name: string, pin: string, role: UserRole = 'seller'): User {
+  addUser(requester: User, name: string, pin: string, role: UserRole = 'seller', initialPermissions?: string[]): User {
     this.requireOwner(requester, 'თანამშრომლის დამატება შეუძლია მხოლოდ მფლობელს');
 
     const trimmedName = typeof name === 'string' ? name.trim() : '';
@@ -250,6 +309,21 @@ export class AuthService {
     ).run(trimmedName, safeRole, hash, salt, now);
 
     const newId = Number(result.lastInsertRowid);
+
+    let grantedPerms: string[] = [];
+    if (safeRole === 'seller') {
+      const validSet = new Set(ALL_PERMISSION_IDS);
+      grantedPerms = initialPermissions && Array.isArray(initialPermissions)
+        ? initialPermissions.filter(p => validSet.has(p))
+        : [...DEFAULT_SELLER_PERMISSIONS];
+      const insertStmt = this.db.prepare("INSERT INTO user_permissions (user_id, permission, created_at) VALUES (?, ?, ?)");
+      for (const p of grantedPerms) {
+        insertStmt.run(newId, p, now);
+      }
+    } else {
+      grantedPerms = [...ALL_PERMISSION_IDS];
+    }
+
     this.audit(requester.id, 'USER_CREATE', String(newId), `Created user ${trimmedName} (${safeRole})`);
 
     return {
@@ -257,6 +331,7 @@ export class AuthService {
       name: trimmedName,
       role: safeRole,
       is_active: 1,
+      permissions: grantedPerms,
       created_at: now
     };
   }

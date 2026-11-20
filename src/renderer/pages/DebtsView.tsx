@@ -12,6 +12,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Customer, DebtRepayment, CustomerLedgerEntry, Sale, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
+import { EditableMoneyInput } from '../components/inputs/NumericInputs.tsx';
 import { 
   Users, 
   Search, 
@@ -761,14 +762,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                       <label className="block text-xs font-semibold text-slate-300 mb-1">
                         შემოტანილი თანხა (₾) *
                       </label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0.01"
+                      <EditableMoneyInput
                         required
                         autoFocus
                         value={repayAmountInput}
-                        onChange={(e) => setRepayAmountInput(e.target.value)}
+                        onChange={(val) => setRepayAmountInput(val)}
+                        placeholder="0.00"
                         className="w-full px-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg font-bold tabular-nums focus:border-emerald-500 focus:outline-none"
                       />
                       {/* Quick amount buttons */}

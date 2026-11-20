@@ -8,10 +8,13 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Category, Product, User } from '../../shared/types.ts';
+import { Category, Product, User, UnitType } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
+import { formatUnitQuantity, gramsToKg } from '../../shared/quantity.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { ProductEditModal } from '../components/ProductEditModal.tsx';
+import { CategoryManagerModal } from '../components/CategoryManagerModal.tsx';
+import { EditableIntegerInput, EditableMoneyInput } from '../components/inputs/NumericInputs.tsx';
 import { photoSrc, resizeImageFile } from '../utils/imageResize.ts';
 import {
   Package, 
@@ -55,9 +58,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
   const [galleryProduct, setGalleryProduct] = useState<Product | null>(null);
   const [activeImageIndex, setActiveImageIndex] = useState<number>(0);
 
-  // New Category Modal
-  const [isNewCategoryOpen, setIsNewCategoryOpen] = useState<boolean>(false);
-  const [newCategoryName, setNewCategoryName] = useState<string>('');
+  // Category Manager Modal
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState<boolean>(false);
 
   // New Product Modal (Owner only)
   const [isNewProductOpen, setIsNewProductOpen] = useState<boolean>(false);
@@ -66,6 +68,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
   const [prodDesc, setProdDesc] = useState<string>('');
   const [prodBasePrice, setProdBasePrice] = useState<string>('');
   const [prodBaseCost, setProdBaseCost] = useState<string>(''); // Optional purchase cost
+  const [prodUnitType, setProdUnitType] = useState<UnitType>('piece');
   const [newProductImages, setNewProductImages] = useState<string[]>([]);
   
   // Variants in new product
@@ -118,18 +121,6 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
     loadData();
   }, [searchTerm, selectedCategory, showArchived]);
 
-  const handleCreateCategory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCategoryName.trim()) return;
-    try {
-      const created = await invokeIpc<Category>('products:createCategory', { name: newCategoryName.trim() });
-      setCategories(prev => [...prev, created]);
-      setNewCategoryName('');
-      setIsNewCategoryOpen(false);
-    } catch (err: any) {
-      alert(err.message || 'კატეგორიის შექმნა ვერ მოხერხდა');
-    }
-  };
 
   const addVariantRow = () => {
     setVariantsList(prev => [
@@ -241,6 +232,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         description: prodDesc.trim() || undefined,
         base_price_tetri: basePriceTetri,
         base_cost_tetri: baseCostTetri,
+        unit_type: prodUnitType,
         variants: payloadVariants,
         image_paths: newProductImages.length > 0 ? newProductImages : undefined
       });
@@ -252,6 +244,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       setProdBasePrice('');
       setProdBaseCost('');
       setProdDesc('');
+      setProdUnitType('piece');
       setNewProductImages([]);
       setVariantsList([{
         variant_name: 'სტანდარტული',
@@ -339,11 +332,12 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               </button>
 
               <button
-                onClick={() => setIsNewCategoryOpen(true)}
+                onClick={() => setIsCategoryManagerOpen(true)}
                 className="px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer"
+                title="კატეგორიების მართვა, ფერები, რედაქტირება და წაშლა"
               >
-                <Tag className="w-3.5 h-3.5 text-slate-400" />
-                <span>+ კატეგორია</span>
+                <Tag className="w-3.5 h-3.5 text-emerald-400" />
+                <span>კატეგორიების მართვა</span>
               </button>
 
               <button
@@ -390,13 +384,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
             <button
               key={c.id}
               onClick={() => setSelectedCategory(c.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer flex items-center space-x-1.5 ${
                 selectedCategory === c.id
                   ? 'bg-emerald-600 text-white font-bold'
                   : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
               }`}
             >
-              {c.name}
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: c.color || '#10b981' }} />
+              <span>{c.name}</span>
             </button>
           ))}
         </div>
@@ -463,7 +458,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                         {p.description && <div className="text-[11px] text-slate-400 truncate max-w-xs">{p.description}</div>}
                       </td>
                       <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[11px]">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[11px] inline-flex items-center gap-1.5">
+                          {p.category_color && (
+                            <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.category_color }} />
+                          )}
                           {p.category_name || 'ზოგადი'}
                         </span>
                       </td>
@@ -477,17 +475,23 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                                   {c.code_value} ({c.code_type === 'manual_5digit' ? '5-ნიშნა' : 'შტრიხკოდი'})
                                 </span>
                               ))}
-                              <span className="text-slate-400 font-medium">({v.stock_quantity} ც)</span>
+                              <span className="text-slate-400 font-medium">
+                                ({p.unit_type === 'kg' ? `${gramsToKg(v.stock_quantity)} კგ` : `${v.stock_quantity} ც`})
+                              </span>
                             </div>
                           ))}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-right font-bold text-white text-sm">
-                        {formatTetri(p.base_price_tetri)}
+                        {formatTetri(p.base_price_tetri)}{p.unit_type === 'kg' ? ' / კგ' : ''}
                       </td>
                       {isOwner && (
                         <td className="py-3 px-4 text-right text-slate-400">
-                          {p.base_cost_tetri !== null && p.base_cost_tetri !== undefined ? formatTetri(p.base_cost_tetri) : <span className="italic text-slate-600">უცნობი</span>}
+                          {p.base_cost_tetri !== null && p.base_cost_tetri !== undefined ? (
+                            <>{formatTetri(p.base_cost_tetri)}{p.unit_type === 'kg' ? ' / კგ' : ''}</>
+                          ) : (
+                            <span className="italic text-slate-600">უცნობი</span>
+                          )}
                         </td>
                       )}
                       <td className="py-3 px-4 text-right">
@@ -498,7 +502,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             ? 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
                             : 'bg-red-950/60 text-red-400 border border-red-800/40'
                         }`}>
-                          {totalStock} ცალი
+                          {p.unit_type === 'kg' ? `${gramsToKg(totalStock)} კგ` : `${totalStock} ცალი`}
                         </span>
                       </td>
                       {isOwner && (
@@ -532,38 +536,12 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         />
       )}
 
-      {/* --- MODAL: Add Category --- */}
-      {isNewCategoryOpen && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full p-6 shadow-2xl">
-            <h3 className="text-base font-bold text-white mb-3">ახალი კატეგორია</h3>
-            <form onSubmit={handleCreateCategory} className="space-y-3">
-              <input
-                type="text"
-                required
-                value={newCategoryName}
-                onChange={(e) => setNewCategoryName(e.target.value)}
-                placeholder="მაგ. სათამაშოები, ტანსაცმელი..."
-                className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
-              />
-              <div className="flex space-x-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsNewCategoryOpen(false)}
-                  className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold"
-                >
-                  გაუქმება
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2 bg-emerald-600 text-white rounded-xl text-xs font-bold"
-                >
-                  დამატება
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {/* --- MODAL: Category Manager --- */}
+      {isCategoryManagerOpen && (
+        <CategoryManagerModal
+          onClose={() => setIsCategoryManagerOpen(false)}
+          onChanged={loadData}
+        />
       )}
 
       {/* --- MODAL: Add Product (Owner Only) --- */}
@@ -615,25 +593,37 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">გასაყიდი ფასი (₾) *</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">ერთეულის ტიპი *</label>
+                  <select
+                    value={prodUnitType}
+                    onChange={(e) => setProdUnitType(e.target.value as UnitType)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
+                  >
+                    <option value="piece">ცალი (ც)</option>
+                    <option value="kg">კილოგრამი (კგ)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {prodUnitType === 'kg' ? 'გასაყიდი ფასი 1 კგ-ზე (₾) *' : 'გასაყიდი ფასი (₾) *'}
+                  </label>
+                  <EditableMoneyInput
                     required
                     value={prodBasePrice}
-                    onChange={(e) => setProdBasePrice(e.target.value)}
+                    onChange={(val) => setProdBasePrice(val)}
                     placeholder="25.50"
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold"
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">შესყიდვის ფასი (₾, არასავალდებულო)</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {prodUnitType === 'kg' ? 'შესყიდვის ფასი 1 კგ-ზე (₾, არასავალდებულო)' : 'შესყიდვის ფასი (₾, არასავალდებულო)'}
+                  </label>
+                  <EditableMoneyInput
                     value={prodBaseCost}
-                    onChange={(e) => setProdBaseCost(e.target.value)}
+                    onChange={(val) => setProdBaseCost(val)}
                     placeholder="თუ უცნობია დატოვეთ ცარიელი"
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
@@ -756,15 +746,15 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
                         <div>
                           <label className="block text-[11px] text-slate-400 mb-0.5">საწყისი მარაგი (ცალი)</label>
-                          <input
-                            type="number"
-                            min="0"
+                          <EditableIntegerInput
+                            min={0}
                             value={v.initial_stock}
-                            onChange={(e) => {
+                            onChange={(val) => {
                               const updated = [...variantsList];
-                              updated[i].initial_stock = parseInt(e.target.value, 10) || 0;
+                              updated[i].initial_stock = val === '' ? 0 : val;
                               setVariantsList(updated);
                             }}
+                            placeholder="0"
                             className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
                           />
                         </div>

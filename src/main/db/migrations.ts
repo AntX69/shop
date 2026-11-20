@@ -561,6 +561,65 @@ export const migrations: Migration[] = [
         ('last_auto_backup_date', '');
       `);
     }
+  },
+  {
+    version: 7,
+    name: 'category_management_and_granular_permissions',
+    up: (db: DatabaseSync) => {
+      // 1. Category color and archive support
+      addColumnIfMissing(db, 'categories', 'color', "TEXT NOT NULL DEFAULT '#10b981'");
+      addColumnIfMissing(db, 'categories', 'is_archived', 'INTEGER NOT NULL DEFAULT 0');
+
+      // 2. Granular per-seller permissions table
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_permissions (
+          user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          permission TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, permission)
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
+      `);
+
+      // 3. Populate default permissions for existing sellers so their access is 100% preserved
+      const defaultSellerPermissions = [
+        'sales.create',
+        'sales.view_history',
+        'sales.return',
+        'sales.exchange',
+        'customers.view',
+        'customers.create',
+        'customers.edit',
+        'debts.create',
+        'debts.view',
+        'debts.repayment',
+        'products.view',
+        'inventory.view',
+        'inventory.view_movements',
+        'categories.view'
+      ];
+
+      const now = new Date().toISOString();
+      const sellers = db.prepare("SELECT id FROM users WHERE role = 'seller'").all() as Array<{ id: number }>;
+      const insertStmt = db.prepare("INSERT OR IGNORE INTO user_permissions (user_id, permission, created_at) VALUES (?, ?, ?)");
+      for (const s of sellers) {
+        for (const perm of defaultSellerPermissions) {
+          insertStmt.run(s.id, perm, now);
+        }
+      }
+    }
+  },
+  {
+    version: 8,
+    name: 'weight_based_inventory_and_pricing',
+    up: (db: DatabaseSync) => {
+      addColumnIfMissing(db, 'products', 'unit_type', "TEXT NOT NULL DEFAULT 'piece'");
+      addColumnIfMissing(db, 'product_variants', 'unit_type', "TEXT NOT NULL DEFAULT 'piece'");
+      addColumnIfMissing(db, 'sale_items', 'unit_type', "TEXT NOT NULL DEFAULT 'piece'");
+      addColumnIfMissing(db, 'return_items', 'unit_type', "TEXT NOT NULL DEFAULT 'piece'");
+      addColumnIfMissing(db, 'inventory_movements', 'unit_type', "TEXT NOT NULL DEFAULT 'piece'");
+      addColumnIfMissing(db, 'inventory_lots', 'unit_type', "TEXT NOT NULL DEFAULT 'piece'");
+    }
   }
 ];
 

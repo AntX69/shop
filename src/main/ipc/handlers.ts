@@ -47,6 +47,7 @@ interface Ctx {
 interface Route {
   access: Access;
   handler: (ctx: Ctx) => any;
+  permission?: string;
 }
 
 /** Desktop-only capabilities (native dialogs) registered by the Electron main process. */
@@ -94,19 +95,25 @@ const routes: Record<string, Route> = {
 
   // 3. User & Staff Management (owner)
   'auth:getAllUsers': { access: 'owner', handler: (c) => auth().getAllUsers(c.user) },
-  'auth:addUser': { access: 'owner', handler: (c) => auth().addUser(c.user, p(c).name, p(c).pin, p(c).role) },
+  'auth:addUser': { access: 'owner', handler: (c) => auth().addUser(c.user, p(c).name, p(c).pin, p(c).role, p(c).permissions) },
   'auth:setUserActive': { access: 'owner', handler: (c) => { auth().setUserActive(c.user, p(c).userId, !!p(c).isActive); return { updated: true }; } },
   'auth:resetPin': { access: 'owner', handler: (c) => { auth().resetPin(c.user, p(c).userId, p(c).newPin); return { reset: true }; } },
   'auth:unlockUser': { access: 'owner', handler: (c) => { auth().unlockUser(c.user, p(c).userId); return { unlocked: true }; } },
+  'auth:getUserPermissions': { access: 'owner', handler: (c) => auth().getUserPermissions(p(c).userId) },
+  'auth:setUserPermissions': { access: 'owner', handler: (c) => { auth().setUserPermissions(c.user, p(c).userId, p(c).permissions); return { updated: true }; } },
   'auth:resetStoreDatabase': { access: 'owner', handler: (c) => { auth().resetStoreDatabase(c.user, p(c).pin); return { reset: true }; } },
 
   // 4. Products & Categories
-  'products:getCategories': { access: 'user', handler: () => products().getCategories() },
-  'products:createCategory': { access: 'owner', handler: (c) => products().createCategory(c.user, p(c).name) },
-  'products:deleteCategory': { access: 'owner', handler: (c) => { products().deleteCategory(c.user, p(c).categoryId); return { deleted: true }; } },
-  'products:renameCategory': { access: 'owner', handler: (c) => products().renameCategory(c.user, p(c).categoryId, p(c).name) },
+  'products:getCategories': { access: 'user', permission: 'categories.view', handler: (c) => products().getCategories({ includeArchived: !!p(c).includeArchived }) },
+  'products:createCategory': { access: 'user', permission: 'categories.create', handler: (c) => products().createCategory(c.user, p(c).name, p(c).color) },
+  'products:updateCategory': { access: 'user', permission: 'categories.edit', handler: (c) => products().updateCategory(c.user, p(c).categoryId, { name: p(c).name, color: p(c).color }) },
+  'products:renameCategory': { access: 'user', permission: 'categories.edit', handler: (c) => products().renameCategory(c.user, p(c).categoryId, p(c).name) },
+  'products:setCategoryArchived': { access: 'user', permission: 'categories.delete', handler: (c) => products().setCategoryArchived(c.user, p(c).categoryId, !!p(c).isArchived) },
+  'products:getCategoryUsage': { access: 'user', permission: 'categories.view', handler: (c) => products().getCategoryUsage(p(c).categoryId) },
+  'products:deleteCategory': { access: 'user', permission: 'categories.delete', handler: (c) => { products().deleteCategory(c.user, p(c).categoryId, p(c).reassignToCategoryId); return { deleted: true }; } },
   'products:list': {
     access: 'user',
+    permission: 'products.view',
     handler: (c) => {
       const q = { ...p(c) };
       if (c.user.role !== 'owner') { delete q.includeArchived; delete q.archivedOnly; }
@@ -115,18 +122,19 @@ const routes: Record<string, Route> = {
   },
   'products:getById': {
     access: 'user',
+    permission: 'products.view',
     handler: (c) => products().getProductById(p(c).productId, { includeArchived: c.user.role === 'owner' && !!p(c).includeArchived })
   },
-  'products:lookupCode': { access: 'user', handler: (c) => products().lookupByCode(String(p(c).code ?? '')) },
-  'products:create': { access: 'owner', handler: (c) => products().createProduct(c.user, c.payload) },
-  'products:addImage': { access: 'owner', handler: (c) => products().addImage(c.user, p(c).productId, p(c).filePath, p(c).isPrimary) },
-  'products:deleteImage': { access: 'owner', handler: (c) => { products().deleteImage(c.user, p(c).imageId); return { deleted: true }; } },
-  'products:setPrimaryImage': { access: 'owner', handler: (c) => { products().setPrimaryImage(c.user, p(c).imageId); return { updated: true }; } },
-  'products:update': { access: 'owner', handler: (c) => products().updateProduct(c.user, c.payload) },
-  'products:setActive': { access: 'owner', handler: (c) => products().setProductActive(c.user, p(c).productId, !!p(c).isActive) },
-  'products:addVariant': { access: 'owner', handler: (c) => products().addVariant(c.user, p(c).productId, p(c).variant) },
-  'products:updateVariant': { access: 'owner', handler: (c) => products().updateVariant(c.user, c.payload) },
-  'products:setVariantActive': { access: 'owner', handler: (c) => products().setVariantActive(c.user, p(c).variantId, !!p(c).isActive) },
+  'products:lookupCode': { access: 'user', permission: 'products.view', handler: (c) => products().lookupByCode(String(p(c).code ?? '')) },
+  'products:create': { access: 'user', permission: 'products.create', handler: (c) => products().createProduct(c.user, c.payload) },
+  'products:addImage': { access: 'user', permission: 'products.create', handler: (c) => products().addImage(c.user, p(c).productId, p(c).filePath, p(c).isPrimary) },
+  'products:deleteImage': { access: 'user', permission: 'products.edit', handler: (c) => { products().deleteImage(c.user, p(c).imageId); return { deleted: true }; } },
+  'products:setPrimaryImage': { access: 'user', permission: 'products.edit', handler: (c) => { products().setPrimaryImage(c.user, p(c).imageId); return { updated: true }; } },
+  'products:update': { access: 'user', permission: 'products.edit', handler: (c) => products().updateProduct(c.user, c.payload) },
+  'products:setActive': { access: 'user', permission: 'products.archive', handler: (c) => products().setProductActive(c.user, p(c).productId, !!p(c).isActive) },
+  'products:addVariant': { access: 'user', permission: 'products.edit', handler: (c) => products().addVariant(c.user, p(c).productId, p(c).variant) },
+  'products:updateVariant': { access: 'user', permission: 'products.edit', handler: (c) => products().updateVariant(c.user, c.payload) },
+  'products:setVariantActive': { access: 'user', permission: 'products.edit', handler: (c) => products().setVariantActive(c.user, p(c).variantId, !!p(c).isActive) },
 
   // 5. OCR (offline ONNX, on the OCR worker thread)
   'ocr:isModelReady': {
@@ -147,35 +155,36 @@ const routes: Record<string, Route> = {
   },
 
   // 6. Inventory
-  'inventory:restock': { access: 'owner', handler: (c) => inventory().restockVariant(c.user, c.payload) },
-  'inventory:correct': { access: 'owner', handler: (c) => inventory().correctStock(c.user, c.payload) },
-  'inventory:getMovements': { access: 'user', handler: (c) => inventory().getMovements(p(c).variantId, p(c).limit) },
+  'inventory:restock': { access: 'user', permission: 'inventory.restock', handler: (c) => inventory().restockVariant(c.user, c.payload) },
+  'inventory:correct': { access: 'user', permission: 'inventory.adjust', handler: (c) => inventory().correctStock(c.user, c.payload) },
+  'inventory:getMovements': { access: 'user', permission: 'inventory.view_movements', handler: (c) => inventory().getMovements(p(c).variantId, p(c).limit) },
 
   // 7. POS & Checkout
-  'pos:checkout': { access: 'user', handler: (c) => pos().checkout(c.user, c.payload) },
-  'pos:searchSales': { access: 'user', handler: (c) => pos().searchSales(c.payload) },
-  'pos:getSale': { access: 'user', handler: (c) => pos().getSaleById(p(c).saleId) },
+  'pos:checkout': { access: 'user', permission: 'sales.create', handler: (c) => pos().checkout(c.user, c.payload) },
+  'pos:searchSales': { access: 'user', permission: 'sales.view_history', handler: (c) => pos().searchSales(c.payload) },
+  'pos:getSale': { access: 'user', permission: 'sales.view_history', handler: (c) => pos().getSaleById(p(c).saleId) },
 
   // 8. Customers & Debts
-  'customers:list': { access: 'user', handler: (c) => customers().listCustomers(p(c).searchTerm) },
-  'customers:get': { access: 'user', handler: (c) => customers().getCustomerById(p(c).customerId) },
-  'customers:create': { access: 'user', handler: (c) => customers().createCustomer(c.user, c.payload) },
-  'customers:repay': { access: 'user', handler: (c) => customers().recordRepayment(c.user, c.payload) },
-  'customers:getRepayments': { access: 'user', handler: (c) => customers().getRepayments(p(c).customerId) },
-  'customers:getLedger': { access: 'user', handler: (c) => customers().getCustomerLedger(p(c).customerId) },
-  'customers:getActiveSales': { access: 'user', handler: (c) => customers().getCustomerActiveSales(p(c).customerId) },
-  'debts:voidRepayment': { access: 'owner', handler: (c) => customers().voidRepayment(c.user, c.payload) },
-  'debts:writeOff': { access: 'owner', handler: (c) => customers().writeOffDebt(c.user, c.payload) },
-  'debts:getCorrections': { access: 'owner', handler: (c) => customers().getDebtCorrections(c.user, p(c).customerId) },
+  'customers:list': { access: 'user', permission: 'customers.view', handler: (c) => customers().listCustomers(p(c).searchTerm) },
+  'customers:get': { access: 'user', permission: 'customers.view', handler: (c) => customers().getCustomerById(p(c).customerId) },
+  'customers:create': { access: 'user', permission: 'customers.create', handler: (c) => customers().createCustomer(c.user, c.payload) },
+  'customers:repay': { access: 'user', permission: 'debts.repayment', handler: (c) => customers().recordRepayment(c.user, c.payload) },
+  'customers:getRepayments': { access: 'user', permission: 'debts.view', handler: (c) => customers().getRepayments(p(c).customerId) },
+  'customers:getLedger': { access: 'user', permission: 'debts.view', handler: (c) => customers().getCustomerLedger(p(c).customerId) },
+  'customers:getActiveSales': { access: 'user', permission: 'customers.view', handler: (c) => customers().getCustomerActiveSales(p(c).customerId) },
+  'debts:voidRepayment': { access: 'user', permission: 'debts.correction', handler: (c) => customers().voidRepayment(c.user, c.payload) },
+  'debts:writeOff': { access: 'user', permission: 'debts.correction', handler: (c) => customers().writeOffDebt(c.user, c.payload) },
+  'debts:getCorrections': { access: 'user', permission: 'debts.view', handler: (c) => customers().getDebtCorrections(c.user, p(c).customerId) },
 
   // 9. Returns & Exchanges
-  'returns:process': { access: 'user', handler: (c) => returns().processReturn(c.user, c.payload) },
-  'returns:exchange': { access: 'user', handler: (c) => returns().processExchange(c.user, c.payload) },
-  'returns:list': { access: 'user', handler: (c) => returns().listReturns(c.payload) },
+  'returns:process': { access: 'user', permission: 'sales.return', handler: (c) => returns().processReturn(c.user, c.payload) },
+  'returns:exchange': { access: 'user', permission: 'sales.exchange', handler: (c) => returns().processExchange(c.user, c.payload) },
+  'returns:list': { access: 'user', permission: 'sales.view_history', handler: (c) => returns().listReturns(c.payload) },
 
   // 10. Finance & Expenses
   'finance:summary': {
-    access: 'owner',
+    access: 'user',
+    permission: 'reports.financial',
     handler: (c) => {
       const q = p(c);
       return q.preset || q.from || q.to
@@ -184,12 +193,13 @@ const routes: Record<string, Route> = {
     }
   },
   'finance:listDiscounts': {
-    access: 'owner',
+    access: 'user',
+    permission: 'reports.sales',
     handler: (c) => finance().listDiscounts(c.user, { preset: p(c).preset, from: p(c).from, to: p(c).to }, p(c).limit)
   },
-  'finance:createExpense': { access: 'owner', handler: (c) => finance().createExpense(c.user, c.payload) },
-  'finance:listExpenses': { access: 'owner', handler: (c) => finance().listExpenses(c.user, p(c).limit) },
-  'finance:exportSalesCSV': { access: 'owner', handler: (c) => finance().exportSalesCSV(c.user) },
+  'finance:createExpense': { access: 'user', permission: 'expenses.manage', handler: (c) => finance().createExpense(c.user, c.payload) },
+  'finance:listExpenses': { access: 'user', permission: 'expenses.view', handler: (c) => finance().listExpenses(c.user, p(c).limit) },
+  'finance:exportSalesCSV': { access: 'user', permission: 'reports.sales', handler: (c) => finance().exportSalesCSV(c.user) },
 
   // 11. Backup, Settings & Logs (owner)
   'backup:create': { access: 'owner', handler: (c) => backup().createBackupWithMirror(c.user) },
@@ -246,10 +256,11 @@ export function filterResponse(value: any, user: User | null, depth = 0): any {
   if (ArrayBuffer.isView(value)) return value;
   if (Array.isArray(value)) return value.map((v) => filterResponse(v, user, depth + 1));
   const isOwner = user?.role === 'owner';
+  const canSeeFinancials = isOwner || (user ? new AuthService().hasPermission(user, 'reports.financial') : false);
   const out: Record<string, any> = {};
   for (const [k, v] of Object.entries(value)) {
     if (NEVER_SENT_FIELD.test(k)) continue;
-    if (!isOwner && OWNER_ONLY_FIELD.test(k)) continue;
+    if (!canSeeFinancials && OWNER_ONLY_FIELD.test(k)) continue;
     out[k] = filterResponse(v, user, depth + 1);
   }
   return out;
@@ -290,6 +301,11 @@ export async function handleIpcMessage(req: IpcRequest): Promise<IpcResponse> {
     }
     if (route.access === 'owner' && currentUser.role !== 'owner') {
       return { success: false, error: 'ამ მოქმედების უფლება აქვს მხოლოდ მფლობელს' };
+    }
+    if (route.permission && currentUser.role !== 'owner') {
+      if (!new AuthService().hasPermission(currentUser, route.permission)) {
+        return { success: false, error: 'თქვენ არ გაქვთ ამ მოქმედების შესრულების უფლება (მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს)' };
+      }
     }
 
     const data = await route.handler({ user: currentUser, payload: req.payload, token });

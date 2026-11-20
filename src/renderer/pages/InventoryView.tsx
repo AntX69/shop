@@ -13,7 +13,9 @@
 import React, { useState, useEffect } from 'react';
 import { Product, ProductVariant, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
+import { gramsToKg, kgToGrams, formatUnitQuantity, safeParseGrams } from '../../shared/quantity.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
+import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
 import { 
   Boxes, 
   PlusCircle, 
@@ -87,6 +89,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
   const allVariants = products.flatMap(p => 
     (p.variants || []).map(v => ({
       ...v,
+      unit_type: p.unit_type || v.unit_type || 'piece',
       product_name: p.name,
       category_name: p.category_name
     }))
@@ -100,10 +103,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       setModalError('გთხოვთ აირჩიოთ პროდუქტის ვარიანტი');
       return;
     }
-    const qty = Number(restockQty.trim());
-    if (!Number.isInteger(qty) || qty <= 0) {
-      setModalError('რაოდენობა უნდა იყოს მთელი რიცხვი, 1 ან მეტი');
-      return;
+    const selVariant = allVariants.find(v => v.id === selectedVariantId);
+    const isKg = selVariant?.unit_type === 'kg';
+    let qty: number;
+    if (isKg) {
+      try {
+        qty = kgToGrams(restockQty);
+        if (qty <= 0) throw new Error('წონა უნდა აღემატებოდეს 0-ს');
+      } catch (err: any) {
+        setModalError(err.message || 'არასწორი წონა');
+        return;
+      }
+    } else {
+      qty = Number(restockQty.trim());
+      if (!Number.isInteger(qty) || qty <= 0) {
+        setModalError('რაოდენობა უნდა იყოს მთელი რიცხვი, 1 ან მეტი');
+        return;
+      }
     }
 
     let unitCostTetri: number | null = null;
@@ -142,10 +158,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       setModalError('გთხოვთ აირჩიოთ პროდუქტის ვარიანტი');
       return;
     }
-    const counted = Number(countedQty.trim());
-    if (countedQty.trim() === '' || !Number.isInteger(counted) || counted < 0) {
-      setModalError('დათვლილი მარაგი უნდა იყოს მთელი, არაუარყოფითი რიცხვი');
-      return;
+    const corrVariant = allVariants.find(v => v.id === correctionVariantId);
+    const isKg = corrVariant?.unit_type === 'kg';
+    let counted: number;
+    if (isKg) {
+      try {
+        counted = kgToGrams(countedQty);
+        if (counted < 0) throw new Error('წონა არ შეიძლება იყოს უარყოფითი');
+      } catch (err: any) {
+        setModalError(err.message || 'არასწორი წონა');
+        return;
+      }
+    } else {
+      counted = Number(countedQty.trim());
+      if (countedQty.trim() === '' || !Number.isInteger(counted) || counted < 0) {
+        setModalError('დათვლილი მარაგი უნდა იყოს მთელი, არაუარყოფითი რიცხვი');
+        return;
+      }
     }
 
     if (!correctionReason.trim()) {
@@ -313,12 +342,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                           {primaryCode}
                         </td>
                         <td className="py-3 px-4 text-right font-extrabold text-white text-sm">
-                          {formatTetri(price)}
+                          {formatTetri(price)}{v.unit_type === 'kg' ? ' / კგ' : ''}
                         </td>
                         <td className="py-3 px-4 text-right font-extrabold text-base">
                           <span className={isZero ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-slate-100'}>
-                            {v.stock_quantity}
-                          </span> <span className="text-xs text-slate-400 font-normal">ც</span>
+                            {v.unit_type === 'kg' ? gramsToKg(v.stock_quantity) : v.stock_quantity}
+                          </span> <span className="text-xs text-slate-400 font-normal">{v.unit_type === 'kg' ? 'კგ' : 'ც'}</span>
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
@@ -379,11 +408,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                       </td>
                       <td className="py-2.5 px-4 text-right font-bold text-sm">
                         <span className={isPositive ? 'text-emerald-400' : 'text-red-400'}>
-                          {isPositive ? `+${m.quantity_change}` : m.quantity_change}
-                        </span>
+                          {m.unit_type === 'kg'
+                            ? (isPositive ? `+${gramsToKg(m.quantity_change)}` : `-${gramsToKg(Math.abs(m.quantity_change))}`)
+                            : (isPositive ? `+${m.quantity_change}` : m.quantity_change)}
+                        </span> <span className="text-xs text-slate-400 font-normal">{m.unit_type === 'kg' ? 'კგ' : 'ც'}</span>
                       </td>
                       <td className="py-2.5 px-4 text-right font-mono text-slate-200">
-                        {m.resulting_stock} ც
+                        {m.unit_type === 'kg' ? `${gramsToKg(m.resulting_stock)} კგ` : `${m.resulting_stock} ც`}
                       </td>
                       <td className="py-2.5 px-4 text-slate-300">
                         {m.reason} {m.reference_id ? `(#${m.reference_id})` : ''}
@@ -433,31 +464,41 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                     <option value="">-- აირჩიეთ --</option>
                     {allVariants.map(v => (
                       <option key={v.id} value={v.id}>
-                        {v.product_name} - {v.variant_name} (მიმდინარე ნაშთი: {v.stock_quantity})
+                        {v.product_name} - {v.variant_name} (მიმდინარე ნაშთი: {v.unit_type === 'kg' ? `${gramsToKg(v.stock_quantity)} კგ` : `${v.stock_quantity} ცალი`})
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">დამატებული რაოდენობა (ცალი) *</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={restockQty}
-                    onChange={(e) => setRestockQty(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold"
-                  />
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {allVariants.find(v => v.id === selectedVariantId)?.unit_type === 'kg'
+                      ? 'დამატებული წონა (კგ) *'
+                      : 'დამატებული რაოდენობა (ცალი) *'}
+                  </label>
+                  {allVariants.find(v => v.id === selectedVariantId)?.unit_type === 'kg' ? (
+                    <EditableWeightInput
+                      value={restockQty}
+                      onChange={setRestockQty}
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold"
+                    />
+                  ) : (
+                    <EditableIntegerInput
+                      min={1}
+                      required
+                      value={restockQty ? parseInt(restockQty, 10) : ''}
+                      onChange={(val) => setRestockQty(val === '' ? '' : String(val))}
+                      placeholder="1"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold"
+                    />
+                  )}
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">შესყიდვის ერთეულის ფასი (₾, არასავალდებულო FIFO-სთვის)</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
+                  <EditableMoneyInput
                     value={restockUnitCost}
-                    onChange={(e) => setRestockUnitCost(e.target.value)}
+                    onChange={(val) => setRestockUnitCost(val)}
                     placeholder="ცარიელი = პროდუქტის ბარათში მითითებული ფასი"
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
@@ -528,29 +569,41 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                       const id = parseInt(e.target.value, 10);
                       setCorrectionVariantId(id);
                       const v = allVariants.find(it => it.id === id);
-                      if (v) setCountedQty(String(v.stock_quantity));
+                      if (v) setCountedQty(v.unit_type === 'kg' ? gramsToKg(v.stock_quantity, false) : String(v.stock_quantity));
                     }}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   >
                     <option value="">-- აირჩიეთ --</option>
                     {allVariants.map(v => (
                       <option key={v.id} value={v.id}>
-                        {v.product_name} - {v.variant_name} (ბაზაში: {v.stock_quantity} ცალი)
+                        {v.product_name} - {v.variant_name} (ბაზაში: {v.unit_type === 'kg' ? `${gramsToKg(v.stock_quantity)} კგ` : `${v.stock_quantity} ცალი`})
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">ფაქტობრივად დათვლილი ახალი მარაგი *</label>
-                  <input
-                    type="number"
-                    min="0"
-                    required
-                    value={countedQty}
-                    onChange={(e) => setCountedQty(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-base font-bold"
-                  />
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {allVariants.find(v => v.id === correctionVariantId)?.unit_type === 'kg'
+                      ? 'ფაქტობრივად დათვლილი წონა (კგ) *'
+                      : 'ფაქტობრივად დათვლილი ახალი მარაგი (ცალი) *'}
+                  </label>
+                  {allVariants.find(v => v.id === correctionVariantId)?.unit_type === 'kg' ? (
+                    <EditableWeightInput
+                      value={countedQty}
+                      onChange={setCountedQty}
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-base font-bold"
+                    />
+                  ) : (
+                    <EditableIntegerInput
+                      min={0}
+                      required
+                      value={countedQty !== '' ? parseInt(countedQty, 10) : ''}
+                      onChange={(val) => setCountedQty(val === '' ? '' : String(val))}
+                      placeholder="0"
+                      className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-base font-bold"
+                    />
+                  )}
                 </div>
 
                 <div>

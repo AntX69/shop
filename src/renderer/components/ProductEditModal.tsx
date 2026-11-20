@@ -9,10 +9,11 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Category, Product, ProductVariant } from '../../shared/types.ts';
+import { Category, Product, ProductVariant, UnitType } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { SmartDigitInput } from './SmartDigitInput.tsx';
+import { EditableMoneyInput } from './inputs/NumericInputs.tsx';
 import { Archive, ArchiveRestore, CheckCircle, Info, Pencil, Plus, Save, X, AlertCircle } from 'lucide-react';
 
 interface ProductEditModalProps {
@@ -69,6 +70,7 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState('');
   const [cost, setCost] = useState('');
+  const [unitType, setUnitType] = useState<UnitType>('piece');
   const [drafts, setDrafts] = useState<Record<number, VariantDraft>>({});
   const [newVariant, setNewVariant] = useState<VariantDraft | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,6 +84,7 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
     setDescription(p.description || '');
     setPrice(toGel(p.base_price_tetri));
     setCost(toGel(p.base_cost_tetri));
+    setUnitType(p.unit_type || 'piece');
     setDrafts(Object.fromEntries((p.variants || []).map((v) => [v.id, draftFrom(v)])));
   };
 
@@ -125,6 +128,7 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
       description: description.trim() || null,
       base_price_tetri: basePrice,
       base_cost_tetri: parseOptionalGel(cost, 'თვითღირებულება'),
+      unit_type: unitType,
     });
   }, 'პროდუქტის მონაცემები შენახულია');
 
@@ -228,17 +232,24 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className={label}>ერთეულის ტიპი</label>
+                    <select className={input} value={unitType} onChange={(e) => setUnitType(e.target.value as UnitType)}>
+                      <option value="piece">ცალი (ც)</option>
+                      <option value="kg">კილოგრამი (კგ)</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 md:col-span-2">
                     <div>
-                      <label className={label}>ფასი (₾)</label>
-                      <input className={input} value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" />
+                      <label className={label}>{unitType === 'kg' ? 'ფასი 1 კგ-ზე (₾)' : 'ფასი (₾)'}</label>
+                      <EditableMoneyInput className={input} value={price} onChange={setPrice} placeholder="0.00" />
                     </div>
                     <div>
-                      <label className={label}>თვითღირ. (₾)</label>
-                      <input className={input} value={cost} onChange={(e) => setCost(e.target.value)} inputMode="decimal" placeholder="უცნობი" />
+                      <label className={label}>{unitType === 'kg' ? 'თვითღირ. 1 კგ-ზე (₾)' : 'თვითღირ. (₾)'}</label>
+                      <EditableMoneyInput className={input} value={cost} onChange={setCost} placeholder="უცნობი" />
                     </div>
                   </div>
-                  <div className="md:col-span-4">
+                  <div className="md:col-span-2">
                     <label className={label}>აღწერა</label>
                     <input className={input} value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} />
                   </div>
@@ -285,11 +296,11 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                           </div>
                           <div>
                             <label className={label}>საკუთარი ფასი (₾)</label>
-                            <input className={input} value={d.price} onChange={(e) => setDraft(v.id, { price: e.target.value })} placeholder={formatTetri(product.base_price_tetri, false)} inputMode="decimal" />
+                            <EditableMoneyInput className={input} value={d.price} onChange={(p) => setDraft(v.id, { price: p })} placeholder={formatTetri(product.base_price_tetri, false)} />
                           </div>
                           <div>
                             <label className={label}>თვითღირ. (₾)</label>
-                            <input className={input} value={d.cost} onChange={(e) => setDraft(v.id, { cost: e.target.value })} placeholder="პროდუქტის" inputMode="decimal" />
+                            <EditableMoneyInput className={input} value={d.cost} onChange={(c) => setDraft(v.id, { cost: c })} placeholder="პროდუქტის" />
                           </div>
                           <div className="col-span-2">
                             <label className={label}>5-ნიშნა კოდი</label>
@@ -332,11 +343,11 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                         </div>
                         <div>
                           <label className={label}>საკუთარი ფასი (₾)</label>
-                          <input className={input} value={newVariant.price} onChange={(e) => setNewVariant({ ...newVariant, price: e.target.value })} inputMode="decimal" />
+                          <EditableMoneyInput className={input} value={newVariant.price} onChange={(p) => setNewVariant({ ...newVariant, price: p })} placeholder="0.00" />
                         </div>
                         <div>
                           <label className={label}>საწყისი მარაგი</label>
-                          <input className={input} value={newVariant.initial_stock} onChange={(e) => setNewVariant({ ...newVariant, initial_stock: e.target.value.replace(/\D/g, '') })} inputMode="numeric" />
+                          <input className={input} value={newVariant.initial_stock} onFocus={(e) => e.currentTarget.select()} onChange={(e) => setNewVariant({ ...newVariant, initial_stock: e.target.value.replace(/\D/g, '') })} inputMode="numeric" />
                         </div>
                         <div className="col-span-2">
                           <label className={label}>5-ნიშნა კოდი</label>
@@ -348,7 +359,7 @@ export const ProductEditModal: React.FC<ProductEditModalProps> = ({ productId, c
                         </div>
                         <div>
                           <label className={label}>თვითღირ. (₾)</label>
-                          <input className={input} value={newVariant.cost} onChange={(e) => setNewVariant({ ...newVariant, cost: e.target.value })} placeholder="პროდუქტის" inputMode="decimal" />
+                          <EditableMoneyInput className={input} value={newVariant.cost} onChange={(c) => setNewVariant({ ...newVariant, cost: c })} placeholder="პროდუქტის" />
                         </div>
                         <div className="flex gap-1.5 justify-end">
                           <button onClick={addVariant} disabled={busy} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-[11px] font-bold cursor-pointer">დამატება</button>

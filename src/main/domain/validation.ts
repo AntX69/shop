@@ -114,3 +114,27 @@ export function oneOf<T extends string>(value: unknown, allowed: readonly T[], l
   }
   return value as T;
 }
+
+/** Integer grams (≥ 1). KG products pass quantities as whole grams; max 10 000 000 g = 10 t. */
+export const MAX_GRAMS = 10_000_000;
+
+export function requireGrams(value: unknown, label = 'წონა (გ)'): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
+    throw new Error(`${label} უნდა იყოს მთელი რიცხვი გრამებში, მინიმუმ 1 (მიღებულია: ${String(value)})`);
+  }
+  if (value > MAX_GRAMS) {
+    throw new Error(`${label} ძალიან დიდია (მაქსიმუმ ${MAX_GRAMS} გ)`);
+  }
+  return value;
+}
+
+/** Integer grams, zero allowed (stock counts for KG items). */
+export function requireGramCount(value: unknown, label = 'წონა (გ)'): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} უნდა იყოს მთელი, არაუარყოფითი რიცხვი გრამებში (მიღებულია: ${String(value)})`);
+  }
+  if (value > MAX_GRAMS) {
+    throw new Error(`${label} ძალიან დიდია (მაქსიმუმ ${MAX_GRAMS} გ)`);
+  }
+  return value;
+}

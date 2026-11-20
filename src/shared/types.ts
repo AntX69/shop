@@ -7,12 +7,14 @@
  */
 
 export type UserRole = 'owner' | 'seller';
+export type UnitType = 'piece' | 'kg';
 
 export interface User {
   id: number;
   name: string;
   role: UserRole;
   is_active: number; // 1 or 0
+  permissions?: string[];
   created_at: string;
 }
 
@@ -24,7 +26,11 @@ export interface UserSession {
 export interface Category {
   id: number;
   name: string;
+  color?: string;
+  is_archived?: number; // 1 or 0
   created_at: string;
+  products_count?: number;
+  archived_products_count?: number;
 }
 
 export type CodeType = 'barcode' | 'manual_5digit';
@@ -45,6 +51,7 @@ export interface ProductVariant {
   price_override_tetri?: number | null; // In tetri, if null uses product.base_price_tetri
   cost_override_tetri?: number | null;  // In tetri, purchase cost if known
   stock_quantity: number;
+  unit_type?: UnitType;
   is_active: number;
   effective_price_tetri?: number; // Calculated helper
   codes?: ProductCode[];
@@ -64,9 +71,11 @@ export interface Product {
   name: string;
   category_id?: number | null;
   category_name?: string | null;
+  category_color?: string | null;
   description?: string | null;
   base_price_tetri: number;
   base_cost_tetri?: number | null;
+  unit_type?: UnitType;
   is_active: number;
   created_at: string;
   updated_at: string;
@@ -95,6 +104,7 @@ export interface CartItem {
   code_used: string;
   unit_price_tetri: number;
   unit_cost_tetri?: number | null;
+  unit_type?: UnitType;
   quantity: number;
   available_stock: number;
   /** Owner only: discount on the whole line, in tetri. */
@@ -127,6 +137,7 @@ export interface SaleItem {
   variant_name_snap?: string;
   code_snap?: string;
   quantity: number;
+  unit_type?: UnitType;
   unit_price_tetri: number;          // List price at the time of sale
   unit_cost_tetri?: number | null;   // Owner only (stripped for sellers)
   discount_tetri?: number;           // Line + cart discount share
@@ -173,6 +184,7 @@ export interface ReturnItemRecord {
   variant_name?: string;
   code?: string;
   quantity: number;
+  unit_type?: UnitType;
   unit_price_tetri: number;
   total_tetri: number;
 }

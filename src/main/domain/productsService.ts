@@ -15,8 +15,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import { getDb, runInTransaction } from '../db/database.ts';
 import { Category, Product, ProductVariant, ProductCode, ProductImage, User } from '../../shared/types.ts';
+import { AuthService } from './authService.ts';
 import { deleteImageFileIfUnused, imageUrl, storeProductImage } from './productImages.ts';
 import { optionalAmount, optionalId, optionalString, requireAmount, requireCount, requireId, requireObject, requireString } from './validation.ts';
+import { UnitType } from '../../shared/types.ts';
 
 export interface CreateProductInput {
   name: string;
@@ -24,6 +26,7 @@ export interface CreateProductInput {
   description?: string;
   base_price_tetri: number;
   base_cost_tetri?: number | null;
+  unit_type?: 'piece' | 'kg';
   variants: Array<VariantInput>;
   image_paths?: string[];
 }
@@ -48,6 +51,7 @@ export interface UpdateProductInput {
   description?: string | null;
   base_price_tetri?: number;
   base_cost_tetri?: number | null;
+  unit_type?: 'piece' | 'kg';
 }
 
 export interface UpdateVariantInput {
@@ -78,6 +82,17 @@ export class ProductsService {
     }
   }
 
+  private requirePermission(requester: User, permission: string, message: string): void {
+    if (requester.role === 'owner') return;
+    const auth = new AuthService(this.db);
+    if (!auth.hasPermission(requester, permission)) {
+      if (message.includes('მხოლოდ მფლობელს')) {
+        throw new Error(message);
+      }
+      throw new Error(`${message} (შეუძლია მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს)`);
+    }
+  }
+
   private audit(userId: number, action: string, entity: string, entityId: number, details: unknown): void {
     this.db.prepare(
       "INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (?, ?, ?, ?, ?, ?)"
@@ -86,26 +101,55 @@ export class ProductsService {
 
   // --- Category Management (Owner only) ---
 
-  getCategories(): Category[] {
-    return this.db.prepare(
-      "SELECT id, name, created_at FROM categories ORDER BY name ASC"
-    ).all() as unknown as Category[];
+  getCategories(options?: { includeArchived?: boolean }): Category[] {
+    let sql = `
+      SELECT c.id, c.name, COALESCE(c.color, '#10b981') as color, COALESCE(c.is_archived, 0) as is_archived, c.created_at,
+             (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.is_active = 1) as products_count,
+             (SELECT COUNT(*) FROM products p WHERE p.category_id = c.id AND p.is_active = 0) as archived_products_count
+      FROM categories c
+    `;
+    if (!options?.includeArchived) {
+      sql += " WHERE COALESCE(c.is_archived, 0) = 0";
+    }
+    sql += " ORDER BY c.name ASC";
+    return this.db.prepare(sql).all() as unknown as Category[];
   }
 
-  createCategory(requester: User, name: string): Category {
-    this.requireOwner(requester, 'კატეგორიის დამატება შეუძლია მხოლოდ მფლობელს');
+  getCategoryUsage(categoryId: number): { active_products_count: number; archived_products_count: number; total: number } {
+    const id = requireId(categoryId, 'კატეგორია');
+    const counts = this.db.prepare(`
+      SELECT 
+        (SELECT COUNT(*) FROM products WHERE category_id = ? AND is_active = 1) as active_count,
+        (SELECT COUNT(*) FROM products WHERE category_id = ? AND is_active = 0) as archived_count
+    `).get(id, id) as { active_count: number; archived_count: number };
+
+    return {
+      active_products_count: counts?.active_count || 0,
+      archived_products_count: counts?.archived_count || 0,
+      total: (counts?.active_count || 0) + (counts?.archived_count || 0)
+    };
+  }
+
+  createCategory(requester: User, name: string, color?: string): Category {
+    this.requirePermission(requester, 'categories.create', 'კატეგორიის დამატება შეუძლია მხოლოდ მფლობელს');
     const trimmed = typeof name === 'string' ? name.trim() : '';
     if (!trimmed) {
       throw new Error('კატეგორიის სახელი სავალდებულოა');
     }
     requireString(trimmed, 60, 'კატეგორიის სახელი');
 
+    const cleanColor = color && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color.trim())
+      ? color.trim()
+      : '#10b981';
+
     const now = new Date().toISOString();
     try {
       const res = this.db.prepare(
-        "INSERT INTO categories (name, created_at) VALUES (?, ?)"
-      ).run(trimmed, now);
-      return { id: Number(res.lastInsertRowid), name: trimmed, created_at: now };
+        "INSERT INTO categories (name, color, is_archived, created_at) VALUES (?, ?, 0, ?)"
+      ).run(trimmed, cleanColor, now);
+      const newId = Number(res.lastInsertRowid);
+      this.audit(requester.id, 'CATEGORY_CREATE', 'categories', newId, { name: trimmed, color: cleanColor });
+      return { id: newId, name: trimmed, color: cleanColor, is_archived: 0, created_at: now, products_count: 0, archived_products_count: 0 };
     } catch (err: any) {
       if (err.message && err.message.includes('UNIQUE')) {
         throw new Error(`კატეგორია სახელით "${trimmed}" უკვე არსებობს`);
@@ -114,28 +158,99 @@ export class ProductsService {
     }
   }
 
-  renameCategory(requester: User, categoryId: number, name: string): Category {
-    this.requireOwner(requester, 'კატეგორიის შეცვლა შეუძლია მხოლოდ მფლობელს');
+  updateCategory(requester: User, categoryId: number, data: { name?: string; color?: string }): Category {
+    this.requirePermission(requester, 'categories.edit', 'კატეგორიის შეცვლის უფლება არ გაქვთ');
     const id = requireId(categoryId, 'კატეგორია');
-    const trimmed = requireString(name, 60, 'კატეგორიის სახელი');
     const old = this.db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as any;
     if (!old) throw new Error('კატეგორია ვერ მოიძებნა');
+
+    let nextName = old.name;
+    if (data.name !== undefined) {
+      nextName = requireString(data.name, 60, 'კატეგორიის სახელი');
+    }
+
+    let nextColor = old.color || '#10b981';
+    if (data.color !== undefined) {
+      nextColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(data.color.trim())
+        ? data.color.trim()
+        : old.color || '#10b981';
+    }
+
     try {
-      this.db.prepare("UPDATE categories SET name = ? WHERE id = ?").run(trimmed, id);
+      this.db.prepare("UPDATE categories SET name = ?, color = ? WHERE id = ?").run(nextName, nextColor, id);
     } catch (err: any) {
-      if (String(err?.message).includes('UNIQUE')) throw new Error(`კატეგორია სახელით "${trimmed}" უკვე არსებობს`);
+      if (String(err?.message).includes('UNIQUE')) throw new Error(`კატეგორია სახელით "${nextName}" უკვე არსებობს`);
       throw err;
     }
-    this.audit(requester.id, 'CATEGORY_RENAME', 'categories', id, { before: old.name, after: trimmed });
-    return { id, name: trimmed, created_at: old.created_at };
+
+    this.audit(requester.id, 'CATEGORY_UPDATE', 'categories', id, {
+      before: { name: old.name, color: old.color },
+      after: { name: nextName, color: nextColor }
+    });
+
+    return {
+      id,
+      name: nextName,
+      color: nextColor,
+      is_archived: old.is_archived || 0,
+      created_at: old.created_at
+    };
   }
 
-  deleteCategory(requester: User, categoryId: number): void {
-    this.requireOwner(requester, 'კატეგორიის წაშლა შეუძლია მხოლოდ მფლობელს');
+  renameCategory(requester: User, categoryId: number, name: string): Category {
+    return this.updateCategory(requester, categoryId, { name });
+  }
+
+  setCategoryArchived(requester: User, categoryId: number, isArchived: boolean): Category {
+    this.requirePermission(requester, 'categories.edit', 'კატეგორიის დაარქივება/აღდგენის უფლება არ გაქვთ');
     const id = requireId(categoryId, 'კატეგორია');
-    // Products keep existing without a category (ON DELETE SET NULL).
-    this.db.prepare("DELETE FROM categories WHERE id = ?").run(id);
-    this.audit(requester.id, 'CATEGORY_DELETE', 'categories', id, 'Category deleted; its products are now uncategorized');
+    const cat = this.db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as any;
+    if (!cat) throw new Error('კატეგორია ვერ მოიძებნა');
+
+    const status = isArchived ? 1 : 0;
+    this.db.prepare("UPDATE categories SET is_archived = ? WHERE id = ?").run(status, id);
+    this.audit(requester.id, isArchived ? 'CATEGORY_ARCHIVE' : 'CATEGORY_RESTORE', 'categories', id, { before: cat.is_archived, after: status });
+
+    return {
+      id,
+      name: cat.name,
+      color: cat.color || '#10b981',
+      is_archived: status,
+      created_at: cat.created_at
+    };
+  }
+
+  deleteCategory(requester: User, categoryId: number, reassignToCategoryId?: number | null): void {
+    this.requirePermission(requester, 'categories.delete', 'კატეგორიის წაშლის უფლება არ გაქვთ');
+    const id = requireId(categoryId, 'კატეგორია');
+    const cat = this.db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as any;
+    if (!cat) throw new Error('კატეგორია ვერ მოიძებნა');
+
+    runInTransaction((db) => {
+      let reassignTargetId: number | null = null;
+      if (reassignToCategoryId !== undefined && reassignToCategoryId !== null) {
+        reassignTargetId = requireId(reassignToCategoryId, 'სამიზნე კატეგორია');
+        if (reassignTargetId === id) {
+          throw new Error('პროდუქტების იმავე კატეგორიაში გადატანა შეუძლებელია');
+        }
+        const targetCat = db.prepare("SELECT id FROM categories WHERE id = ?").get(reassignTargetId);
+        if (!targetCat) {
+          throw new Error('სამიზნე კატეგორია ვერ მოიძებნა');
+        }
+      }
+
+      // Reassign or set null
+      const moved = db.prepare("UPDATE products SET category_id = ? WHERE category_id = ?").run(reassignTargetId, id);
+
+      // Now safe to delete
+      db.prepare("DELETE FROM categories WHERE id = ?").run(id);
+
+      this.audit(requester.id, 'CATEGORY_DELETE', 'categories', id, {
+        category_name: cat.name,
+        products_reassigned: moved.changes,
+        reassigned_to_category_id: reassignTargetId
+      });
+    }, this.db);
   }
 
   // --- Code Validation Helpers ---
@@ -187,13 +302,13 @@ export class ProductsService {
     });
   }
 
-  private insertVariant(db: DatabaseSync, requester: User, productId: number, v: VariantInput, codes: Array<{ code_type: string; code_value: string }>, baseCost: number | null, now: string): number {
+  private insertVariant(db: DatabaseSync, requester: User, productId: number, v: VariantInput, codes: Array<{ code_type: string; code_value: string }>, baseCost: number | null, unitType: UnitType, now: string): number {
     const initialStock = v.initial_stock == null ? 0 : requireCount(v.initial_stock, 'საწყისი მარაგი');
     const priceOverride = optionalAmount(v.price_override_tetri, 'ვარიანტის ფასი');
     const costOverride = optionalAmount(v.cost_override_tetri, 'ვარიანტის თვითღირებულება');
     const varRes = db.prepare(
-      "INSERT INTO product_variants (product_id, variant_name, size, color, price_override_tetri, cost_override_tetri, stock_quantity, is_active) " +
-      "VALUES (?, ?, ?, ?, ?, ?, ?, 1)"
+      "INSERT INTO product_variants (product_id, variant_name, size, color, price_override_tetri, cost_override_tetri, stock_quantity, unit_type, is_active) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)"
     ).run(
       productId,
       optionalString(v.variant_name, 80, 'ვარიანტის დასახელება') || 'სტანდარტული',
@@ -201,7 +316,8 @@ export class ProductsService {
       optionalString(v.color, 40, 'ფერი'),
       priceOverride,
       costOverride,
-      initialStock
+      initialStock,
+      unitType
     );
     const variantId = Number(varRes.lastInsertRowid);
 
@@ -213,22 +329,25 @@ export class ProductsService {
     if (initialStock > 0) {
       const unitCost = costOverride ?? baseCost ?? null;
       const moveRes = db.prepare(
-        "INSERT INTO inventory_movements (variant_id, movement_type, quantity_change, resulting_stock, unit_cost_tetri, reason, user_id, created_at) " +
-        "VALUES (?, 'initial', ?, ?, ?, 'საწყისი ინვენტარიზაცია', ?, ?)"
-      ).run(variantId, initialStock, initialStock, unitCost, requester.id, now);
+        "INSERT INTO inventory_movements (variant_id, movement_type, quantity_change, resulting_stock, unit_cost_tetri, unit_type, reason, user_id, created_at) " +
+        "VALUES (?, 'initial', ?, ?, ?, ?, 'საწყისი ინვენტარიზაცია', ?, ?)"
+      ).run(variantId, initialStock, initialStock, unitCost, unitType, requester.id, now);
       db.prepare(
-        "INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, movement_id, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?)"
-      ).run(variantId, initialStock, initialStock, unitCost, Number(moveRes.lastInsertRowid), now);
+        "INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, unit_type, movement_id, created_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).run(variantId, initialStock, initialStock, unitCost, unitType, Number(moveRes.lastInsertRowid), now);
     }
     return variantId;
   }
 
-  // --- Product Creation (Owner only) ---
+  // --- Product Creation ---
 
   createProduct(requester: User, rawInput: CreateProductInput): Product {
-    this.requireOwner(requester, 'პროდუქტის დამატება შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.create', 'პროდუქტის დამატების უფლება არ გაქვთ');
     const input = requireObject<CreateProductInput>(rawInput, 'პროდუქტი');
+    if (input.base_cost_tetri != null && input.base_cost_tetri > 0) {
+      this.requirePermission(requester, 'products.change_cost', 'თვითღირებულების შეცვლის უფლება არ გაქვთ');
+    }
 
     const trimmedName = typeof input.name === 'string' ? input.name.trim() : '';
     if (!trimmedName) {
@@ -242,6 +361,7 @@ export class ProductsService {
     const basePrice = requireAmount(input.base_price_tetri, 'გასაყიდი ფასი');
     const baseCost = optionalAmount(input.base_cost_tetri, 'თვითღირებულება');
     const categoryId = optionalId(input.category_id || null, 'კატეგორია');
+    const unitType: UnitType = (input.unit_type === 'kg') ? 'kg' : 'piece';
 
     if (!input.variants || input.variants.length === 0) {
       throw new Error('პროდუქტს უნდა ჰქონდეს მინიმუმ ერთი ვარიანტი');
@@ -255,20 +375,21 @@ export class ProductsService {
       const now = new Date().toISOString();
 
       const productRes = db.prepare(
-        "INSERT INTO products (name, category_id, description, base_price_tetri, base_cost_tetri, is_active, created_at, updated_at) " +
-        "VALUES (?, ?, ?, ?, ?, 1, ?, ?)"
+        "INSERT INTO products (name, category_id, description, base_price_tetri, base_cost_tetri, unit_type, is_active, created_at, updated_at) " +
+        "VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)"
       ).run(
         trimmedName,
         categoryId,
         optionalString(input.description, 1000, 'აღწერა'),
         basePrice,
         baseCost,
+        unitType,
         now,
         now
       );
       const productId = Number(productRes.lastInsertRowid);
 
-      input.variants.forEach((v, i) => this.insertVariant(db, requester, productId, v, codesPerVariant[i], baseCost, now));
+      input.variants.forEach((v, i) => this.insertVariant(db, requester, productId, v, codesPerVariant[i], baseCost, unitType, now));
 
       (input.image_paths || []).forEach((img, idx) => {
         const fileName = storeProductImage(db, img);
@@ -282,13 +403,20 @@ export class ProductsService {
     }, this.db);
   }
 
-  // --- Product Editing (Owner only) ---
+  // --- Product Editing ---
 
   /** Changes name, category, description, price or purchase cost. History is not touched. */
   updateProduct(requester: User, rawInput: UpdateProductInput): Product {
-    this.requireOwner(requester, 'პროდუქტის რედაქტირება შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.edit', 'პროდუქტის რედაქტირების უფლება არ გაქვთ');
     const input = requireObject<UpdateProductInput>(rawInput, 'პროდუქტი');
     const productId = requireId(input.productId, 'პროდუქტი');
+
+    if (has(input, 'base_price_tetri')) {
+      this.requirePermission(requester, 'products.change_price', 'ფასის შეცვლის უფლება არ გაქვთ');
+    }
+    if (has(input, 'base_cost_tetri')) {
+      this.requirePermission(requester, 'products.change_cost', 'თვითღირებულების შეცვლის უფლება არ გაქვთ');
+    }
 
     return runInTransaction((db) => {
       const before = db.prepare("SELECT * FROM products WHERE id = ?").get(productId) as any;
@@ -308,14 +436,32 @@ export class ProductsService {
         if (next.base_price_tetri <= 0) throw new Error('გასაყიდი ფასი უნდა იყოს 0-ზე მეტი');
       }
       if (has(input, 'base_cost_tetri')) next.base_cost_tetri = optionalAmount(input.base_cost_tetri, 'თვითღირებულება');
+      if (has(input, 'unit_type') && input.unit_type !== undefined) {
+        const newUnitType = input.unit_type === 'kg' ? 'kg' : 'piece';
+        if (newUnitType !== (before.unit_type || 'piece')) {
+          // Block unit_type change if product has sales history
+          const hasSales = (db.prepare(
+            "SELECT COUNT(*) AS n FROM sale_items si JOIN product_variants pv ON si.variant_id = pv.id WHERE pv.product_id = ?"
+          ).get(productId) as any).n > 0;
+          if (hasSales) {
+            throw new Error('გაყიდვების ისტორიის მქონე პროდუქტს ერთეულის ტიპი ვეღარ შეეცვლება');
+          }
+          next.unit_type = newUnitType;
+        }
+      }
 
-      const changed = ['name', 'category_id', 'description', 'base_price_tetri', 'base_cost_tetri'].filter((k) => before[k] !== next[k]);
+      const changed = ['name', 'category_id', 'description', 'base_price_tetri', 'base_cost_tetri', 'unit_type'].filter((k) => before[k] !== next[k]);
       if (changed.length === 0) return this.getProductById(productId, { includeArchived: true })!;
 
       const now = new Date().toISOString();
       db.prepare(
-        "UPDATE products SET name = ?, category_id = ?, description = ?, base_price_tetri = ?, base_cost_tetri = ?, updated_at = ? WHERE id = ?"
-      ).run(next.name, next.category_id, next.description, next.base_price_tetri, next.base_cost_tetri, now, productId);
+        "UPDATE products SET name = ?, category_id = ?, description = ?, base_price_tetri = ?, base_cost_tetri = ?, unit_type = ?, updated_at = ? WHERE id = ?"
+      ).run(next.name, next.category_id, next.description, next.base_price_tetri, next.base_cost_tetri, next.unit_type || 'piece', now, productId);
+
+      // Sync unit_type to all variants of this product
+      if (changed.includes('unit_type')) {
+        db.prepare("UPDATE product_variants SET unit_type = ? WHERE product_id = ?").run(next.unit_type || 'piece', productId);
+      }
 
       this.audit(requester.id, 'PRODUCT_UPDATE', 'products', productId, {
         before: Object.fromEntries(changed.map((k) => [k, before[k]])),
@@ -327,7 +473,7 @@ export class ProductsService {
 
   /** Archives (hides from sale) or restores a product. Sales history is unaffected. */
   setProductActive(requester: User, productId: number, isActive: boolean): Product {
-    this.requireOwner(requester, 'პროდუქტის დაარქივება შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.archive', 'პროდუქტის დაარქივების უფლება არ გაქვთ');
     const id = requireId(productId, 'პროდუქტი');
     const row = this.db.prepare("SELECT id, is_active FROM products WHERE id = ?").get(id) as any;
     if (!row) throw new Error('პროდუქტი ვერ მოიძებნა');
@@ -337,14 +483,14 @@ export class ProductsService {
   }
 
   addVariant(requester: User, productId: number, rawVariant: VariantInput): Product {
-    this.requireOwner(requester, 'ვარიანტის დამატება შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.edit', 'ვარიანტის დამატების უფლება არ გაქვთ');
     const id = requireId(productId, 'პროდუქტი');
     const v = requireObject<VariantInput>(rawVariant, 'ვარიანტი');
-    const product = this.db.prepare("SELECT id, base_cost_tetri FROM products WHERE id = ?").get(id) as any;
+    const product = this.db.prepare("SELECT id, base_cost_tetri, unit_type FROM products WHERE id = ?").get(id) as any;
     if (!product) throw new Error('პროდუქტი ვერ მოიძებნა');
     const codes = this.normalizeVariantCodes(v, new Set());
     return runInTransaction((db) => {
-      const variantId = this.insertVariant(db, requester, id, v, codes, product.base_cost_tetri, new Date().toISOString());
+      const variantId = this.insertVariant(db, requester, id, v, codes, product.base_cost_tetri, product.unit_type || 'piece', new Date().toISOString());
       this.audit(requester.id, 'VARIANT_CREATE', 'product_variants', variantId, `Variant added to product ${id}`);
       return this.getProductById(id, { includeArchived: true })!;
     }, this.db);
@@ -355,9 +501,16 @@ export class ProductsService {
    * restock/correction so that every change has a movement and FIFO layer.
    */
   updateVariant(requester: User, rawInput: UpdateVariantInput): Product {
-    this.requireOwner(requester, 'ვარიანტის რედაქტირება შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.edit', 'ვარიანტის რედაქტირების უფლება არ გაქვთ');
     const input = requireObject<UpdateVariantInput>(rawInput, 'ვარიანტი');
     const variantId = requireId(input.variantId, 'ვარიანტი');
+
+    if (has(input, 'price_override_tetri')) {
+      this.requirePermission(requester, 'products.change_price', 'ფასის შეცვლის უფლება არ გაქვთ');
+    }
+    if (has(input, 'cost_override_tetri')) {
+      this.requirePermission(requester, 'products.change_cost', 'თვითღირებულების შეცვლის უფლება არ გაქვთ');
+    }
 
     return runInTransaction((db) => {
       const before = db.prepare("SELECT * FROM product_variants WHERE id = ?").get(variantId) as any;
@@ -407,7 +560,7 @@ export class ProductsService {
   }
 
   setVariantActive(requester: User, variantId: number, isActive: boolean): Product {
-    this.requireOwner(requester, 'ვარიანტის დაარქივება შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.archive', 'ვარიანტის დაარქივების უფლება არ გაქვთ');
     const id = requireId(variantId, 'ვარიანტი');
     const row = this.db.prepare("SELECT id, product_id, is_active FROM product_variants WHERE id = ?").get(id) as any;
     if (!row) throw new Error('ვარიანტი ვერ მოიძებნა');
@@ -472,7 +625,7 @@ export class ProductsService {
 
   getProductById(productId: number, options: { includeArchived?: boolean } = {}): Product | null {
     const product = this.db.prepare(`
-      SELECT p.*, c.name as category_name
+      SELECT p.*, c.name as category_name, c.color as category_color
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       WHERE p.id = ?
@@ -495,7 +648,7 @@ export class ProductsService {
     archivedOnly?: boolean;
   }): Product[] {
     let sql = `
-      SELECT p.*, c.name as category_name
+      SELECT p.*, c.name as category_name, c.color as category_color
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       WHERE 1=1
@@ -583,7 +736,7 @@ export class ProductsService {
    * Add image to existing product (a data: URL from the renderer; stored as a file).
    */
   addImage(requester: User, productId: number, image: string, isPrimary: boolean = false): ProductImage {
-    this.requireOwner(requester, 'სურათის დამატება შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.edit', 'სურათის მართვის უფლება არ გაქვთ');
     const id = requireId(productId, 'პროდუქტი');
     if (!this.db.prepare("SELECT 1 FROM products WHERE id = ?").get(id)) throw new Error('პროდუქტი ვერ მოიძებნა');
     if (typeof image !== 'string' || !image.trim()) {
@@ -609,7 +762,7 @@ export class ProductsService {
   }
 
   setPrimaryImage(requester: User, imageId: number): void {
-    this.requireOwner(requester, 'მთავარი ფოტოს შეცვლა შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.edit', 'სურათის მართვის უფლება არ გაქვთ');
     const id = requireId(imageId, 'ფოტო');
     const img = this.db.prepare("SELECT id, product_id FROM product_images WHERE id = ?").get(id) as any;
     if (!img) throw new Error('ფოტო ვერ მოიძებნა');
@@ -623,7 +776,7 @@ export class ProductsService {
    * Delete product image (the file is removed when nothing refers to it any more).
    */
   deleteImage(requester: User, imageId: number): void {
-    this.requireOwner(requester, 'სურათის წაშლა შეუძლია მხოლოდ მფლობელს');
+    this.requirePermission(requester, 'products.edit', 'სურათის მართვის უფლება არ გაქვთ');
     const id = requireId(imageId, 'ფოტო');
     const img = this.db.prepare("SELECT * FROM product_images WHERE id = ?").get(id) as any;
     if (!img) return;

@@ -17,9 +17,10 @@ import { getDb, runInTransaction } from '../db/database.ts';
 import { CheckoutPayload, Sale, User } from '../../shared/types.ts';
 import { allocateProportionally, formatTetri } from '../../shared/money.ts';
 import { boundToUtc, localDate } from '../../shared/time.ts';
+import { AuthService } from './authService.ts';
 import {
   oneOf, optionalId, optionalIdempotencyKey, optionalString,
-  requireAmount, requireArray, requireId, requireObject, requireQuantity,
+  requireAmount, requireArray, requireId, requireObject, requireQuantity, requireGrams,
 } from './validation.ts';
 
 /** Server-side context for the sale half of an exchange. Never read from IPC payloads. */
@@ -34,6 +35,7 @@ export interface ExchangeSaleContext {
 export interface PricedLine {
   variant_id: number;
   quantity: number;
+  unit_type: 'piece' | 'kg';
   product_name: string;
   variant_name: string;
   list_unit_price_tetri: number;
@@ -55,6 +57,14 @@ export class PosService {
 
   constructor(db: DatabaseSync = getDb()) {
     this.db = db;
+  }
+
+  private requirePermission(user: User, permission: string, action: string, db: DatabaseSync = this.db): void {
+    if (user.role === 'owner') return;
+    const authService = new AuthService(db);
+    if (!authService.hasPermission(user, permission)) {
+      throw new Error(`${action} მოითხოვს '${permission}' უფლებას`);
+    }
   }
 
   /**
@@ -87,16 +97,18 @@ export class PosService {
   priceCart(user: User, rawItems: unknown, rawCartDiscount?: unknown, db: DatabaseSync = this.db): PricedCart {
     const items = requireArray<any>(rawItems, 'კალათა', 200);
     const isOwner = user.role === 'owner';
+    const canDiscount = isOwner || new AuthService(db).hasPermission(user, 'sales.discount');
     const lines: PricedLine[] = [];
 
     for (const raw of items) {
       const item = requireObject<any>(raw, 'კალათის პოზიცია');
       const variantId = requireId(item.variant_id, 'პროდუქტის ვარიანტი');
-      const quantity = requireQuantity(item.quantity);
 
       const v = db.prepare(`
         SELECT pv.id, pv.variant_name, pv.price_override_tetri, pv.is_active AS variant_active,
-               p.name AS product_name, p.base_price_tetri, p.is_active AS product_active
+               pv.unit_type as variant_unit_type,
+               p.name AS product_name, p.base_price_tetri, p.is_active AS product_active,
+               p.unit_type as product_unit_type
         FROM product_variants pv
         JOIN products p ON pv.product_id = p.id
         WHERE pv.id = ?
@@ -109,14 +121,30 @@ export class PosService {
         throw new Error(`"${v.product_name}" (${v.variant_name}) დაარქივებულია და აღარ იყიდება`);
       }
 
+      const unitType: 'piece' | 'kg' = (v.variant_unit_type || v.product_unit_type || 'piece') === 'kg' ? 'kg' : 'piece';
+      const isKg = unitType === 'kg';
+
+      // For KG: quantity is in grams; listPrice is price per 1 kg (1000 g)
+      // subtotal = Math.round(listPrice * grams / 1000)
+      let quantity: number;
+      if (isKg) {
+        quantity = requireGrams(item.quantity, 'წონა (გ)');
+      } else {
+        quantity = requireQuantity(item.quantity);
+      }
+
       const listPrice: number = v.price_override_tetri ?? v.base_price_tetri;
-      const subtotal = quantity * listPrice;
+      // For KG: subtotal proportional to grams; for pieces: quantity * unitPrice
+      const subtotal = isKg
+        ? Math.round((listPrice * quantity) / 1000)
+        : quantity * listPrice;
+
       let lineDiscount = item.line_discount_tetri == null ? 0 : requireAmount(item.line_discount_tetri, 'ფასდაკლება');
 
       if (item.unit_price_tetri != null) {
         const sent = requireAmount(item.unit_price_tetri, 'ერთეულის ფასი');
         if (sent !== listPrice) {
-          if (!isOwner) {
+          if (!canDiscount) {
             throw new Error(
               `გამყიდველს ფასის შეცვლის ან ფასდაკლების უფლება არ აქვს. ` +
               `"${v.product_name}"-ის აქტუალური ფასია: ${(listPrice / 100).toFixed(2)} ₾ (გაგზავნილი: ${(sent / 100).toFixed(2)} ₾)`
@@ -128,12 +156,18 @@ export class PosService {
               `ფასის შესაცვლელად შეცვალეთ პროდუქტის ბარათი.`
             );
           }
-          lineDiscount += (listPrice - sent) * quantity;
+          // For KG, unit_price_tetri is per-kg; recompute discount from price difference
+          if (isKg) {
+            const discountPerKg = listPrice - sent;
+            lineDiscount += Math.round((discountPerKg * quantity) / 1000);
+          } else {
+            lineDiscount += (listPrice - sent) * quantity;
+          }
         }
       }
 
-      if (lineDiscount > 0 && !isOwner) {
-        throw new Error('ფასდაკლების გაკეთება შეუძლია მხოლოდ მფლობელს');
+      if (lineDiscount > 0 && !canDiscount) {
+        throw new Error('ფასდაკლების გაკეთება შეუძლია მხოლოდ მფლობელს ან უფლებამოსილ გამყიდველს');
       }
       if (lineDiscount > subtotal) {
         throw new Error(`"${v.product_name}": ფასდაკლება აღემატება პოზიციის ღირებულებას`);
@@ -142,6 +176,7 @@ export class PosService {
       lines.push({
         variant_id: variantId,
         quantity,
+        unit_type: unitType,
         product_name: v.product_name,
         variant_name: v.variant_name,
         list_unit_price_tetri: listPrice,
@@ -154,8 +189,8 @@ export class PosService {
 
     const cartDiscount = rawCartDiscount == null ? 0 : requireAmount(rawCartDiscount, 'კალათის ფასდაკლება');
     if (cartDiscount > 0) {
-      if (!isOwner) {
-        throw new Error('ფასდაკლების გაკეთება შეუძლია მხოლოდ მფლობელს');
+      if (!canDiscount) {
+        throw new Error('ფასდაკლების გაკეთება შეუძლია მხოლოდ მფლობელს ან უფლებამოსილ გამყიდველს');
       }
       const base = lines.reduce((s, l) => s + l.net_tetri, 0);
       if (cartDiscount > base) {
@@ -183,6 +218,7 @@ export class PosService {
    * `exchange` is supplied only by ReturnsService.processExchange, inside its transaction.
    */
   checkout(user: User, rawPayload: CheckoutPayload, exchange?: ExchangeSaleContext): Sale {
+    this.requirePermission(user, 'sales.create', 'გაყიდვის გაფორმება');
     const payload = requireObject<CheckoutPayload & Record<string, any>>(rawPayload, 'გაყიდვა');
     if (!Array.isArray(payload.items) || payload.items.length === 0) {
       throw new Error('კალათა ცარიელია');
@@ -282,6 +318,10 @@ export class PosService {
         debtAmountTetri = dueTetri - cashReceivedTetri;
       }
 
+      if (debtAmountTetri > 0) {
+        this.requirePermission(user, 'debts.create', 'ნისიის გაფორმება', db);
+      }
+
       if (customerId) {
         const customer = db.prepare("SELECT id FROM customers WHERE id = ?").get(customerId);
         if (!customer) {
@@ -360,8 +400,8 @@ export class PosService {
           INSERT INTO sale_items (
             sale_id, variant_id, product_name_snap, variant_name_snap,
             code_snap, quantity, unit_price_tetri, unit_cost_tetri,
-            discount_tetri, total_price_tetri, returned_quantity
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            unit_type, discount_tetri, total_price_tetri, returned_quantity
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         `).run(
           saleId,
           line.variant_id,
@@ -371,6 +411,7 @@ export class PosService {
           line.quantity,
           line.list_unit_price_tetri,
           avgUnitCost,
+          line.unit_type,
           line.line_discount_tetri + line.cart_discount_share_tetri,
           line.net_tetri
         );
@@ -389,14 +430,15 @@ export class PosService {
         db.prepare(`
           INSERT INTO inventory_movements (
             variant_id, movement_type, quantity_change, resulting_stock,
-            unit_cost_tetri, reason, reference_id, user_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            unit_cost_tetri, unit_type, reason, reference_id, user_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           line.variant_id,
           exchange ? 'exchange' : 'sale',
           -line.quantity,
           resultingStock,
           avgUnitCost,
+          line.unit_type,
           exchange ? 'გაცვლა (ახალი ნივთი)' : 'გაყიდვა',
           receiptNumber,
           user.id,

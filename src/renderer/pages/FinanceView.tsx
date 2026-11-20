@@ -16,6 +16,7 @@ import React, { useState, useEffect } from 'react';
 import { Expense, FinancialSummary, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
+import { EditableMoneyInput } from '../components/inputs/NumericInputs.tsx';
 import { 
   TrendingUp, 
   DollarSign, 
@@ -441,12 +442,10 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">თანხა (₾) *</label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <EditableMoneyInput
                     required
                     value={expenseAmount}
-                    onChange={(e) => setExpenseAmount(e.target.value)}
+                    onChange={(val) => setExpenseAmount(val)}
                     placeholder="150.00"
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold tabular-nums"
                   />

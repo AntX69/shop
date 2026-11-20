@@ -10,11 +10,13 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../../shared/types.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
+import { StaffPermissionsModal } from '../components/StaffPermissionsModal.tsx';
 import { 
   UserCheck, 
   UserPlus, 
   KeyRound, 
   ShieldAlert, 
+  Shield,
   UserX, 
   CheckCircle2, 
   X,
@@ -41,6 +43,9 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
   const [resetPinValue, setResetPinValue] = useState<string>('');
   const [currentPinValue, setCurrentPinValue] = useState<string>('');
   const [resetError, setResetError] = useState<string>('');
+
+  // Permissions Modal
+  const [permissionsTargetUser, setPermissionsTargetUser] = useState<User | null>(null);
 
   const loadUsers = async () => {
     try {
@@ -211,6 +216,15 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                       {new Date(u.created_at).toLocaleDateString('ka-GE')}
                     </td>
                     <td className="py-3 px-4 text-right space-x-2 whitespace-nowrap">
+                      {!isSelf && u.role === 'seller' && (
+                        <button
+                          onClick={() => setPermissionsTargetUser(u)}
+                          className="px-2.5 py-1 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 border border-emerald-800/40 text-xs rounded-lg transition-colors cursor-pointer"
+                        >
+                          უფლებების მართვა
+                        </button>
+                      )}
+
                       <button
                         onClick={() => {
                           setResetTargetUser(u);
@@ -411,6 +425,18 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Permissions Modal */}
+      {permissionsTargetUser && (
+        <StaffPermissionsModal
+          user={permissionsTargetUser}
+          onClose={() => setPermissionsTargetUser(null)}
+          onSaved={() => {
+            setPermissionsTargetUser(null);
+            loadUsers();
+          }}
+        />
       )}
 
     </div>
