@@ -338,6 +338,15 @@ export interface FinancialSummary {
   has_unknown_costs: boolean;           // Some units sold/returned have unknown purchase cost
   unknown_cost_items_count: number;     // Units sold with unknown cost
   unknown_cost_returned_items_count?: number;
+  /** Grams of weight products sold / returned with unknown purchase cost. */
+  unknown_cost_grams?: number;
+  unknown_cost_returned_grams?: number;
+  damaged_goods_grams?: number;
+  /** Stock at FIFO cost right now; null when some layer cost is unknown (see the known part). */
+  inventory_value_tetri?: number | null;
+  inventory_value_known_tetri?: number;
+  inventory_unknown_cost_units?: number;
+  inventory_unknown_cost_grams?: number;
   estimated_gross_profit_tetri: number | null; // Net sales - net COGS; null when any cost is unknown
   gross_profit_partial_tetri?: number;  // Same, computed from known costs only (incomplete)
   damaged_goods_writeoff_tetri?: number; // Cost of damaged returned goods (real loss)

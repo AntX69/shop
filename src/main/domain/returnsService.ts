@@ -26,6 +26,8 @@ import { boundToUtc } from '../../shared/time.ts';
 import { PosService } from './posService.ts';
 import { AuthService } from './authService.ts';
 import { permissionName } from '../../shared/permissions.ts';
+import { averageUnitCost, insertLayer, restoreToLayer, returnedPartCost } from './fifo.ts';
+import { formatUnitQuantity, UnitType } from '../../shared/quantity.ts';
 import {
   oneOf, optionalAmount, optionalIdempotencyKey, optionalString,
   requireArray, requireId, requireObject, requireQuantity, requireGrams,
@@ -208,13 +210,17 @@ export class ReturnsService {
       // 4. Stock and FIFO cost layers.
       let cogsReversedTetri = 0;
       for (const line of lines) {
+        // Exact cost of the returned units: their share of what each consumed part cost
+        // (cumulative, so all returns of a part add up to its cost; domain/fifo.ts).
         const plan = this.planLayerReversal(db, line.saleItem.id, line.quantity);
-        const knownCost = plan.reduce((s, p) => s + (p.unit_cost_tetri ?? 0) * p.quantity, 0);
-        const unknownQty = plan.filter((p) => p.unit_cost_tetri === null).reduce((s, p) => s + p.quantity, 0);
+        const knownCost = plan.reduce((s, p) => s + (p.cost_tetri ?? 0), 0);
+        const unknownQty = plan.filter((p) => p.cost_tetri === null).reduce((s, p) => s + p.quantity, 0);
         cogsReversedTetri += knownCost;
-        const avgCost = unknownQty === 0 ? Math.round(knownCost / line.quantity) : null;
-
-        const unitType = line.saleItem.unit_type || 'piece';
+        const unitType: UnitType = (line.saleItem.unit_type || 'piece') === 'kg' ? 'kg' : 'piece';
+        const lineCost = unknownQty === 0 ? knownCost : null;
+        const avgCost = averageUnitCost(lineCost, line.quantity, unitType);
+        // Per piece, or per kg for weight lines (display only).
+        const unitRefund = unitType === 'kg' ? Math.round((line.refund * 1000) / line.quantity) : Math.round(line.refund / line.quantity);
 
         db.prepare(`
           INSERT INTO return_items (
@@ -226,7 +232,7 @@ export class ReturnsService {
           line.saleItem.id,
           line.saleItem.variant_id,
           line.quantity,
-          Math.round(line.refund / line.quantity),
+          unitRefund,
           line.refund,
           unitType,
           line.condition,
@@ -243,12 +249,12 @@ export class ReturnsService {
           movementId = Number(db.prepare(`
             INSERT INTO inventory_movements (
               variant_id, movement_type, quantity_change, resulting_stock,
-              unit_cost_tetri, reason, reference_id, user_id, created_at
-            ) VALUES (?, 'return', ?, ?, ?, ?, ?, ?, ?)
+              unit_cost_tetri, unit_type, reason, reference_id, user_id, created_at, cost_total_tetri
+            ) VALUES (?, 'return', ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `).run(
-            line.saleItem.variant_id, line.quantity, stock, avgCost,
+            line.saleItem.variant_id, line.quantity, stock, avgCost, unitType,
             mode === 'exchange' ? 'გაცვლა: დაბრუნება (ვარგისი)' : 'დაბრუნება (ვარგისი)',
-            sale.receipt_number, user.id, now
+            sale.receipt_number, user.id, now, lineCost
           ).lastInsertRowid);
         } else {
           // Damaged: does not enter sellable stock; its cost is a damage write-off.
@@ -256,11 +262,11 @@ export class ReturnsService {
           db.prepare(`
             INSERT INTO inventory_movements (
               variant_id, movement_type, quantity_change, resulting_stock,
-              unit_cost_tetri, reason, reference_id, user_id, created_at
-            ) VALUES (?, 'return', 0, ?, ?, ?, ?, ?, ?)
+              unit_cost_tetri, unit_type, reason, reference_id, user_id, created_at, cost_total_tetri
+            ) VALUES (?, 'return', 0, ?, ?, ?, ?, ?, ?, ?, 0)
           `).run(
-            line.saleItem.variant_id, stock, avgCost,
-            `დაბრუნება (დაზიანებული/ჩამოწერილი, ${line.quantity} ც.)`,
+            line.saleItem.variant_id, stock, avgCost, unitType,
+            `დაბრუნება (დაზიანებული/ჩამოწერილი, ${formatUnitQuantity(line.quantity, unitType)})`,
             sale.receipt_number, user.id, now
           );
         }
@@ -302,26 +308,30 @@ export class ReturnsService {
     }, this.db);
   }
 
-  /** Which consumed cost layers the returned units come from (most recently consumed first). */
+  /**
+   * Which consumed parts the returned units come from (most recently consumed first) and the
+   * exact cost each brings back.
+   */
   private planLayerReversal(db: DatabaseSync, saleItemId: number, quantity: number) {
     const layers = db.prepare(`
-      SELECT id, lot_id, quantity, returned_quantity, unit_cost_tetri
+      SELECT id, lot_id, quantity, returned_quantity, unit_cost_tetri, cost_tetri, returned_cost_tetri
       FROM sale_item_lots
       WHERE sale_item_id = ? AND quantity > returned_quantity
       ORDER BY id DESC
-    `).all(saleItemId) as Array<{ id: number; lot_id: number | null; quantity: number; returned_quantity: number; unit_cost_tetri: number | null }>;
+    `).all(saleItemId) as Array<{ id: number; lot_id: number | null; quantity: number; returned_quantity: number; unit_cost_tetri: number | null; cost_tetri: number | null; returned_cost_tetri: number }>;
 
-    const plan: Array<{ layer_id: number | null; lot_id: number | null; quantity: number; unit_cost_tetri: number | null }> = [];
+    const plan: Array<{ layer_id: number | null; lot_id: number | null; quantity: number; unit_cost_tetri: number | null; cost_tetri: number | null }> = [];
     let left = quantity;
     for (const layer of layers) {
       if (left <= 0) break;
       const take = Math.min(left, layer.quantity - layer.returned_quantity);
-      plan.push({ layer_id: layer.id, lot_id: layer.lot_id, quantity: take, unit_cost_tetri: layer.unit_cost_tetri });
+      const cost = returnedPartCost(layer.cost_tetri, layer.quantity, layer.returned_quantity, layer.returned_cost_tetri || 0, take);
+      plan.push({ layer_id: layer.id, lot_id: layer.lot_id, quantity: take, unit_cost_tetri: layer.unit_cost_tetri, cost_tetri: cost });
       left -= take;
     }
     if (left > 0) {
       // No recorded layer (inconsistent legacy data): the cost of these units is unknown.
-      plan.push({ layer_id: null, lot_id: null, quantity: left, unit_cost_tetri: null });
+      plan.push({ layer_id: null, lot_id: null, quantity: left, unit_cost_tetri: null, cost_tetri: null });
     }
     return plan;
   }
@@ -334,19 +344,18 @@ export class ReturnsService {
     movementId: number | null,
     now: string
   ): void {
+    const unitType = ((db.prepare("SELECT COALESCE(pv.unit_type, p.unit_type, 'piece') AS u FROM product_variants pv JOIN products p ON p.id = pv.product_id WHERE pv.id = ?").get(variantId) as any)?.u === 'kg' ? 'kg' : 'piece') as UnitType;
     for (const step of plan) {
       if (step.layer_id !== null) {
-        db.prepare("UPDATE sale_item_lots SET returned_quantity = returned_quantity + ? WHERE id = ?").run(step.quantity, step.layer_id);
+        db.prepare("UPDATE sale_item_lots SET returned_quantity = returned_quantity + ?, returned_cost_tetri = returned_cost_tetri + ? WHERE id = ?")
+          .run(step.quantity, step.cost_tetri ?? 0, step.layer_id);
       }
       if (condition !== 'resellable') continue;
       if (step.lot_id !== null) {
-        // Back into the original cost layer: same cost, same FIFO position.
-        db.prepare("UPDATE inventory_lots SET remaining_quantity = remaining_quantity + ? WHERE id = ?").run(step.quantity, step.lot_id);
+        // Back into the original cost layer: same cost basis, same FIFO position.
+        restoreToLayer(db, step.lot_id, step.quantity, step.cost_tetri);
       } else {
-        db.prepare(`
-          INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, movement_id, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(variantId, step.quantity, step.quantity, step.unit_cost_tetri, movementId, now);
+        insertLayer(db, { variantId, quantity: step.quantity, unitCost: step.unit_cost_tetri, unitType, movementId, now, cost: step.cost_tetri });
       }
     }
   }

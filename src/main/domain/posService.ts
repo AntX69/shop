@@ -17,6 +17,7 @@ import { getDb, runInTransaction } from '../db/database.ts';
 import { CheckoutPayload, Sale, User } from '../../shared/types.ts';
 import { allocateProportionally, formatTetri } from '../../shared/money.ts';
 import { lineTotalTetri } from '../../shared/quantity.ts';
+import { averageUnitCost, consumeLayers, totalCost } from './fifo.ts';
 import { boundToUtc, localDate } from '../../shared/time.ts';
 import { AuthService } from './authService.ts';
 import { permissionName } from '../../shared/permissions.ts';
@@ -366,31 +367,12 @@ export class PosService {
           "SELECT code_value FROM product_codes WHERE variant_id = ? ORDER BY CASE code_type WHEN 'manual_5digit' THEN 0 ELSE 1 END, id ASC LIMIT 1"
         ).get(line.variant_id) as { code_value: string } | undefined;
 
-        // FIFO: consume the oldest cost layers first and remember exactly which ones.
-        const layers: Array<{ lot_id: number | null; quantity: number; unit_cost_tetri: number | null }> = [];
-        let needed = line.quantity;
-        const lots = db.prepare(`
-          SELECT id, remaining_quantity, unit_cost_tetri
-          FROM inventory_lots
-          WHERE variant_id = ? AND remaining_quantity > 0
-          ORDER BY id ASC
-        `).all(line.variant_id) as Array<{ id: number; remaining_quantity: number; unit_cost_tetri: number | null }>;
-
-        for (const lot of lots) {
-          if (needed <= 0) break;
-          const take = Math.min(needed, lot.remaining_quantity);
-          db.prepare("UPDATE inventory_lots SET remaining_quantity = remaining_quantity - ? WHERE id = ?").run(take, lot.id);
-          layers.push({ lot_id: lot.id, quantity: take, unit_cost_tetri: lot.unit_cost_tetri });
-          needed -= take;
-        }
-        if (needed > 0) {
-          // Stock counter is ahead of the cost layers: the cost of these units is unknown, never 0.
-          layers.push({ lot_id: null, quantity: needed, unit_cost_tetri: null });
-        }
-
-        const allCostsKnown = layers.every((l) => l.unit_cost_tetri !== null);
-        const knownCost = layers.reduce((s, l) => s + (l.unit_cost_tetri ?? 0) * l.quantity, 0);
-        const avgUnitCost = allCostsKnown ? Math.round(knownCost / line.quantity) : null;
+        // FIFO: consume the oldest cost layers first, each part with its exact cost in tetri
+        // (domain/fifo.ts). Units beyond the layers get an unknown cost, never 0.
+        const layers = consumeLayers(db, line.variant_id, line.quantity);
+        const lineCost = totalCost(layers);
+        // Display only (per piece, or per kg): accounting uses the exact part costs.
+        const avgUnitCost = averageUnitCost(lineCost, line.quantity, line.unit_type);
 
         const itemRes = db.prepare(`
           INSERT INTO sale_items (
@@ -414,10 +396,10 @@ export class PosService {
         const saleItemId = Number(itemRes.lastInsertRowid);
 
         const layerStmt = db.prepare(
-          "INSERT INTO sale_item_lots (sale_item_id, lot_id, quantity, unit_cost_tetri, returned_quantity) VALUES (?, ?, ?, ?, 0)"
+          "INSERT INTO sale_item_lots (sale_item_id, lot_id, quantity, unit_cost_tetri, returned_quantity, cost_tetri, returned_cost_tetri) VALUES (?, ?, ?, ?, 0, ?, 0)"
         );
         for (const layer of layers) {
-          layerStmt.run(saleItemId, layer.lot_id, layer.quantity, layer.unit_cost_tetri);
+          layerStmt.run(saleItemId, layer.lot_id, layer.quantity, layer.unit_cost_tetri, layer.cost_tetri);
         }
 
         db.prepare("UPDATE product_variants SET stock_quantity = stock_quantity - ? WHERE id = ?").run(line.quantity, line.variant_id);
@@ -426,8 +408,8 @@ export class PosService {
         db.prepare(`
           INSERT INTO inventory_movements (
             variant_id, movement_type, quantity_change, resulting_stock,
-            unit_cost_tetri, unit_type, reason, reference_id, user_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            unit_cost_tetri, unit_type, reason, reference_id, user_id, created_at, cost_total_tetri
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           line.variant_id,
           exchange ? 'exchange' : 'sale',
@@ -438,7 +420,8 @@ export class PosService {
           exchange ? 'გაცვლა (ახალი ნივთი)' : 'გაყიდვა',
           receiptNumber,
           user.id,
-          now
+          now,
+          lineCost === null ? null : -lineCost
         );
       }
 

@@ -19,6 +19,7 @@ import { AuthService } from './authService.ts';
 import { deleteImageFileIfUnused, imageUrl, storeProductImage } from './productImages.ts';
 import { optionalAmount, optionalId, optionalString, requireAmount, requireCount, requireGramCount, requireId, requireObject, requireString } from './validation.ts';
 import { UnitType } from '../../shared/types.ts';
+import { insertLayer, layerCost } from './fifo.ts';
 
 export interface CreateProductInput {
   name: string;
@@ -372,14 +373,12 @@ export class ProductsService {
     // Initial stock becomes the first FIFO layer, costed at the known purchase cost (or unknown).
     if (initialStock > 0) {
       const unitCost = costOverride ?? baseCost ?? null;
+      const cost = layerCost(unitCost, initialStock, unitType);
       const moveRes = db.prepare(
-        "INSERT INTO inventory_movements (variant_id, movement_type, quantity_change, resulting_stock, unit_cost_tetri, unit_type, reason, user_id, created_at) " +
-        "VALUES (?, 'initial', ?, ?, ?, ?, 'საწყისი ინვენტარიზაცია', ?, ?)"
-      ).run(variantId, initialStock, initialStock, unitCost, unitType, requester.id, now);
-      db.prepare(
-        "INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, unit_type, movement_id, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).run(variantId, initialStock, initialStock, unitCost, unitType, Number(moveRes.lastInsertRowid), now);
+        "INSERT INTO inventory_movements (variant_id, movement_type, quantity_change, resulting_stock, unit_cost_tetri, unit_type, reason, user_id, created_at, cost_total_tetri) " +
+        "VALUES (?, 'initial', ?, ?, ?, ?, 'საწყისი ინვენტარიზაცია', ?, ?, ?)"
+      ).run(variantId, initialStock, initialStock, unitCost, unitType, requester.id, now, cost);
+      insertLayer(db, { variantId, quantity: initialStock, unitCost, unitType, movementId: Number(moveRes.lastInsertRowid), now, cost });
     }
     return variantId;
   }

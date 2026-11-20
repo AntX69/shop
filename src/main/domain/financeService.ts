@@ -32,7 +32,8 @@ export const PROFIT_FIELDS = [
   'has_unknown_costs', 'unknown_cost_items_count', 'unknown_cost_returned_items_count',
   'estimated_gross_profit_tetri', 'gross_profit_partial_tetri',
   'damaged_goods_writeoff_tetri', 'operating_result_tetri', 'operating_result_partial_tetri',
-  'inventory_value_tetri', 'inventory_value_known_tetri',
+  'inventory_value_tetri', 'inventory_value_known_tetri', 'inventory_unknown_cost_units', 'inventory_unknown_cost_grams',
+  'unknown_cost_grams', 'unknown_cost_returned_grams',
 ];
 import { optionalString, requirePositiveAmount, requireObject, requireString } from './validation.ts';
 
@@ -98,11 +99,14 @@ export class FinanceService {
       FROM sales s WHERE 1=1 ${salesRange.sql}
     `).get(...salesRange.params) as any;
 
-    // 2. FIFO cost of the units sold in the period
+    // 2. FIFO cost of the units sold in the period: the exact cost of each consumed part
+    //    (domain/fifo.ts), so grams and pieces add up the same way. Unknown costs are counted,
+    //    never valued at 0; pieces and grams are counted separately.
     const cogsRow = this.db.prepare(`
       SELECT
-        COALESCE(SUM(CASE WHEN sil.unit_cost_tetri IS NOT NULL THEN sil.quantity * sil.unit_cost_tetri ELSE 0 END), 0) as cogs_tetri,
-        COALESCE(SUM(CASE WHEN sil.unit_cost_tetri IS NULL THEN sil.quantity ELSE 0 END), 0) as unknown_units,
+        COALESCE(SUM(CASE WHEN sil.cost_tetri IS NOT NULL THEN sil.cost_tetri ELSE 0 END), 0) as cogs_tetri,
+        COALESCE(SUM(CASE WHEN sil.cost_tetri IS NULL AND COALESCE(si.unit_type, 'piece') <> 'kg' THEN sil.quantity ELSE 0 END), 0) as unknown_units,
+        COALESCE(SUM(CASE WHEN sil.cost_tetri IS NULL AND si.unit_type = 'kg' THEN sil.quantity ELSE 0 END), 0) as unknown_grams,
         COALESCE(SUM(sil.quantity), 0) as units
       FROM sale_item_lots sil
       JOIN sale_items si ON si.id = sil.sale_item_id
@@ -124,9 +128,11 @@ export class FinanceService {
     const returnCostRow = this.db.prepare(`
       SELECT
         COALESCE(SUM(ri.cost_total_tetri), 0) as reversed_tetri,
-        COALESCE(SUM(ri.unknown_cost_quantity), 0) as unknown_units,
+        COALESCE(SUM(CASE WHEN COALESCE(ri.unit_type, 'piece') <> 'kg' THEN ri.unknown_cost_quantity ELSE 0 END), 0) as unknown_units,
+        COALESCE(SUM(CASE WHEN ri.unit_type = 'kg' THEN ri.unknown_cost_quantity ELSE 0 END), 0) as unknown_grams,
+        COALESCE(SUM(CASE WHEN ri.condition = 'damaged' AND ri.unit_type = 'kg' THEN ri.quantity ELSE 0 END), 0) as damaged_grams,
         COALESCE(SUM(CASE WHEN ri.condition = 'damaged' THEN ri.cost_total_tetri ELSE 0 END), 0) as damaged_cost_tetri,
-        COALESCE(SUM(CASE WHEN ri.condition = 'damaged' THEN ri.quantity ELSE 0 END), 0) as damaged_units,
+        COALESCE(SUM(CASE WHEN ri.condition = 'damaged' AND COALESCE(ri.unit_type, 'piece') <> 'kg' THEN ri.quantity ELSE 0 END), 0) as damaged_units,
         COALESCE(SUM(CASE WHEN ri.condition = 'damaged' THEN ri.unknown_cost_quantity ELSE 0 END), 0) as damaged_unknown_units
       FROM return_items ri
       JOIN returns r ON r.id = ri.return_id
@@ -155,7 +161,16 @@ export class FinanceService {
       FROM expenses ${expClauses.length ? 'WHERE ' + expClauses.join(' AND ') : ''}
     `).get(...expParams) as any;
 
-    // 7. Receivables right now
+    // 7. Stock value right now: what is still on the shelf, at its FIFO cost.
+    const stockRow = this.db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN remaining_cost_tetri IS NOT NULL THEN remaining_cost_tetri ELSE 0 END), 0) as known_tetri,
+        COALESCE(SUM(CASE WHEN remaining_cost_tetri IS NULL AND COALESCE(unit_type, 'piece') <> 'kg' THEN remaining_quantity ELSE 0 END), 0) as unknown_units,
+        COALESCE(SUM(CASE WHEN remaining_cost_tetri IS NULL AND unit_type = 'kg' THEN remaining_quantity ELSE 0 END), 0) as unknown_grams
+      FROM inventory_lots WHERE remaining_quantity > 0
+    `).get() as any;
+
+    // 8. Receivables right now
     const debtNowRow = this.db.prepare(`
       SELECT COALESCE(SUM(remaining_tetri), 0) as outstanding_tetri,
              COUNT(DISTINCT CASE WHEN remaining_tetri > 0 THEN customer_id END) as customers_with_debt
@@ -170,7 +185,8 @@ export class FinanceService {
     const netCogs = cogsSold - cogsReversed;
     const unknownSold: number = cogsRow.unknown_units;
     const unknownReturned: number = returnCostRow.unknown_units;
-    const hasUnknownCosts = unknownSold > 0 || unknownReturned > 0;
+    const hasUnknownCosts = unknownSold > 0 || unknownReturned > 0 || cogsRow.unknown_grams > 0 || returnCostRow.unknown_grams > 0;
+    const stockUnknown = stockRow.unknown_units > 0 || stockRow.unknown_grams > 0;
     const grossProfit = netSales - netCogs;
     const damagedWriteOff: number = returnCostRow.damaged_cost_tetri;
     const debtWrittenOff: number = writeOffRow.written_off_tetri;
@@ -204,12 +220,15 @@ export class FinanceService {
       has_unknown_costs: hasUnknownCosts,
       unknown_cost_items_count: unknownSold,
       unknown_cost_returned_items_count: unknownReturned,
+      unknown_cost_grams: cogsRow.unknown_grams,
+      unknown_cost_returned_grams: returnCostRow.unknown_grams,
       // With any unknown cost the exact profit cannot be known: null, plus a clearly
       // labelled partial figure computed from the known costs only.
       estimated_gross_profit_tetri: hasUnknownCosts ? null : grossProfit,
       gross_profit_partial_tetri: grossProfit,
       damaged_goods_writeoff_tetri: damagedWriteOff,
       damaged_goods_units: returnCostRow.damaged_units,
+      damaged_goods_grams: returnCostRow.damaged_grams,
       debt_written_off_tetri: debtWrittenOff,
       total_expenses_tetri: expenses,
       operating_result_tetri: hasUnknownCosts ? null : operatingResult,
@@ -224,6 +243,13 @@ export class FinanceService {
       net_cash_after_expenses_tetri: cashFlow - expenses,
       exchange_credit_used_tetri: salesRow.exchange_credit_tetri,
       returns_debt_reduction_tetri: returnsRow.debt_deduction_tetri,
+
+      // Stock at FIFO cost (now, not for the period). With any unknown layer cost the exact value
+      // is null and the known part is shown separately.
+      inventory_value_tetri: stockUnknown ? null : stockRow.known_tetri,
+      inventory_value_known_tetri: stockRow.known_tetri,
+      inventory_unknown_cost_units: stockRow.unknown_units,
+      inventory_unknown_cost_grams: stockRow.unknown_grams,
 
       total_new_debt_tetri: salesRow.new_debt_tetri,
       outstanding_debt_tetri: debtNowRow.outstanding_tetri,

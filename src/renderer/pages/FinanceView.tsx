@@ -17,6 +17,7 @@ import { Expense, FinancialSummary, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { can } from '../utils/access.ts';
+import { gramsToKg } from '../../shared/quantity.ts';
 import { EditableMoneyInput } from '../components/inputs/NumericInputs.tsx';
 import { 
   TrendingUp, 
@@ -262,6 +263,8 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
             <span>
               {summary.unknown_cost_items_count > 0 && `${summary.unknown_cost_items_count} გაყიდულ ერთეულს `}
               {(summary.unknown_cost_returned_items_count || 0) > 0 && `${summary.unknown_cost_returned_items_count} დაბრუნებულ ერთეულს `}
+              {(summary.unknown_cost_grams || 0) > 0 && `${gramsToKg(summary.unknown_cost_grams)} კგ გაყიდულ წონას `}
+              {(summary.unknown_cost_returned_grams || 0) > 0 && `${gramsToKg(summary.unknown_cost_returned_grams)} კგ დაბრუნებულ წონას `}
               შესყიდვის ფასი უცნობია. თვითღირებულება 0-ად არ ითვლება, ამიტომ ზუსტი მოგება ვერ დაითვლება — ქვემოთ ნაჩვენებია მხოლოდ ცნობილი ფასების მიხედვით (არასრული).
             </span>
           </div>
@@ -291,10 +294,22 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
           )}
         </FinanceSection>}
 
+        {/* Stock value now (reports.profit): what is on the shelf at its FIFO cost */}
+        {canProfit && summary && (
+          <FinanceSection title="მარაგის ღირებულება ახლა (FIFO, შესყიდვის ფასით)">
+            {summary.inventory_value_tetri === null || summary.inventory_value_tetri === undefined ? (
+              <Stat label="მარაგის ღირებულება (არასრული)" value={summary.inventory_value_known_tetri} tone="amber" strong
+                hint={`უცნობი ფასით: ${summary.inventory_unknown_cost_units || 0} ცალი${(summary.inventory_unknown_cost_grams || 0) > 0 ? `, ${gramsToKg(summary.inventory_unknown_cost_grams)} კგ` : ''}`} />
+            ) : (
+              <Stat label="მარაგის ღირებულება" value={summary.inventory_value_tetri} tone="cyan" strong hint="თაროზე დარჩენილი საქონელი, პარტიების შესყიდვის ფასით" />
+            )}
+          </FinanceSection>
+        )}
+
         {/* 3. Operating result */}
         {canReport && <FinanceSection title="საოპერაციო შედეგი">
           {canProfit && <Stat label="დაზიანებული საქონელი" value={summary?.damaged_goods_writeoff_tetri} tone="red"
-            hint={`${summary?.damaged_goods_units || 0} ერთეული ჩამოიწერა (თვითღირებულებით)`} />}
+            hint={`${summary?.damaged_goods_units || 0} ერთეული${(summary?.damaged_goods_grams || 0) > 0 ? ` და ${gramsToKg(summary?.damaged_goods_grams)} კგ` : ''} ჩამოიწერა (თვითღირებულებით)`} />}
           <Stat label="ჩამოწერილი ნისია" value={summary?.debt_written_off_tetri} tone="red" hint="მფლობელის მიერ ჩამოწერილი ვალი" />
           <Stat label="საოპერაციო ხარჯები" value={summary?.total_expenses_tetri} tone="red" hint="ქირა, კომუნალური, ტრანსპორტი და სხვა" />
           {!canProfit ? null : summary?.operating_result_tetri === null ? (

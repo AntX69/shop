@@ -679,6 +679,45 @@ export const migrations: Migration[] = [
         ).run(`Permissions of ${next.size} seller(s) translated to the V1.1 permission list`, now);
       }
     }
+  },
+  {
+    version: 10,
+    name: 'exact_fifo_layer_costs',
+    up: (db: DatabaseSync) => {
+      // Each FIFO layer gets its cost in whole tetri (received and still on the shelf), and each
+      // consumed part its exact cost, so partial kilograms never drift (see domain/fifo.ts).
+      addColumnIfMissing(db, 'inventory_lots', 'initial_cost_tetri', 'INTEGER');
+      addColumnIfMissing(db, 'inventory_lots', 'remaining_cost_tetri', 'INTEGER');
+      addColumnIfMissing(db, 'sale_item_lots', 'cost_tetri', 'INTEGER');
+      addColumnIfMissing(db, 'sale_item_lots', 'returned_cost_tetri', 'INTEGER NOT NULL DEFAULT 0');
+      // Exact effect of a movement on stock value (+ in, - out); NULL when unknown or older than V1.1.
+      addColumnIfMissing(db, 'inventory_movements', 'cost_total_tetri', 'INTEGER');
+
+      // Existing data. Piece layers: unit cost × quantity, exactly what RC3 counted (no change to
+      // any figure). Weight layers (only in pre-release V1.1 databases): cost per kg × grams / 1000,
+      // nearest tetri. Unknown costs stay NULL. Sales history (prices, quantities) is not touched.
+      db.exec(`
+        UPDATE inventory_lots SET
+          initial_cost_tetri = CASE WHEN unit_cost_tetri IS NULL THEN NULL
+            WHEN unit_type = 'kg' THEN (unit_cost_tetri * initial_quantity + 500) / 1000
+            ELSE unit_cost_tetri * initial_quantity END,
+          remaining_cost_tetri = CASE WHEN unit_cost_tetri IS NULL THEN NULL
+            WHEN unit_type = 'kg' THEN (unit_cost_tetri * remaining_quantity + 500) / 1000
+            ELSE unit_cost_tetri * remaining_quantity END
+        WHERE initial_cost_tetri IS NULL AND remaining_cost_tetri IS NULL;
+
+        UPDATE sale_item_lots SET
+          cost_tetri = CASE WHEN unit_cost_tetri IS NULL THEN NULL
+            WHEN (SELECT unit_type FROM sale_items si WHERE si.id = sale_item_lots.sale_item_id) = 'kg'
+              THEN (unit_cost_tetri * quantity + 500) / 1000
+            ELSE unit_cost_tetri * quantity END,
+          returned_cost_tetri = CASE WHEN unit_cost_tetri IS NULL THEN 0
+            WHEN (SELECT unit_type FROM sale_items si WHERE si.id = sale_item_lots.sale_item_id) = 'kg'
+              THEN (unit_cost_tetri * returned_quantity + 500) / 1000
+            ELSE unit_cost_tetri * returned_quantity END
+        WHERE cost_tetri IS NULL;
+      `);
+    }
   }
 ];
 

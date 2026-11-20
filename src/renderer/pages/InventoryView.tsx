@@ -503,7 +503,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">შესყიდვის ერთეულის ფასი (₾, არასავალდებულო FIFO-სთვის)</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{allVariants.find(v => v.id === selectedVariantId)?.unit_type === 'kg' ? 'შესყიდვის ფასი 1 კგ-ზე (₾, არასავალდებულო)' : 'შესყიდვის ფასი 1 ცალზე (₾, არასავალდებულო)'}</label>
                   <EditableMoneyInput
                     value={restockUnitCost}
                     onChange={(val) => setRestockUnitCost(val)}

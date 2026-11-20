@@ -18,6 +18,7 @@ import { getDb, runInTransaction } from '../db/database.ts';
 import { RestockPayload, StockCorrectionPayload, User } from '../../shared/types.ts';
 import { AuthService } from './authService.ts';
 import { optionalAmount, optionalString, requireCount, requireGramCount, requireGrams, requireId, requireObject, requireQuantity, requireString } from './validation.ts';
+import { averageUnitCost, consumeLayers, insertLayer, layerCost, totalCost } from './fifo.ts';
 
 export class InventoryService {
   private db: DatabaseSync;
@@ -44,7 +45,8 @@ export class InventoryService {
    * configured the lot cost stays unknown (never 0).
    *
    * For KG variants: added_quantity must be integer grams (≥ 1).
-   * unit_cost_tetri for KG products represents the cost per 1000 g (1 kg).
+   * unit_cost_tetri for KG products is the cost per 1 kg; the layer's total cost is
+   * cost per kg × grams / 1000 rounded to the nearest tetri (domain/fifo.ts).
    */
   restockVariant(requester: User, rawPayload: RestockPayload): { new_stock: number } {
     this.requirePermission(requester, 'inventory.receive', 'მარაგის შევსების უფლება არ გაქვთ');
@@ -82,19 +84,17 @@ export class InventoryService {
       const now = new Date().toISOString();
       const newStock = variant.stock_quantity + added;
       const unitCost = explicitCost ?? variant.cost_override_tetri ?? variant.base_cost_tetri ?? null;
+      const lotCost = layerCost(unitCost, added, unitType);
 
       db.prepare("UPDATE product_variants SET stock_quantity = ? WHERE id = ?").run(newStock, variant.id);
 
       const moveRes = db.prepare(
-        "INSERT INTO inventory_movements (variant_id, movement_type, quantity_change, resulting_stock, unit_cost_tetri, unit_type, reason, user_id, created_at) " +
-        "VALUES (?, 'restock', ?, ?, ?, ?, ?, ?, ?)"
-      ).run(variant.id, added, newStock, unitCost, unitType, notes || 'მარაგის შევსება', requester.id, now);
+        "INSERT INTO inventory_movements (variant_id, movement_type, quantity_change, resulting_stock, unit_cost_tetri, unit_type, reason, user_id, created_at, cost_total_tetri) " +
+        "VALUES (?, 'restock', ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(variant.id, added, newStock, unitCost, unitType, notes || 'მარაგის შევსება', requester.id, now, lotCost);
       const movementId = Number(moveRes.lastInsertRowid);
 
-      db.prepare(
-        "INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, unit_type, movement_id, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).run(variant.id, added, added, unitCost, unitType, movementId, now);
+      insertLayer(db, { variantId: variant.id, quantity: added, unitCost, unitType, movementId, now, cost: lotCost });
 
       db.prepare(
         "INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (?, 'INVENTORY_RESTOCK', 'product_variants', ?, ?, ?)"
@@ -158,39 +158,29 @@ export class InventoryService {
       db.prepare("UPDATE product_variants SET stock_quantity = ? WHERE id = ?").run(counted, variant.id);
 
       let movementCost: number | null = null;
-      let lotToCreate: { qty: number; cost: number | null } | null = null;
+      let movementTotal: number | null = null;
+      let lotToCreate: { qty: number; unitCost: number | null; cost: number | null } | null = null;
 
       if (diff < 0) {
-        // Missing units leave the oldest cost layers first.
-        let missing = -diff;
-        let knownCost = 0;
-        let unknown = 0;
-        const lots = db.prepare(
-          "SELECT id, remaining_quantity, unit_cost_tetri FROM inventory_lots WHERE variant_id = ? AND remaining_quantity > 0 ORDER BY id ASC"
-        ).all(variant.id) as Array<{ id: number; remaining_quantity: number; unit_cost_tetri: number | null }>;
-        for (const lot of lots) {
-          if (missing <= 0) break;
-          const take = Math.min(missing, lot.remaining_quantity);
-          db.prepare("UPDATE inventory_lots SET remaining_quantity = remaining_quantity - ? WHERE id = ?").run(take, lot.id);
-          if (lot.unit_cost_tetri === null) unknown += take; else knownCost += take * lot.unit_cost_tetri;
-          missing -= take;
-        }
-        unknown += missing;
-        movementCost = unknown === 0 ? Math.round(knownCost / -diff) : null;
+        // Missing units leave the oldest cost layers first, each part at its exact cost.
+        const parts = consumeLayers(db, variant.id, -diff);
+        const lost = totalCost(parts);
+        movementCost = averageUnitCost(lost, -diff, unitType);
+        movementTotal = lost === null ? null : -lost;
       } else {
-        lotToCreate = { qty: diff, cost: variant.cost_override_tetri ?? variant.base_cost_tetri ?? null };
-        movementCost = lotToCreate.cost;
+        const unitCost = variant.cost_override_tetri ?? variant.base_cost_tetri ?? null;
+        lotToCreate = { qty: diff, unitCost, cost: layerCost(unitCost, diff, unitType) };
+        movementCost = unitCost;
+        movementTotal = lotToCreate.cost;
       }
 
       const moveRes = db.prepare(
-        "INSERT INTO inventory_movements (variant_id, movement_type, quantity_change, resulting_stock, unit_cost_tetri, unit_type, reason, user_id, created_at) " +
-        "VALUES (?, 'correction', ?, ?, ?, ?, ?, ?, ?)"
-      ).run(variant.id, diff, counted, movementCost, unitType, `კორექცია: ${reason}`, requester.id, now);
+        "INSERT INTO inventory_movements (variant_id, movement_type, quantity_change, resulting_stock, unit_cost_tetri, unit_type, reason, user_id, created_at, cost_total_tetri) " +
+        "VALUES (?, 'correction', ?, ?, ?, ?, ?, ?, ?, ?)"
+      ).run(variant.id, diff, counted, movementCost, unitType, `კორექცია: ${reason}`, requester.id, now, movementTotal);
 
       if (lotToCreate) {
-        db.prepare(
-          "INSERT INTO inventory_lots (variant_id, initial_quantity, remaining_quantity, unit_cost_tetri, unit_type, movement_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-        ).run(variant.id, lotToCreate.qty, lotToCreate.qty, lotToCreate.cost, unitType, Number(moveRes.lastInsertRowid), now);
+        insertLayer(db, { variantId: variant.id, quantity: lotToCreate.qty, unitCost: lotToCreate.unitCost, unitType, movementId: Number(moveRes.lastInsertRowid), now, cost: lotToCreate.cost });
       }
 
       db.prepare(
