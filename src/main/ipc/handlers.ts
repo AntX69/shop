@@ -104,13 +104,14 @@ const routes: Record<string, Route> = {
   'auth:resetStoreDatabase': { access: 'owner', handler: (c) => { auth().resetStoreDatabase(c.user, p(c).pin); return { reset: true }; } },
 
   // 4. Products & Categories
-  'products:getCategories': { access: 'user', permission: 'categories.view', handler: (c) => products().getCategories({ includeArchived: !!p(c).includeArchived }) },
-  'products:createCategory': { access: 'user', permission: 'categories.create', handler: (c) => products().createCategory(c.user, p(c).name, p(c).color) },
-  'products:updateCategory': { access: 'user', permission: 'categories.edit', handler: (c) => products().updateCategory(c.user, p(c).categoryId, { name: p(c).name, color: p(c).color }) },
-  'products:renameCategory': { access: 'user', permission: 'categories.edit', handler: (c) => products().renameCategory(c.user, p(c).categoryId, p(c).name) },
-  'products:setCategoryArchived': { access: 'user', permission: 'categories.delete', handler: (c) => products().setCategoryArchived(c.user, p(c).categoryId, !!p(c).isArchived) },
-  'products:getCategoryUsage': { access: 'user', permission: 'categories.view', handler: (c) => products().getCategoryUsage(p(c).categoryId) },
-  'products:deleteCategory': { access: 'user', permission: 'categories.delete', handler: (c) => { products().deleteCategory(c.user, p(c).categoryId, p(c).reassignToCategoryId); return { deleted: true }; } },
+  // Category names and colours are not sensitive: every signed-in user may list them (POS filter).
+  'products:getCategories': { access: 'user', handler: (c) => products().getCategories({ includeArchived: !!p(c).includeArchived }) },
+  'products:createCategory': { access: 'user', permission: 'categories.manage', handler: (c) => products().createCategory(c.user, p(c).name, p(c).color) },
+  'products:updateCategory': { access: 'user', permission: 'categories.manage', handler: (c) => products().updateCategory(c.user, p(c).categoryId, { name: p(c).name, color: p(c).color }) },
+  'products:renameCategory': { access: 'user', permission: 'categories.manage', handler: (c) => products().renameCategory(c.user, p(c).categoryId, p(c).name) },
+  'products:setCategoryArchived': { access: 'user', permission: 'categories.manage', handler: (c) => products().setCategoryArchived(c.user, p(c).categoryId, !!p(c).isArchived) },
+  'products:getCategoryUsage': { access: 'user', permission: 'categories.manage', handler: (c) => products().getCategoryUsage(p(c).categoryId) },
+  'products:deleteCategory': { access: 'user', permission: 'categories.manage', handler: (c) => products().deleteCategory(c.user, p(c).categoryId, p(c).reassignToCategoryId) },
   'products:list': {
     access: 'user',
     permission: 'products.view',

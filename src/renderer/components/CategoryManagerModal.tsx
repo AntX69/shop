@@ -453,7 +453,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
                     onChange={(e) => setReassignTargetId(e.target.value ? Number(e.target.value) : '')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
                   >
-                    <option value="">კატეგორიის გარეშე (ზოგადი)</option>
+                    <option value="">-- აირჩიეთ კატეგორია (სავალდებულოა) --</option>
                     {categories
                       .filter((c) => c.id !== deleteTarget.id && !c.is_archived)
                       .map((c) => (
@@ -462,6 +462,11 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
                         </option>
                       ))}
                   </select>
+                  {categories.filter((c) => c.id !== deleteTarget.id && !c.is_archived).length === 0 && (
+                    <p className="text-[10px] text-amber-300 pt-1">
+                      სხვა აქტიური კატეგორია არ არის: ჯერ შექმენით ან აღადგინეთ კატეგორია, სადაც პროდუქტები გადავა.
+                    </p>
+                  )}
                 </div>
               </div>
             ) : (
@@ -482,7 +487,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
               <button
                 type="button"
                 onClick={handleExecuteDelete}
-                disabled={deleting}
+                disabled={deleting || !usageInfo || (usageInfo.total > 0 && reassignTargetId === '')}
                 className="flex-1 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
               >
                 {deleting ? 'იშლება...' : 'დადასტურება და წაშლა'}

@@ -69,6 +69,33 @@ export interface UpdateVariantInput {
 
 const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k);
 
+export const CATEGORY_MANAGE_PERMISSION = 'categories.manage';
+export const DEFAULT_CATEGORY_COLOR = '#10b981';
+
+/** Category name: NFC, spaces collapsed, 1–60 characters, no control characters. */
+export function normalizeCategoryName(name: unknown): string {
+  if (typeof name !== 'string') throw new Error('კატეგორიის სახელი სავალდებულოა');
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(name)) throw new Error('კატეგორიის სახელი შეიცავს დაუშვებელ სიმბოლოს');
+  const clean = name.normalize('NFC').replace(/\s+/g, ' ').trim();
+  if (!clean) throw new Error('კატეგორიის სახელი სავალდებულოა');
+  if ([...clean].length > 60) throw new Error('კატეგორიის სახელი ძალიან გრძელია (მაქსიმუმ 60 სიმბოლო)');
+  return clean;
+}
+
+/** Key for duplicate checks: "Toys", "toys" and " TOYS " are the same; Georgian Mtavruli = Mkhedruli. */
+export function categoryNameKey(name: string): string {
+  return name.normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Colour as #rrggbb (lower case). "#ABC" becomes "#aabbcc"; anything else is refused. */
+export function normalizeCategoryColor(color: unknown): string {
+  const text = typeof color === 'string' ? color.trim() : '';
+  const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(text);
+  if (!m) throw new Error(`კატეგორიის ფერი არასწორია: "${String(color ?? '')}" (სწორია მაგ. #10b981)`);
+  const hex = m[1].toLowerCase();
+  return `#${hex.length === 3 ? hex.split('').map((c) => c + c).join('') : hex}`;
+}
+
 export class ProductsService {
   private db: DatabaseSync;
 
@@ -99,7 +126,29 @@ export class ProductsService {
     ).run(userId, action, entity, String(entityId), typeof details === 'string' ? details : JSON.stringify(details), new Date().toISOString());
   }
 
-  // --- Category Management (Owner only) ---
+  // --- Category Management (owner, or a seller the owner gave "categories.manage") ---
+
+  /** `action`: e.g. "კატეგორიის დამატება" (the RC3 wording of the refusal is kept). */
+  private requireCategoryManager(requester: User, action: string): void {
+    this.requirePermission(requester, CATEGORY_MANAGE_PERMISSION, `${action} შეუძლია მხოლოდ მფლობელს ან უფლებამოსილ თანამშრომელს`);
+  }
+
+  /** Throws when another category already has this name (ignoring letter case and extra spaces). */
+  private assertCategoryNameFree(db: DatabaseSync, name: string, exceptId?: number): void {
+    const key = categoryNameKey(name);
+    const rows = db.prepare("SELECT id, name FROM categories").all() as Array<{ id: number; name: string }>;
+    const clash = rows.find((r) => r.id !== exceptId && categoryNameKey(r.name) === key);
+    if (clash) {
+      throw new Error(`კატეგორია "${clash.name}" უკვე არსებობს (დიდი და პატარა ასოები ერთნაირად ითვლება)`);
+    }
+  }
+
+  /** A product can be put only into an existing, non-archived category. */
+  private assertCategoryAssignable(db: DatabaseSync, categoryId: number): void {
+    const cat = db.prepare("SELECT name, is_archived FROM categories WHERE id = ?").get(categoryId) as any;
+    if (!cat) throw new Error('კატეგორია ვერ მოიძებნა');
+    if (cat.is_archived) throw new Error(`კატეგორია "${cat.name}" დაარქივებულია: აირჩიეთ სხვა ან ჯერ აღადგინეთ`);
+  }
 
   getCategories(options?: { includeArchived?: boolean }): Category[] {
     let sql = `
@@ -130,71 +179,48 @@ export class ProductsService {
     };
   }
 
-  createCategory(requester: User, name: string, color?: string): Category {
-    this.requirePermission(requester, 'categories.create', 'კატეგორიის დამატება შეუძლია მხოლოდ მფლობელს');
-    const trimmed = typeof name === 'string' ? name.trim() : '';
-    if (!trimmed) {
-      throw new Error('კატეგორიის სახელი სავალდებულოა');
-    }
-    requireString(trimmed, 60, 'კატეგორიის სახელი');
-
-    const cleanColor = color && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color.trim())
-      ? color.trim()
-      : '#10b981';
-
+  createCategory(requester: User, name: unknown, color?: unknown): Category {
+    this.requireCategoryManager(requester, 'კატეგორიის დამატება');
+    const cleanName = normalizeCategoryName(name);
+    const cleanColor = color === undefined || color === null || color === '' ? DEFAULT_CATEGORY_COLOR : normalizeCategoryColor(color);
     const now = new Date().toISOString();
-    try {
-      const res = this.db.prepare(
+    return runInTransaction((db) => {
+      this.assertCategoryNameFree(db, cleanName);
+      const res = db.prepare(
         "INSERT INTO categories (name, color, is_archived, created_at) VALUES (?, ?, 0, ?)"
-      ).run(trimmed, cleanColor, now);
+      ).run(cleanName, cleanColor, now);
       const newId = Number(res.lastInsertRowid);
-      this.audit(requester.id, 'CATEGORY_CREATE', 'categories', newId, { name: trimmed, color: cleanColor });
-      return { id: newId, name: trimmed, color: cleanColor, is_archived: 0, created_at: now, products_count: 0, archived_products_count: 0 };
-    } catch (err: any) {
-      if (err.message && err.message.includes('UNIQUE')) {
-        throw new Error(`კატეგორია სახელით "${trimmed}" უკვე არსებობს`);
-      }
-      throw err;
-    }
+      this.audit(requester.id, 'CATEGORY_CREATE', 'categories', newId, { name: cleanName, color: cleanColor });
+      return { id: newId, name: cleanName, color: cleanColor, is_archived: 0, created_at: now, products_count: 0, archived_products_count: 0 };
+    }, this.db);
   }
 
-  updateCategory(requester: User, categoryId: number, data: { name?: string; color?: string }): Category {
-    this.requirePermission(requester, 'categories.edit', 'კატეგორიის შეცვლის უფლება არ გაქვთ');
+  updateCategory(requester: User, categoryId: number, data: { name?: unknown; color?: unknown }): Category {
+    this.requireCategoryManager(requester, 'კატეგორიის შეცვლა');
     const id = requireId(categoryId, 'კატეგორია');
-    const old = this.db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as any;
-    if (!old) throw new Error('კატეგორია ვერ მოიძებნა');
+    const input = data && typeof data === 'object' ? data : {};
+    return runInTransaction((db) => {
+      const old = db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as any;
+      if (!old) throw new Error('კატეგორია ვერ მოიძებნა');
 
-    let nextName = old.name;
-    if (data.name !== undefined) {
-      nextName = requireString(data.name, 60, 'კატეგორიის სახელი');
-    }
+      const nextName = input.name !== undefined ? normalizeCategoryName(input.name) : old.name;
+      // An invalid colour is refused, never silently replaced.
+      const nextColor = input.color !== undefined ? normalizeCategoryColor(input.color) : (old.color || DEFAULT_CATEGORY_COLOR);
+      if (nextName !== old.name) this.assertCategoryNameFree(db, nextName, id);
 
-    let nextColor = old.color || '#10b981';
-    if (data.color !== undefined) {
-      nextColor = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(data.color.trim())
-        ? data.color.trim()
-        : old.color || '#10b981';
-    }
-
-    try {
-      this.db.prepare("UPDATE categories SET name = ?, color = ? WHERE id = ?").run(nextName, nextColor, id);
-    } catch (err: any) {
-      if (String(err?.message).includes('UNIQUE')) throw new Error(`კატეგორია სახელით "${nextName}" უკვე არსებობს`);
-      throw err;
-    }
-
-    this.audit(requester.id, 'CATEGORY_UPDATE', 'categories', id, {
-      before: { name: old.name, color: old.color },
-      after: { name: nextName, color: nextColor }
-    });
-
-    return {
-      id,
-      name: nextName,
-      color: nextColor,
-      is_archived: old.is_archived || 0,
-      created_at: old.created_at
-    };
+      db.prepare("UPDATE categories SET name = ?, color = ? WHERE id = ?").run(nextName, nextColor, id);
+      this.audit(requester.id, 'CATEGORY_UPDATE', 'categories', id, {
+        before: { name: old.name, color: old.color },
+        after: { name: nextName, color: nextColor }
+      });
+      return {
+        id,
+        name: nextName,
+        color: nextColor,
+        is_archived: old.is_archived || 0,
+        created_at: old.created_at
+      };
+    }, this.db);
   }
 
   renameCategory(requester: User, categoryId: number, name: string): Category {
@@ -202,7 +228,7 @@ export class ProductsService {
   }
 
   setCategoryArchived(requester: User, categoryId: number, isArchived: boolean): Category {
-    this.requirePermission(requester, 'categories.edit', 'კატეგორიის დაარქივება/აღდგენის უფლება არ გაქვთ');
+    this.requireCategoryManager(requester, 'კატეგორიის დაარქივება');
     const id = requireId(categoryId, 'კატეგორია');
     const cat = this.db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as any;
     if (!cat) throw new Error('კატეგორია ვერ მოიძებნა');
@@ -220,36 +246,49 @@ export class ProductsService {
     };
   }
 
-  deleteCategory(requester: User, categoryId: number, reassignToCategoryId?: number | null): void {
-    this.requirePermission(requester, 'categories.delete', 'კატეგორიის წაშლის უფლება არ გაქვთ');
+  /**
+   * Deletes a category. If any product (active or archived) belongs to it, the owner must name
+   * another, non-archived category: the products move there and the category is deleted in one
+   * transaction, so either both happen or neither. Products, variants and sales are never deleted
+   * (sale lines keep their own name snapshots and do not reference categories).
+   */
+  deleteCategory(requester: User, categoryId: number, reassignToCategoryId?: number | null): { deleted: true; moved_products: number; reassigned_to_category_id: number | null } {
+    this.requireCategoryManager(requester, 'კატეგორიის წაშლა');
     const id = requireId(categoryId, 'კატეგორია');
-    const cat = this.db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as any;
-    if (!cat) throw new Error('კატეგორია ვერ მოიძებნა');
 
-    runInTransaction((db) => {
-      let reassignTargetId: number | null = null;
-      if (reassignToCategoryId !== undefined && reassignToCategoryId !== null) {
-        reassignTargetId = requireId(reassignToCategoryId, 'სამიზნე კატეგორია');
-        if (reassignTargetId === id) {
-          throw new Error('პროდუქტების იმავე კატეგორიაში გადატანა შეუძლებელია');
+    return runInTransaction((db) => {
+      const cat = db.prepare("SELECT * FROM categories WHERE id = ?").get(id) as any;
+      if (!cat) throw new Error('კატეგორია ვერ მოიძებნა');
+      const productCount = Number((db.prepare("SELECT COUNT(*) AS n FROM products WHERE category_id = ?").get(id) as any).n);
+
+      let targetId: number | null = null;
+      if (productCount > 0) {
+        if (reassignToCategoryId === undefined || reassignToCategoryId === null || (reassignToCategoryId as unknown) === '') {
+          throw new Error(
+            `კატეგორიაში "${cat.name}" არის ${productCount} პროდუქტი (დაარქივებულების ჩათვლით). ` +
+            `წაშლამდე აირჩიეთ კატეგორია, სადაც ისინი გადავა.`
+          );
         }
-        const targetCat = db.prepare("SELECT id FROM categories WHERE id = ?").get(reassignTargetId);
-        if (!targetCat) {
-          throw new Error('სამიზნე კატეგორია ვერ მოიძებნა');
-        }
+        targetId = requireId(reassignToCategoryId, 'სამიზნე კატეგორია');
+        if (targetId === id) throw new Error('პროდუქტების იმავე კატეგორიაში გადატანა შეუძლებელია');
+        const target = db.prepare("SELECT id, name, is_archived FROM categories WHERE id = ?").get(targetId) as any;
+        if (!target) throw new Error('სამიზნე კატეგორია ვერ მოიძებნა');
+        if (target.is_archived) throw new Error(`სამიზნე კატეგორია "${target.name}" დაარქივებულია: ჯერ აღადგინეთ ან აირჩიეთ სხვა`);
+
+        const moved = db.prepare("UPDATE products SET category_id = ?, updated_at = ? WHERE category_id = ?").run(targetId, new Date().toISOString(), id);
+        if (Number(moved.changes) !== productCount) throw new Error('პროდუქტების გადატანა ბოლომდე ვერ შესრულდა: არაფერი შეცვლილა');
       }
 
-      // Reassign or set null
-      const moved = db.prepare("UPDATE products SET category_id = ? WHERE category_id = ?").run(reassignTargetId, id);
-
-      // Now safe to delete
+      const left = Number((db.prepare("SELECT COUNT(*) AS n FROM products WHERE category_id = ?").get(id) as any).n);
+      if (left !== 0) throw new Error('კატეგორიას ჯერ კიდევ აქვს პროდუქტები: არაფერი შეცვლილა');
       db.prepare("DELETE FROM categories WHERE id = ?").run(id);
 
       this.audit(requester.id, 'CATEGORY_DELETE', 'categories', id, {
         category_name: cat.name,
-        products_reassigned: moved.changes,
-        reassigned_to_category_id: reassignTargetId
+        products_reassigned: productCount,
+        reassigned_to_category_id: targetId
       });
+      return { deleted: true as const, moved_products: productCount, reassigned_to_category_id: targetId };
     }, this.db);
   }
 
@@ -378,6 +417,7 @@ export class ProductsService {
 
     return runInTransaction((db) => {
       const now = new Date().toISOString();
+      if (categoryId !== null) this.assertCategoryAssignable(db, categoryId);
 
       const productRes = db.prepare(
         "INSERT INTO products (name, category_id, description, base_price_tetri, base_cost_tetri, unit_type, is_active, created_at, updated_at) " +
@@ -431,9 +471,7 @@ export class ProductsService {
       if (has(input, 'name')) next.name = requireString(input.name, 120, 'პროდუქტის დასახელება');
       if (has(input, 'category_id')) {
         next.category_id = optionalId(input.category_id || null, 'კატეგორია');
-        if (next.category_id && !db.prepare("SELECT 1 FROM categories WHERE id = ?").get(next.category_id)) {
-          throw new Error('კატეგორია ვერ მოიძებნა');
-        }
+        if (next.category_id && next.category_id !== before.category_id) this.assertCategoryAssignable(db, next.category_id);
       }
       if (has(input, 'description')) next.description = optionalString(input.description, 1000, 'აღწერა');
       if (has(input, 'base_price_tetri')) {

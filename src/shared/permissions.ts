@@ -76,10 +76,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     title: 'კატეგორიები',
     description: 'კატეგორიების სია, ფერები, შექმნა და მართვა',
     permissions: [
-      { id: 'categories.view', name: 'კატეგორიების ნახვა', description: 'კატეგორიების სიის დათვალიერება' },
-      { id: 'categories.create', name: 'კატეგორიის შექმნა', description: 'ახალი კატეგორიის დამატება' },
-      { id: 'categories.edit', name: 'კატეგორიის შეცვლა', description: 'კატეგორიის სახელის, ფერის ან არქივის შეცვლა' },
-      { id: 'categories.delete', name: 'კატეგორიის წაშლა', description: 'კატეგორიის უსაფრთხო წაშლა' }
+      { id: 'categories.manage', name: 'კატეგორიების მართვა', description: 'კატეგორიის შექმნა, სახელის და ფერის შეცვლა, დაარქივება და წაშლა (პროდუქტების გადატანით)' }
     ]
   },
   {
@@ -113,8 +110,7 @@ export const DEFAULT_SELLER_PERMISSIONS: string[] = [
   'debts.repayment',
   'products.view',
   'inventory.view',
-  'inventory.view_movements',
-  'categories.view'
+  'inventory.view_movements'
 ];
 
 /** Operations that can NEVER be delegated to a seller under any circumstances */
