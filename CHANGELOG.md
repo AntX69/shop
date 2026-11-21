@@ -2,6 +2,16 @@
 
 ყველა ვერსია აწყობილია branch `claude/storepos-v1-final`-ზე. `main` = Google AI Studio M12 (`1bfb98d`).
 
+## 1.1.0-rc.2 (Release Candidate 2), 2026-11-21
+
+RC1 + დაცვა ძველი RC3 პროგრამისგან. სხვა ფუნქციონალი არ შეცვლილა. დეტალები: [docs/release/V1.1_RELEASE_READINESS.md](docs/release/V1.1_RELEASE_READINESS.md) §12.
+
+### ახალი
+- **დაცვა ძველი პროგრამისგან** (მიგრაცია 11, `src/main/db/downgradeGuard.ts`): თუ ძველი RC3 V1.1-ის ბაზას გახსნის, მონაცემებს აჩვენებს, მაგრამ ნაშთს, თვითღირებულებას, გაყიდვებს, ნისიებს, დაბრუნებებს, პროდუქტებს, კლიენტებს და პერსონალს ვეღარ შეცვლის. შემოწმებულია RC3-ის ნამდვილი პროგრამით (30/30 ოპერაცია უარყოფილი, მონაცემები უცვლელი). RC3-ს შეუძლია შესვლა და საკუთარი backup-ის აღდგენა: ეს არის დაბრუნების გზა ([docs/release/V1.1_UPGRADE_AND_ROLLBACK.md](docs/release/V1.1_UPGRADE_AND_ROLLBACK.md)).
+
+### მიგრაციები
+- 11: 57 დამცავი ტრიგერი; მონაცემები არ იცვლება.
+
 ## 1.1.0-rc.1 (Release Candidate 1), 2026-11-20
 
 Branch `feature/storepos-v1.1` (RC3 `3f4f65d`-დან). Gemini-ს დაუსრულებელი სამუშაო გადმოტანილია უცვლელად (`f215d4f`), შემოწმებულია და გასწორებულია. დეტალები: [docs/V1.1_PROGRESS.md](docs/V1.1_PROGRESS.md), მზადყოფნა: [docs/release/V1.1_RELEASE_READINESS.md](docs/release/V1.1_RELEASE_READINESS.md).
