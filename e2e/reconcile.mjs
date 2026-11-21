@@ -47,6 +47,35 @@ export function reconcileDatabase(dbFile) {
     const overReturned = one(`SELECT COUNT(*) FROM sale_items WHERE returned_quantity > quantity OR returned_quantity < 0`);
     add('sale and return lines add up to their totals; returned quantities match return lines', saleLines + returnLines + returnedQty + overReturned === 0,
       `${saleLines} sales, ${returnLines} returns, ${returnedQty} lines, ${overReturned} over-returned`);
+    // Line amounts recomputed here, independently of the app: pieces = price × quantity; kg =
+    // price per kg × grams / 1000 rounded to the nearest tetri, halves up (12.50/kg × 375 g = 4.69).
+    const lineCols = db.prepare('PRAGMA table_info(sale_items)').all().map((c) => c.name);
+    if (lineCols.includes('unit_type')) {
+      const amount = (price, qty, unit) => (unit === 'kg' ? Number((BigInt(price) * BigInt(qty) * 2n + 1000n) / 2000n) : price * qty);
+      const saleOff = db.prepare('SELECT id, unit_price_tetri p, quantity q, unit_type u, total_price_tetri t, COALESCE(discount_tetri, 0) d FROM sale_items').all()
+        .filter((r) => r.t !== amount(r.p, r.q, r.u) - r.d);
+      const retOff = db.prepare('SELECT id, unit_price_tetri p, quantity q, unit_type u, total_tetri t FROM return_items').all()
+        .filter((r) => r.t !== amount(r.p, r.q, r.u));
+      const kgLines = one("SELECT COUNT(*) FROM sale_items WHERE unit_type = 'kg'");
+      add('line amounts: price × quantity for pieces, price per kg × grams / 1000 (nearest tetri) for kg, minus line discount; return lines likewise',
+        saleOff.length + retOff.length === 0, `${saleOff.length} sale lines, ${retOff.length} return lines off; ${kgLines} kg sale lines`);
+      const overRefund = one(`SELECT COUNT(*) FROM sale_items si WHERE (SELECT COALESCE(SUM(total_tetri), 0) FROM return_items ri WHERE ri.sale_item_id = si.id) > si.total_price_tetri`);
+      const fullOff = one(`SELECT COUNT(*) FROM sale_items si WHERE si.returned_quantity = si.quantity AND si.quantity > 0
+        AND (SELECT COALESCE(SUM(total_tetri), 0) FROM return_items ri WHERE ri.sale_item_id = si.id) != si.total_price_tetri`);
+      add('refunds never exceed what was paid for a line; a fully returned line refunds exactly what was paid', overRefund + fullOff === 0, `${overRefund} over-refunded, ${fullOff} fully returned lines off`);
+    }
+    // A general repayment (no receipt chosen) is spread over the customer's open receipts,
+    // oldest receipt first: its allocations go to ascending receipt ids.
+    const allocs = db.prepare(`SELECT a.repayment_id, a.sale_id FROM debt_repayment_allocations a JOIN debt_repayments r ON r.id = a.repayment_id
+      WHERE r.sale_id IS NULL ORDER BY a.repayment_id, a.id`).all();
+    let outOfOrder = 0, multi = 0;
+    for (let i = 1; i < allocs.length; i++) {
+      if (allocs[i].repayment_id !== allocs[i - 1].repayment_id) continue;
+      multi++;
+      if (allocs[i].sale_id <= allocs[i - 1].sale_id) outOfOrder++;
+    }
+    add('general repayments are allocated to the oldest receipts first', outOfOrder === 0, `${outOfOrder} out of order; ${multi} follow-on allocations checked`);
+
     const dupReceipts = one(`SELECT COUNT(*) - COUNT(DISTINCT receipt_number) FROM sales`);
     const dupKeys = one(`SELECT COUNT(idempotency_key) - COUNT(DISTINCT idempotency_key) FROM sales`) + one(`SELECT COUNT(idempotency_key) - COUNT(DISTINCT idempotency_key) FROM returns`);
     add('no duplicate receipts or replayed requests', dupReceipts === 0 && dupKeys === 0, `${dupReceipts} receipts, ${dupKeys} keys`);
