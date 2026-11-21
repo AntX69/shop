@@ -385,7 +385,7 @@ async function main() {
   const fk = db.prepare('PRAGMA foreign_key_check').all().length;
   const schema = db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v;
   db.close();
-  check('after close: integrity_check ok, no foreign-key violations, schema v10', integrity === 'ok' && fk === 0 && schema === 10, `${integrity}, fk ${fk}, v${schema}`);
+  check('after close: integrity_check ok, no foreign-key violations, schema v11', integrity === 'ok' && fk === 0 && schema === 11, `${integrity}, fk ${fk}, v${schema}`);
   fs.writeFileSync(path.join(outDir, 'figures.json'), JSON.stringify({ seed: SEED, stats, final: final.figures, finance: fin }, null, 2));
 }
 

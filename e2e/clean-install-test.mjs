@@ -93,7 +93,7 @@ async function main() {
   const schema = db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v;
   const integrity = db.prepare('PRAGMA integrity_check').get().integrity_check;
   db.close();
-  check('new database is empty (no test customers, products, sales or PINs), schema v10, intact', Object.values(counts).every((n) => n === 0) && schema === 10 && integrity === 'ok', JSON.stringify(counts));
+  check('new database is empty (no test customers, products, sales or PINs), schema v11, intact', Object.values(counts).every((n) => n === 0) && schema === 11 && integrity === 'ok', JSON.stringify(counts));
 
   // Restart, offline (all traffic sent to a dead proxy)
   app = await launchApp(exePath, dataDir, port++, ['--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>']);

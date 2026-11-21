@@ -54,11 +54,23 @@ export function reconcileDatabase(dbFile) {
       const amount = (price, qty, unit) => (unit === 'kg' ? Number((BigInt(price) * BigInt(qty) * 2n + 1000n) / 2000n) : price * qty);
       const saleOff = db.prepare('SELECT id, unit_price_tetri p, quantity q, unit_type u, total_price_tetri t, COALESCE(discount_tetri, 0) d FROM sale_items').all()
         .filter((r) => r.t !== amount(r.p, r.q, r.u) - r.d);
-      const retOff = db.prepare('SELECT id, unit_price_tetri p, quantity q, unit_type u, total_tetri t FROM return_items').all()
-        .filter((r) => r.t !== amount(r.p, r.q, r.u));
+      // A return line refunds its share of what was paid for the sale line, counted cumulatively in
+      // whole tetri (all returns of a line add up to exactly what was paid): for a line of Q units
+      // paid T, returning c units after a already returned refunds floor(T(a+c)/Q) - floor(Ta/Q).
+      const retRows = db.prepare(`SELECT ri.id, ri.sale_item_id s, ri.quantity c, ri.total_tetri t, si.total_price_tetri T, si.quantity Q
+        FROM return_items ri JOIN sale_items si ON si.id = ri.sale_item_id ORDER BY ri.sale_item_id, ri.id`).all();
+      let lineId = null, already = 0;
+      const retOff = retRows.filter((r) => {
+        if (r.s !== lineId) { lineId = r.s; already = 0; }
+        const share = (n) => (BigInt(r.T) * BigInt(n)) / BigInt(r.Q);
+        const expected = Number(share(already + r.c) - share(already));
+        already += r.c;
+        return r.t !== expected;
+      });
       const kgLines = one("SELECT COUNT(*) FROM sale_items WHERE unit_type = 'kg'");
-      add('line amounts: price × quantity for pieces, price per kg × grams / 1000 (nearest tetri) for kg, minus line discount; return lines likewise',
-        saleOff.length + retOff.length === 0, `${saleOff.length} sale lines, ${retOff.length} return lines off; ${kgLines} kg sale lines`);
+      const kgReturns = one("SELECT COUNT(*) FROM return_items WHERE unit_type = 'kg'");
+      add('line amounts: price × quantity for pieces, price per kg × grams / 1000 (nearest tetri) for kg, minus line discount; a return line refunds its cumulative share of what was paid',
+        saleOff.length + retOff.length === 0, `${saleOff.length} sale lines, ${retOff.length} return lines off; ${kgLines} kg sale lines, ${retRows.length} return lines (${kgReturns} kg)`);
       const overRefund = one(`SELECT COUNT(*) FROM sale_items si WHERE (SELECT COALESCE(SUM(total_tetri), 0) FROM return_items ri WHERE ri.sale_item_id = si.id) > si.total_price_tetri`);
       const fullOff = one(`SELECT COUNT(*) FROM sale_items si WHERE si.returned_quantity = si.quantity AND si.quantity > 0
         AND (SELECT COALESCE(SUM(total_tetri), 0) FROM return_items ri WHERE ri.sale_item_id = si.id) != si.total_price_tetri`);
