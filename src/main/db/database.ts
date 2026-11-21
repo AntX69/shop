@@ -11,6 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
 import { runMigrations } from './migrations.ts';
+import { registerDowngradeGuardFunction } from './downgradeGuard.ts';
 
 let dbInstance: DatabaseSync | null = null;
 let currentDbPath: string = '';
@@ -100,6 +101,8 @@ export function initDatabase(customPath?: string): DatabaseSync {
   const db = new DatabaseSync(dbPath);
 
   try {
+    // V1.1 data can only be written by a connection that defines the downgrade-guard function.
+    registerDowngradeGuardFunction(db);
     // Set production reliability and integrity PRAGMAs
     db.exec('PRAGMA foreign_keys = ON;');
     db.exec('PRAGMA busy_timeout = 5000;');

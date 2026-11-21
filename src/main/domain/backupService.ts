@@ -26,6 +26,7 @@ import {
   getDb, getDatabasePath, closeDatabase, initDatabase, runInTransaction, databaseFileOf, dataDirectoryFor,
 } from '../db/database.ts';
 import { LATEST_SCHEMA_VERSION, runMigrations } from '../db/migrations.ts';
+import { registerDowngradeGuardFunction } from '../db/downgradeGuard.ts';
 import { AuditLog, SystemErrorLog, User, BackupInfo } from '../../shared/types.ts';
 import { localDate, STORE_TIME_ZONE } from '../../shared/time.ts';
 import { revokeAllSessions } from './sessions.ts';
@@ -732,7 +733,12 @@ export class BackupService {
         }
       }
       try {
-        this.db = isSingleton ? initDatabase(dbPath) : new DatabaseSync(dbPath);
+        if (isSingleton) {
+          this.db = initDatabase(dbPath);
+        } else {
+          this.db = new DatabaseSync(dbPath);
+          registerDowngradeGuardFunction(this.db);
+        }
       } catch {}
       this.logSystemError('backup:restore', `Restore failed and was rolled back: ${err?.message}`, err?.stack, 'critical', user.id);
       throw new Error(`აღდგენის შეცდომა (მიმდინარე მონაცემები უცვლელია): ${err?.message}`);

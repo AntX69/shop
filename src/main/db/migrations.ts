@@ -9,6 +9,7 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
+import { installDowngradeGuard, missingDowngradeGuardTriggers, registerDowngradeGuardFunction } from './downgradeGuard.ts';
 
 export interface Migration {
   version: number;
@@ -718,6 +719,22 @@ export const migrations: Migration[] = [
         WHERE cost_tetri IS NULL;
       `);
     }
+  },
+  {
+    version: 11,
+    name: 'downgrade_guard',
+    up: (db: DatabaseSync) => {
+      // An older StorePOS program (RC3) does not check the schema version and would write V1.1
+      // data with its own rules (no FIFO layer costs, weight products sold as pieces). From now on
+      // only a program that defines requires_storepos_v1_1() can change these tables; see
+      // db/downgradeGuard.ts. Frozen list: later tables are added by installDowngradeGuard below.
+      installDowngradeGuard(db, [
+        'categories', 'products', 'product_variants', 'product_codes', 'product_images', 'customers',
+        'inventory_movements', 'inventory_lots', 'sales', 'sale_items', 'sale_item_lots',
+        'debt_repayments', 'debt_repayment_allocations', 'debt_adjustments', 'returns', 'return_items',
+        'expenses', 'user_permissions',
+      ]);
+    }
   }
 ];
 
@@ -770,6 +787,9 @@ export function reconcileStockWithLots(db: DatabaseSync, now: string = new Date(
 }
 
 export function runMigrations(db: DatabaseSync, dbPath?: string): void {
+  // The connection may write guarded tables (see db/downgradeGuard.ts): define the guard function first.
+  registerDowngradeGuardFunction(db);
+
   // Ensure schema_migrations table exists
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -783,7 +803,10 @@ export function runMigrations(db: DatabaseSync, dbPath?: string): void {
   const appliedVersions = new Set(appliedRows.map(r => r.version));
 
   const pending = migrations.filter(m => !appliedVersions.has(m.version));
-  if (pending.length === 0) return;
+  if (pending.length === 0) {
+    ensureDowngradeGuard(db);
+    return;
+  }
 
   // Pre-migration safety backup when upgrading an existing store database
   // (a brand-new, empty database has nothing worth backing up).
@@ -811,5 +834,20 @@ export function runMigrations(db: DatabaseSync, dbPath?: string): void {
       console.error(`[DB Migration Error] Failed at migration #${migration.version}: ${migration.name}`, err);
       throw err;
     }
+  }
+  ensureDowngradeGuard(db);
+}
+
+/** Puts back any guard trigger that is missing (e.g. removed by hand with an SQLite tool). */
+function ensureDowngradeGuard(db: DatabaseSync): void {
+  if (missingDowngradeGuardTriggers(db).length === 0) return;
+  db.exec('BEGIN IMMEDIATE;');
+  try {
+    const created = installDowngradeGuard(db);
+    db.exec('COMMIT;');
+    console.warn(`[DB] Downgrade guard: ${created} missing trigger(s) restored`);
+  } catch (err) {
+    db.exec('ROLLBACK;');
+    throw err;
   }
 }
