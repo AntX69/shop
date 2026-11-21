@@ -19,7 +19,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 import { launchApp, closeApp, Cdp } from './cdp.mjs';
 import { reconcileDatabase } from './reconcile.mjs';
@@ -62,12 +62,16 @@ let seed = 7;
 const rnd = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return Math.floor(seed / 65536) % n; };
 const tbilisiDate = (d) => d.toLocaleDateString('en-CA', { timeZone: 'Asia/Tbilisi' });
 
-/** Working set / private bytes of the app's processes (main + its children). */
-function processMemory(pid) {
+/**
+ * Working set / private bytes of the app's processes (main + its children). Asynchronous: a
+ * synchronous PowerShell call froze this test for 30 s once (timeout), which left the till
+ * without requests long enough for the backup scheduler to see it as idle.
+ */
+async function processMemory(pid) {
   try {
     const ps = `$p = Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq ${pid} -or $_.ParentProcessId -eq ${pid} };` +
       `$p | Select-Object ProcessId, WorkingSetSize, PrivatePageCount, @{n='Type';e={ if ($_.CommandLine -match '--type=(\\S+)') { $matches[1] } else { 'main' } }} | ConvertTo-Json -Compress`;
-    const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', timeout: 30000 });
+    const out = await new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', timeout: 30000 }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
     const rows = [].concat(JSON.parse(out || '[]'));
     const mb = (n) => Math.round(Number(n) / 1048576);
     const by = (t) => rows.filter((r) => r.Type === t).reduce((s, r) => s + mb(r.PrivatePageCount), 0);
@@ -155,12 +159,18 @@ async function main() {
       minute: Math.round((Date.now() - startedAt) / 60000), label,
       renderer_heap_mb: +(heap.usedSize / 1048576).toFixed(1), dom_nodes: m.Nodes, js_listeners: m.JSEventListeners,
       db_mb: +(fs.statSync(dbFile).size / 1048576).toFixed(2), wal_mb: +(wal / 1048576).toFixed(2),
-      ...processMemory(app.proc.pid),
     };
     samples.push(s);
     flushAppLog();
-    log(`sample: heap ${s.renderer_heap_mb} MB, nodes ${s.dom_nodes}, app private ${s.total_private_mb} MB (main ${s.main_mb}, renderer ${s.renderer_mb}), db ${s.db_mb} MB, wal ${s.wal_mb} MB`);
+    // The process memory is read in the background, so the till keeps getting requests meanwhile.
+    const memory = processMemory(app.proc.pid).then((mem) => {
+      Object.assign(s, mem);
+      log(`sample: heap ${s.renderer_heap_mb} MB, nodes ${s.dom_nodes}, app private ${s.total_private_mb} MB (main ${s.main_mb}, renderer ${s.renderer_mb}), db ${s.db_mb} MB, wal ${s.wal_mb} MB`);
+    });
+    pendingSamples.push(memory);
+    return memory;
   };
+  const pendingSamples = [];
 
   const sell = async () => {
     const lines = [...new Map(Array.from({ length: 1 + rnd(4) }, () => {
@@ -240,7 +250,13 @@ async function main() {
   let seenAuto = 0;
   let cycle = 0;
   let closedEarly = false;
+  // Largest pause between two rounds of the loop (every round sends requests): the scheduler
+  // treats 20 s without any request as a quiet till.
+  let lastRound = Date.now(), maxRoundGap = 0, maxRoundGapAt = 0;
   while (Date.now() < endAt) {
+    const roundGap = Date.now() - lastRound;
+    if (roundGap > maxRoundGap) { maxRoundGap = roundGap; maxRoundGapAt = Math.round((Date.now() - startedAt) / 60000); }
+    lastRound = Date.now();
     if (cdp.closed || app.proc.exitCode !== null) {
       await sleep(5000);
       flushAppLog();
@@ -336,7 +352,7 @@ async function main() {
     }
     if (Date.now() - lastBackup > 10 * 60000) { await backupWithLatency(`manual #${counters.manual_backups + 1}`); lastBackup = Date.now(); }
     if (Date.now() - lastReconcile > 5 * 60000) { reconcile(`minute ${Math.round((Date.now() - startedAt) / 60000)}`); lastReconcile = Date.now(); }
-    if (Date.now() - lastSample > 5 * 60000) { await sample('periodic'); lastSample = Date.now(); }
+    if (Date.now() - lastSample > 5 * 60000) { sample('periodic').catch((err) => log(`sample failed: ${err?.message || err}`)); lastSample = Date.now(); } // not awaited: the till keeps working
 
     // automatic backup in real time
     const autos = autoBackups().length;
@@ -353,6 +369,7 @@ async function main() {
   }
 
   if (!closedEarly) await sample('end');
+  await Promise.allSettled(pendingSamples);
   const finalSummary = closedEarly ? null : await call('finance', 'finance:summary', { preset: 'all' }, OT);
   const closed = closedEarly ? { clean: false, seconds: 0 } : await closeApp(app);
   const final = reconcile('after close');
@@ -369,10 +386,15 @@ async function main() {
   check('every manual backup was written and verified', backupRuns.length >= Math.floor(minutes / 10) - 1 && backupRuns.every((b) => b.verified), backupRuns.map((b) => `${b.size_mb}MB/${b.ms}ms`).join(', '));
   const worstDuringBackup = Math.max(0, ...backupRuns.map((b) => b.max_lookup_ms_during_backup));
   check('till stays responsive during backups (slowest lookup < 3 s)', worstDuringBackup < 3000, `${worstDuringBackup} ms`);
-  // The till is never quiet in this test, so each due backup waits the maximum 30 minutes.
-  const expectedAuto = Math.max(1, Math.floor((durationMin - 31) / 60) + 1);
-  check('daily automatic backup runs in real time; while the till is busy it waits (at most 30 minutes)', counters.auto_backups_seen >= expectedAuto && autoTimes[0] >= 25,
-    `${counters.auto_backups_seen} automatic backups at minutes ${autoTimes.join(', ')}; ${dateResets} date changes`);
+  // The till is never quiet in this test (no 20 s without a request), so a due backup waits the
+  // maximum 30 minutes: due at the first check (1 minute after start) -> written at minute ~31;
+  // the date is then set back and the next 30-minute check (minute 60) finds it due -> ~91, ...
+  // (A run shorter than 31 minutes therefore expects none.)
+  const expectedTimes = [];
+  for (let t = 31; t <= durationMin; t += 60) expectedTimes.push(t);
+  check('daily automatic backup runs in real time; while the till is busy it waits the maximum 30 minutes',
+    maxRoundGap < 20000 && autoTimes.length === expectedTimes.length && autoTimes.every((m, i) => Math.abs(m - expectedTimes[i]) <= 1),
+    `${counters.auto_backups_seen} automatic backups at minutes ${autoTimes.join(', ') || '-'} (expected ${expectedTimes.join(', ') || 'none'}); ${dateResets} date changes; largest pause in the test ${(maxRoundGap / 1000).toFixed(1)} s at minute ${maxRoundGapAt}`);
   check('camera released every time the dialog closed', cameraLeaks.length === 0 && counters.camera_rounds >= Math.floor(minutes / 6) - 1, `${counters.camera_rounds} rounds, ${cameraLeaks.length} leaks`);
   const base = samples.find((s) => s.minute >= 10) || samples[0];
   const end = samples[samples.length - 1];
