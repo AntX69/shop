@@ -29,6 +29,9 @@ import {
   CheckCircle2,
   AlertTriangle
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
+import { currencySymbol } from '../../shared/currency.ts';
+import { fmtDateTime } from '../../shared/i18n/format.ts';
 
 interface DebtsViewProps {
   currentUser: User;
@@ -160,7 +163,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
       setAddress('');
       setNotes('');
     } catch (err: any) {
-      alert(err.message || 'კლიენტის დამატება ვერ მოხერხდა');
+      alert(trServer(err.message) || tr('კლიენტის დამატება ვერ მოხერხდა'));
     }
   };
 
@@ -174,17 +177,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
     try {
       amountTetri = gelToTetri(repayAmountInput);
       if (amountTetri <= 0) {
-        setRepayError('თანხა უნდა აღემატებოდეს 0-ს');
+        setRepayError(tr('თანხა უნდა აღემატებოდეს 0-ს'));
         return;
       }
     } catch (err: any) {
-      setRepayError(err.message);
+      setRepayError(trServer(err.message));
       return;
     }
 
     const currentDebt = selectedCustomer.total_debt_tetri || 0;
     if (amountTetri > currentDebt) {
-      setRepayError(`შეტანილი თანხა (${formatTetri(amountTetri)}) აღემატება მიმდინარე დავალიანებას (${formatTetri(currentDebt)})`);
+      setRepayError(tr('შეტანილი თანხა ({amount}) აღემატება მიმდინარე დავალიანებას ({amount2})', { amount: formatTetri(amountTetri), amount2: formatTetri(currentDebt) }));
       return;
     }
 
@@ -192,7 +195,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
       const targetSale = activeSales.find(s => s.id === selectedSaleIdForRepay);
       const saleRemaining = targetSale?.debt_remaining_tetri ?? 0;
       if (amountTetri > saleRemaining) {
-        setRepayError(`შეტანილი თანხა (${formatTetri(amountTetri)}) აღემატება ამ ჩეკის დარჩენილ ვალს (${formatTetri(saleRemaining)})`);
+        setRepayError(tr('შეტანილი თანხა ({amount}) აღემატება ამ ჩეკის დარჩენილ ვალს ({amount2})', { amount: formatTetri(amountTetri), amount2: formatTetri(saleRemaining) }));
         return;
       }
     }
@@ -219,7 +222,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
         await loadCustomerDetails(selectedCustomerId);
       }
     } catch (err: any) {
-      setRepayError(err.message || 'დაფარვის შენახვა ვერ მოხერხდა');
+      setRepayError(trServer(err.message) || tr('დაფარვის შენახვა ვერ მოხერხდა'));
     } finally {
       setIsSubmitting(false);
     }
@@ -244,7 +247,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
     if (!correction) return;
     setCorrectionError('');
     if (!correctionReason.trim()) {
-      setCorrectionError('მიზეზის მითითება სავალდებულოა');
+      setCorrectionError(tr('მიზეზის მითითება სავალდებულოა'));
       return;
     }
     try {
@@ -253,7 +256,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
         await invokeIpc('debts:voidRepayment', { repayment_id: correction.repayment.id, reason: correctionReason.trim() });
       } else {
         const amount = gelToTetri(correctionAmount);
-        if (amount <= 0) throw new Error('თანხა უნდა იყოს 0-ზე მეტი');
+        if (amount <= 0) throw new Error(tr('თანხა უნდა იყოს 0-ზე მეტი'));
         await invokeIpc('debts:writeOff', {
           sale_id: correction.sale.id,
           amount_tetri: amount,
@@ -266,7 +269,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
       await loadCustomers();
       if (selectedCustomerId) await loadCustomerDetails(selectedCustomerId);
     } catch (err: any) {
-      setCorrectionError(err.message || 'კორექცია ვერ შესრულდა');
+      setCorrectionError(trServer(err.message) || tr('კორექცია ვერ შესრულდა'));
     } finally {
       setIsSubmitting(false);
     }
@@ -282,15 +285,15 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
         <div>
           <h1 className="text-lg lg:text-xl font-bold text-white flex items-center space-x-2">
             <Users className="w-5 h-5 lg:w-6 lg:h-6 text-emerald-400" />
-            <span>ნისიები და კლიენტების აღრიცხვა</span>
+            <span>{tr('ნისიები და კლიენტების აღრიცხვა')}</span>
           </h1>
-          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">აქტიური დავალიანებები, სრული ქრონოლოგიური Ledger და თანხის დაფარვა</p>
+          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">{tr('აქტიური დავალიანებები, სრული ქრონოლოგიური Ledger და თანხის დაფარვა')}</p>
         </div>
 
         <div className="flex items-center space-x-3 sm:space-x-4">
           <div className="bg-slate-900 border border-slate-800 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl flex items-center space-x-2 sm:space-x-3">
             <div className="text-right">
-              <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase font-semibold">ჯამური ნისია მაღაზიაში</div>
+              <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase font-semibold">{tr('ჯამური ნისია მაღაზიაში')}</div>
               <div className="text-base sm:text-lg font-black text-amber-400 tabular-nums">{formatTetri(totalStoreDebtTetri)}</div>
             </div>
           </div>
@@ -300,8 +303,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
             className="px-3.5 py-2 sm:px-4 sm:py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
-            <span className="hidden sm:inline">ახალი კლიენტის დამატება</span>
-            <span className="sm:hidden">+ კლიენტი</span>
+            <span className="hidden sm:inline">{tr('ახალი კლიენტის დამატება')}</span>
+            <span className="sm:hidden">{tr('+ კლიენტი')}</span>
           </button>}
         </div>
       </div>
@@ -319,7 +322,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="კლიენტის ძებნა სახელით / ტელეფონით..."
+                placeholder={tr('კლიენტის ძებნა სახელით / ტელეფონით...')}
                 className="w-full pl-8 pr-3 py-1.5 sm:py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
               />
               <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2 sm:top-2.5" />
@@ -329,7 +332,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
           {/* List items */}
           <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60 min-h-0">
             {customers.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-400">კლიენტები არ მოიძებნა</div>
+              <div className="p-8 text-center text-xs text-slate-400">{tr('კლიენტები არ მოიძებნა')}</div>
             ) : (
               customers.map((c) => {
                 const isSelected = c.id === selectedCustomerId;
@@ -358,7 +361,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                         {formatTetri(c.total_debt_tetri)}
                       </div>
                       <div className="text-[10px] text-slate-400">
-                        {hasDebt ? 'დავალიანება' : 'ვალი არ აქვს'}
+                        {hasDebt ? tr('დავალიანება') : tr('ვალი არ აქვს')}
                       </div>
                     </div>
                   </div>
@@ -381,14 +384,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                     {selectedCustomer.first_name} {selectedCustomer.last_name || ''}
                   </h2>
                   <div className="text-xs text-slate-400 mt-0.5 flex flex-wrap gap-x-3 gap-y-1">
-                    {selectedCustomer.phone && <span>ტელ: {selectedCustomer.phone}</span>}
-                    {selectedCustomer.address && <span>მისამართი: {selectedCustomer.address}</span>}
+                    {selectedCustomer.phone && <span>{tr('ტელ: {phone}', { phone: selectedCustomer.phone })}</span>}
+                    {selectedCustomer.address && <span>{tr('მისამართი: {address}', { address: selectedCustomer.address })}</span>}
                   </div>
                 </div>
 
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div className="bg-slate-950 px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-xl border border-slate-800 text-right">
-                    <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase font-semibold">მიმდინარე ვალი</div>
+                    <div className="text-[9px] sm:text-[10px] text-slate-400 uppercase font-semibold">{tr('მიმდინარე ვალი')}</div>
                     <div className="text-base sm:text-lg font-black text-amber-400 tabular-nums">
                       {formatTetri(selectedCustomer.total_debt_tetri)}
                     </div>
@@ -400,7 +403,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                       className="px-3.5 py-2 sm:px-4 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
                     >
                       <Banknote className="w-4 h-4" />
-                      <span>ნისიის დაფარვა</span>
+                      <span>{tr('ნისიის დაფარვა')}</span>
                     </button>
                   )}
                 </div>
@@ -417,7 +420,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                   }`}
                 >
                   <History className="w-3.5 h-3.5" />
-                  <span>სრული Ledger (ქრონოლოგია)</span>
+                  <span>{tr('სრული Ledger (ქრონოლოგია)')}</span>
                   <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950/50 text-slate-300 ml-1">
                     {ledgerEntries.length}
                   </span>
@@ -432,7 +435,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                   }`}
                 >
                   <CreditCard className="w-3.5 h-3.5" />
-                  <span>აქტიური ნისიები (გაყიდვები)</span>
+                  <span>{tr('აქტიური ნისიები (გაყიდვები)')}</span>
                   <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950/50 text-slate-300 ml-1">
                     {activeSales.length}
                   </span>
@@ -447,7 +450,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                   }`}
                 >
                   <Receipt className="w-3.5 h-3.5" />
-                  <span>თანხის შემოტანები</span>
+                  <span>{tr('თანხის შემოტანები')}</span>
                   <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-slate-950/50 text-slate-300 ml-1">
                     {repayments.length}
                   </span>
@@ -457,22 +460,20 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
               {/* Tab Content */}
               <div className="flex-1 bg-slate-950 border border-slate-800 rounded-xl overflow-x-auto overflow-y-auto min-h-0">
                 {loadingDetails ? (
-                  <div className="p-8 text-center text-xs text-slate-400">იტვირთება მონაცემები...</div>
+                  <div className="p-8 text-center text-xs text-slate-400">{tr('იტვირთება მონაცემები...')}</div>
                 ) : detailTab === 'ledger' ? (
                   /* --- 1. FULL LEDGER TIMELINE --- */
                   ledgerEntries.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-slate-400">
-                      ამ კლიენტზე ფინანსური მოძრაობის ისტორია არ ფიქსირდება
-                    </div>
+                    <div className="p-8 text-center text-xs text-slate-400">{tr('ამ კლიენტზე ფინანსური მოძრაობის ისტორია არ ფიქსირდება')}</div>
                   ) : (
                     <table className="w-full text-left text-xs min-w-[550px]">
                       <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                         <tr>
-                          <th className="py-2.5 px-3">თარიღი</th>
-                          <th className="py-2.5 px-3">ოპერაცია</th>
-                          <th className="py-2.5 px-3">აღწერა</th>
-                          <th className="py-2.5 px-3 text-right">ცვლილება</th>
-                          <th className="py-2.5 px-3 text-right">მიმდინარე ბალანსი</th>
+                          <th className="py-2.5 px-3">{tr('თარიღი')}</th>
+                          <th className="py-2.5 px-3">{tr('ოპერაცია')}</th>
+                          <th className="py-2.5 px-3">{tr('აღწერა')}</th>
+                          <th className="py-2.5 px-3 text-right">{tr('ცვლილება')}</th>
+                          <th className="py-2.5 px-3 text-right">{tr('მიმდინარე ბალანსი')}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
@@ -484,7 +485,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                           return (
                             <tr key={e.id} className="hover:bg-slate-900/40">
                               <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                                {new Date(e.date).toLocaleString('ka-GE')}
+                                {fmtDateTime(e.date)}
                               </td>
                               <td className="py-2.5 px-3 whitespace-nowrap">
                                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -497,17 +498,17 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                                   {isDebtIncrease && <CreditCard className="w-3 h-3" />}
                                   {isRepay && <CheckCircle2 className="w-3 h-3" />}
                                   {isReturn && <RotateCcw className="w-3 h-3" />}
-                                  <span>{e.title}</span>
+                                  <span>{trServer(e.title)}</span>
                                 </span>
                               </td>
                               <td className="py-2.5 px-3 text-slate-300 max-w-xs truncate">
-                                <div className={e.voided ? 'line-through text-slate-500' : ''}>{e.description}</div>
+                                <div className={e.voided ? 'line-through text-slate-500' : ''}>{trServer(e.description)}</div>
                                 {e.notes && (e.type === 'repayment_void' || e.type === 'write_off') && (
-                                  <div className="text-[10px] text-amber-300/90">მიზეზი: {e.notes}</div>
+                                  <div className="text-[10px] text-amber-300/90">{tr('მიზეზი: {notes}', { notes: e.notes })}</div>
                                 )}
-                                {e.voided && <div className="text-[10px] text-red-400">გაუქმებულია მფლობელის მიერ</div>}
+                                {e.voided && <div className="text-[10px] text-red-400">{tr('გაუქმებულია მფლობელის მიერ')}</div>}
                                 {e.receipt_number && (
-                                  <div className="text-[10px] text-slate-500 font-mono">ქვითარი: #{e.receipt_number}</div>
+                                  <div className="text-[10px] text-slate-500 font-mono">{tr('ქვითარი: #{receipt_number}', { receipt_number: e.receipt_number })}</div>
                                 )}
                               </td>
                               <td className={`py-2.5 px-3 font-black tabular-nums text-right whitespace-nowrap text-xs sm:text-sm ${
@@ -527,18 +528,16 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 ) : detailTab === 'active_sales' ? (
                   /* --- 2. ACTIVE SALES (WITH UNPAID DEBT) --- */
                   activeSales.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-slate-400">
-                      აქტიური დაუფარავი გაყიდვები არ არის
-                    </div>
+                    <div className="p-8 text-center text-xs text-slate-400">{tr('აქტიური დაუფარავი გაყიდვები არ არის')}</div>
                   ) : (
                     <table className="w-full text-left text-xs min-w-[550px]">
                       <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                         <tr>
-                          <th className="py-2.5 px-3">თარიღი / ქვითარი</th>
-                          <th className="py-2.5 px-3">ჯამური თანხა</th>
-                          <th className="py-2.5 px-3">გადახდილი ნაღდი</th>
-                          <th className="py-2.5 px-3">დარჩენილი ვალი</th>
-                          <th className="py-2.5 px-3 text-right">მოქმედება</th>
+                          <th className="py-2.5 px-3">{tr('თარიღი / ქვითარი')}</th>
+                          <th className="py-2.5 px-3">{tr('ჯამური თანხა')}</th>
+                          <th className="py-2.5 px-3">{tr('გადახდილი ნაღდი')}</th>
+                          <th className="py-2.5 px-3">{tr('დარჩენილი ვალი')}</th>
+                          <th className="py-2.5 px-3 text-right">{tr('მოქმედება')}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
@@ -551,7 +550,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                               <td className="py-2.5 px-3">
                                 <div className="font-mono text-slate-200 font-bold">#{s.receipt_number}</div>
                                 <div className="text-[10px] text-slate-400 font-mono">
-                                  {new Date(s.created_at).toLocaleString('ka-GE')}
+                                  {fmtDateTime(s.created_at)}
                                 </div>
                               </td>
                               <td className="py-2.5 px-3 font-bold text-slate-300 tabular-nums">
@@ -565,26 +564,20 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                                   {formatTetri(remaining)}
                                 </div>
                                 {isPartiallyPaid && (
-                                  <div className="text-[10px] text-slate-500 line-through tabular-nums">
-                                    საწყისი: {formatTetri(s.debt_amount_tetri)}
-                                  </div>
+                                  <div className="text-[10px] text-slate-500 line-through tabular-nums">{tr('საწყისი: {amount}', { amount: formatTetri(s.debt_amount_tetri) })}</div>
                                 )}
                               </td>
                               <td className="py-2.5 px-3 text-right whitespace-nowrap space-x-1.5">
                                 {canCollect && canChooseReceipt && <button
                                   onClick={() => openRepayModal(s.id)}
                                   className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-700/50 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
-                                >
-                                  ამ ჩეკის დაფარვა
-                                </button>}
+                                >{tr('ამ ჩეკის დაფარვა')}</button>}
                                 {canCorrect && (
                                   <button
                                     onClick={() => openCorrection({ kind: 'writeoff', sale: s })}
                                     className="px-2.5 py-1 bg-purple-900/30 hover:bg-purple-800/40 text-purple-200 border border-purple-700/50 rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
-                                    title="ვალის ჩამოწერა"
-                                  >
-                                    ჩამოწერა
-                                  </button>
+                                    title={tr('ვალის ჩამოწერა')}
+                                  >{tr('ჩამოწერა')}</button>
                                 )}
                               </td>
                             </tr>
@@ -596,33 +589,29 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 ) : (
                   /* --- 3. REPAYMENTS LIST --- */
                   repayments.length === 0 ? (
-                    <div className="p-8 text-center text-xs text-slate-400">
-                      ნისიის დაფარვის ჩანაწერები ჯერ არ ფიქსირდება
-                    </div>
+                    <div className="p-8 text-center text-xs text-slate-400">{tr('ნისიის დაფარვის ჩანაწერები ჯერ არ ფიქსირდება')}</div>
                   ) : (
                     <table className="w-full text-left text-xs min-w-[540px]">
                       <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                         <tr>
-                          <th className="py-2.5 px-3">თარიღი</th>
-                          <th className="py-2.5 px-3">მიღებული თანხა</th>
-                          <th className="py-2.5 px-3">განაწილება ჩეკებზე</th>
-                          <th className="py-2.5 px-3">შენიშვნა</th>
-                          <th className="py-2.5 px-3">თანამშრომელი</th>
-                          {canCorrect && <th className="py-2.5 px-3 text-right">კორექცია</th>}
+                          <th className="py-2.5 px-3">{tr('თარიღი')}</th>
+                          <th className="py-2.5 px-3">{tr('მიღებული თანხა')}</th>
+                          <th className="py-2.5 px-3">{tr('განაწილება ჩეკებზე')}</th>
+                          <th className="py-2.5 px-3">{tr('შენიშვნა')}</th>
+                          <th className="py-2.5 px-3">{tr('თანამშრომელი')}</th>
+                          {canCorrect && <th className="py-2.5 px-3 text-right">{tr('კორექცია')}</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
                         {repayments.map((r) => (
                           <tr key={r.id} className={`hover:bg-slate-900/40 ${r.voided_at ? 'opacity-60' : ''}`}>
                             <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                              {new Date(r.created_at).toLocaleString('ka-GE')}
+                              {fmtDateTime(r.created_at)}
                             </td>
                             <td className={`py-2.5 px-3 font-bold text-xs sm:text-sm tabular-nums whitespace-nowrap ${r.voided_at ? 'text-slate-500 line-through' : 'text-emerald-400'}`}>
                               +{formatTetri(r.amount_tetri)}
                               {r.voided_at && (
-                                <div className="text-[10px] text-red-400 no-underline font-semibold" style={{ textDecoration: 'none' }}>
-                                  გაუქმდა: {r.void_reason}
-                                </div>
+                                <div className="text-[10px] text-red-400 no-underline font-semibold" style={{ textDecoration: 'none' }}>{tr('გაუქმდა: {void_reason}', { void_reason: r.void_reason })}</div>
                               )}
                             </td>
                             <td className="py-2.5 px-3">
@@ -638,13 +627,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                                   ))}
                                 </div>
                               ) : r.sale_id ? (
-                                <span className="text-[11px] text-slate-400 font-mono">
-                                  ჩეკი #{r.sale_id}
-                                </span>
+                                <span className="text-[11px] text-slate-400 font-mono">{tr('ჩეკი #{sale_id}', { sale_id: r.sale_id })}</span>
                               ) : (
-                                <span className="text-[11px] text-slate-500 italic">
-                                  ზოგადი (FIFO)
-                                </span>
+                                <span className="text-[11px] text-slate-500 italic">{tr('ზოგადი (FIFO)')}</span>
                               )}
                             </td>
                             <td className="py-2.5 px-3 text-slate-300">
@@ -659,10 +644,8 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                                   <button
                                     onClick={() => openCorrection({ kind: 'void', repayment: r })}
                                     className="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/50 text-red-300 border border-red-800/50 rounded-lg text-[11px] font-bold cursor-pointer"
-                                    title="შეცდომით შეტანილი დაფარვის გაუქმება"
-                                  >
-                                    გაუქმება
-                                  </button>
+                                    title={tr('შეცდომით შეტანილი დაფარვის გაუქმება')}
+                                  >{tr('გაუქმება')}</button>
                                 )}
                               </td>
                             )}
@@ -676,9 +659,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
 
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-xs">
-              აირჩიეთ კლიენტი სიიდან დეტალების სანახავად
-            </div>
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-xs">{tr('აირჩიეთ კლიენტი სიიდან დეტალების სანახავად')}</div>
           )}
         </div>
 
@@ -697,7 +678,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
             <div className="flex justify-between items-center border-b border-slate-800 p-4 shrink-0">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <Banknote className="w-5 h-5 text-emerald-400" />
-                <span>ნისიის დაფარვა</span>
+                <span>{tr('ნისიის დაფარვა')}</span>
               </h3>
               <button onClick={() => setIsRepayOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
@@ -724,11 +705,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                   <form id="repay-form" onSubmit={handleRepaySubmit} className="space-y-3">
                     <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs">
                       <div className="flex justify-between items-center mb-1">
-                        <span className="text-slate-400">კლიენტი:</span>
+                        <span className="text-slate-400">{tr('კლიენტი:')}</span>
                         <span className="font-bold text-white">{selectedCustomer.first_name} {selectedCustomer.last_name || ''}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-400">საერთო ვალი:</span>
+                        <span className="text-slate-400">{tr('საერთო ვალი:')}</span>
                         <span className="font-black text-amber-400 tabular-nums text-sm">
                           {formatTetri(selectedCustomer.total_debt_tetri)}
                         </span>
@@ -738,7 +719,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                     {targetSale ? (
                       <div className="bg-emerald-950/40 border border-emerald-800/80 rounded-xl p-2.5 text-xs">
                         <div className="flex items-center justify-between">
-                          <span className="text-emerald-400 font-bold">კონკრეტული ჩეკი #{targetSale.receipt_number}</span>
+                          <span className="text-emerald-400 font-bold">{tr('კონკრეტული ჩეკი #{receipt_number}', { receipt_number: targetSale.receipt_number })}</span>
                           <button
                             type="button"
                             onClick={() => {
@@ -746,12 +727,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                               setRepayAmountInput((((selectedCustomer.total_debt_tetri || 0)) / 100).toFixed(2));
                             }}
                             className="text-[10px] text-slate-400 hover:text-white underline cursor-pointer"
-                          >
-                            FIFO-ზე გადართვა
-                          </button>
+                          >{tr('FIFO-ზე გადართვა')}</button>
                         </div>
                         <div className="text-slate-300 mt-1 flex justify-between">
-                          <span>ამ ჩეკის დარჩენილი ვალი:</span>
+                          <span>{tr('ამ ჩეკის დარჩენილი ვალი:')}</span>
                           <span className="font-bold text-amber-400 tabular-nums">
                             {formatTetri(targetSale.debt_remaining_tetri ?? targetSale.debt_amount_tetri)}
                           </span>
@@ -759,15 +738,13 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                       </div>
                     ) : (
                       <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
-                        <span>განაწილების ტიპი:</span>
-                        <span className="text-emerald-400 font-medium">ავტომატური FIFO (უძველესიდან)</span>
+                        <span>{tr('განაწილების ტიპი:')}</span>
+                        <span className="text-emerald-400 font-medium">{tr('ავტომატური FIFO (უძველესიდან)')}</span>
                       </div>
                     )}
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">
-                        შემოტანილი თანხა (₾) *
-                      </label>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('შემოტანილი თანხა ({currency}) *', { currency: currencySymbol() })}</label>
                       <EditableMoneyInput
                         required
                         autoFocus
@@ -782,9 +759,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                           type="button"
                           onClick={() => setRepayAmountInput((maxRepayTetri / 100).toFixed(2))}
                           className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
-                        >
-                          სრული დაფარვა
-                        </button>
+                        >{tr('სრული დაფარვა')}</button>
                         {[10, 20, 50, 100].map(amt => (
                           <button
                             key={amt}
@@ -792,19 +767,19 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                             onClick={() => setRepayAmountInput(amt.toFixed(2))}
                             className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
                           >
-                            {amt} ₾
+                            {amt} {currencySymbol()}
                           </button>
                         ))}
                       </div>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-300 mb-1">შენიშვნა</label>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('შენიშვნა')}</label>
                       <input
                         type="text"
                         value={repayNotes}
                         onChange={(e) => setRepayNotes(e.target.value)}
-                        placeholder="მაგ. ნაწილობრივი გადახდა"
+                        placeholder={tr('მაგ. ნაწილობრივი გადახდა')}
                         className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                       />
                     </div>
@@ -818,16 +793,14 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 type="button"
                 onClick={() => setIsRepayOpen(false)}
                 className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700 cursor-pointer"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="submit"
                 form="repay-form"
                 disabled={isSubmitting}
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40 disabled:opacity-50 cursor-pointer"
               >
-                {isSubmitting ? 'ინახება...' : 'დაფარვა'}
+                {isSubmitting ? tr('ინახება...') : tr('დაფარვა')}
               </button>
             </div>
           </div>
@@ -840,32 +813,32 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
           onKeyDown={(e) => { if (e.key === 'Escape') setCorrection(null); e.stopPropagation(); }}>
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-5 shadow-2xl space-y-3">
             <h3 className="text-base font-bold text-white">
-              {correction.kind === 'void' ? 'დაფარვის გაუქმება' : 'ნისიის ჩამოწერა'}
+              {correction.kind === 'void' ? tr('დაფარვის გაუქმება') : tr('ნისიის ჩამოწერა')}
             </h3>
             <p className="text-xs text-slate-400 leading-relaxed">
               {correction.kind === 'void'
-                ? `დაფარვა ${formatTetri(correction.repayment.amount_tetri)} (${new Date(correction.repayment.created_at).toLocaleString('ka-GE')}) გაუქმდება. ჩანაწერი არ წაიშლება — ისტორიაში დარჩება მონიშნული, ვალი კი შესაბამისად გაიზრდება.`
-                : `ჩეკი #${correction.sale.receipt_number}: დარჩენილი ვალი ${formatTetri(correction.sale.debt_remaining_tetri ?? 0)}. ჩამოწერილი თანხა ფინანსებში აისახება ზარალად.`}
+                ? tr('დაფარვა {amount} ({date}) გაუქმდება. ჩანაწერი არ წაიშლება — ისტორიაში დარჩება მონიშნული, ვალი კი შესაბამისად გაიზრდება.', { amount: formatTetri(correction.repayment.amount_tetri), date: fmtDateTime(correction.repayment.created_at) })
+                : tr('ჩეკი #{receipt_number}: დარჩენილი ვალი {amount}. ჩამოწერილი თანხა ფინანსებში აისახება ზარალად.', { receipt_number: correction.sale.receipt_number, amount: formatTetri(correction.sale.debt_remaining_tetri ?? 0) })}
             </p>
             {correction.kind === 'writeoff' && (
               <div>
-                <label className="block text-[11px] font-semibold text-slate-400 mb-1">ჩამოსაწერი თანხა (₾)</label>
+                <label className="block text-[11px] font-semibold text-slate-400 mb-1">{tr('ჩამოსაწერი თანხა ({currency})', { currency: currencySymbol() })}</label>
                 <input inputMode="decimal" value={correctionAmount} onChange={(e) => setCorrectionAmount(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold tabular-nums focus:outline-none focus:border-purple-500" />
               </div>
             )}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-400 mb-1">მიზეზი (სავალდებულო)</label>
+              <label className="block text-[11px] font-semibold text-slate-400 mb-1">{tr('მიზეზი (სავალდებულო)')}</label>
               <input autoFocus value={correctionReason} onChange={(e) => setCorrectionReason(e.target.value)} maxLength={300}
-                placeholder={correction.kind === 'void' ? 'მაგ. თანხა ორჯერ შეიყვანეს' : 'მაგ. უიმედო ვალი'}
+                placeholder={correction.kind === 'void' ? tr('მაგ. თანხა ორჯერ შეიყვანეს') : tr('მაგ. უიმედო ვალი')}
                 className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:border-purple-500" />
             </div>
             {correctionError && <div className="p-2 bg-red-950/60 border border-red-800/60 rounded-lg text-red-300 text-xs">{correctionError}</div>}
             <div className="flex gap-2 pt-1">
-              <button onClick={() => setCorrection(null)} className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold cursor-pointer">გაუქმება</button>
+              <button onClick={() => setCorrection(null)} className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-bold cursor-pointer">{tr('გაუქმება')}</button>
               <button onClick={submitCorrection} disabled={isSubmitting}
                 className="flex-1 py-2 bg-purple-700 hover:bg-purple-600 disabled:opacity-50 text-white rounded-xl text-xs font-bold cursor-pointer">
-                {isSubmitting ? 'სრულდება...' : 'დადასტურება'}
+                {isSubmitting ? tr('სრულდება...') : tr('დადასტურება')}
               </button>
             </div>
           </div>
@@ -883,7 +856,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
         >
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="flex justify-between items-center border-b border-slate-800 p-4 shrink-0">
-              <h3 className="text-base font-bold text-white">ახალი კლიენტის რეგისტრაცია</h3>
+              <h3 className="text-base font-bold text-white">{tr('ახალი კლიენტის რეგისტრაცია')}</h3>
               <button onClick={() => setIsNewCustOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
@@ -892,54 +865,54 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
             <div className="p-4 sm:p-5 overflow-y-auto flex-1 min-h-0">
               <form id="new-cust-form" onSubmit={handleCreateCustomer} className="space-y-3">
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">სახელი *</label>
+                  <label className="block text-xs text-slate-400 mb-1">{tr('სახელი *')}</label>
                   <input
                     type="text"
                     required
                     autoFocus
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="მაგ. დავით"
+                    placeholder={tr('მაგ. დავით')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">გვარი</label>
+                  <label className="block text-xs text-slate-400 mb-1">{tr('გვარი')}</label>
                   <input
                     type="text"
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
-                    placeholder="მაგ. ბერიძე"
+                    placeholder={tr('მაგ. ბერიძე')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">ტელეფონი</label>
+                  <label className="block text-xs text-slate-400 mb-1">{tr('ტელეფონი')}</label>
                   <input
                     type="text"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    placeholder="მაგ. 599 12 34 56"
+                    placeholder={tr('მაგ. 599 12 34 56')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">მისამართი</label>
+                  <label className="block text-xs text-slate-400 mb-1">{tr('მისამართი')}</label>
                   <input
                     type="text"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
-                    placeholder="მაგ. რუსთაველის 15"
+                    placeholder={tr('მაგ. რუსთაველის 15')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-400 mb-1">შენიშვნა</label>
+                  <label className="block text-xs text-slate-400 mb-1">{tr('შენიშვნა')}</label>
                   <input
                     type="text"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
-                    placeholder="სურვილისამებრ"
+                    placeholder={tr('სურვილისამებრ')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none"
                   />
                 </div>
@@ -951,16 +924,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({ currentUser }) => {
                 type="button"
                 onClick={() => setIsNewCustOpen(false)}
                 className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700 cursor-pointer"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="submit"
                 form="new-cust-form"
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40 cursor-pointer"
-              >
-                დამატება
-              </button>
+              >{tr('დამატება')}</button>
             </div>
           </div>
         </div>

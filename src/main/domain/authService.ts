@@ -20,6 +20,17 @@ import { generateSalt, hashPin, isValidPin, pinHashNeedsUpgrade, verifyPin } fro
 import { ALL_PERMISSION_IDS, DEFAULT_SELLER_PERMISSIONS, userCan } from '../../shared/permissions.ts';
 import { BackupService } from './backupService.ts';
 import { oneOf, requireId, requireString } from './validation.ts';
+import { applyShopSettings, hasMoneyRecords } from '../db/database.ts';
+import { isLang, Lang } from '../../shared/i18n/index.ts';
+import { Currency, isCurrency } from '../../shared/currency.ts';
+import { isValidTimeZone } from '../../shared/time.ts';
+
+/** First-run choices: interface language of the owner, shop currency and time zone. */
+export interface ShopSetup {
+  language?: Lang | null;
+  currency?: Currency;
+  timezone?: string;
+}
 import {
   createSession, getActiveSession, refreshSessionUser, revokeAllSessions, revokeSession, revokeUserSessions,
   SESSION_IDLE_MS, SESSION_MAX_AGE_MS,
@@ -51,6 +62,7 @@ interface UserRow {
   created_at: string;
   failed_pin_attempts: number;
   locked_until: string | null;
+  ui_language: string | null;
 }
 
 export class AuthService {
@@ -74,7 +86,7 @@ export class AuthService {
 
   private loadUser(userId: number): UserRow | undefined {
     return this.db.prepare(
-      "SELECT id, name, role, pin_hash, pin_salt, is_active, created_at, failed_pin_attempts, locked_until FROM users WHERE id = ?"
+      "SELECT id, name, role, pin_hash, pin_salt, is_active, created_at, failed_pin_attempts, locked_until, ui_language FROM users WHERE id = ?"
     ).get(userId) as UserRow | undefined;
   }
 
@@ -85,7 +97,8 @@ export class AuthService {
       role: row.role,
       is_active: row.is_active,
       permissions: this.getUserPermissions(row.id),
-      created_at: row.created_at
+      created_at: row.created_at,
+      language: isLang(row.ui_language) ? row.ui_language : null,
     };
   }
 
@@ -224,7 +237,7 @@ export class AuthService {
    */
   getActiveUsers(): User[] {
     return this.db.prepare(
-      "SELECT id, name, role, is_active, created_at FROM users WHERE is_active = 1 ORDER BY role DESC, id ASC"
+      "SELECT id, name, role, is_active, created_at, ui_language AS language FROM users WHERE is_active = 1 ORDER BY role DESC, id ASC"
     ).all() as unknown as User[];
   }
 
@@ -241,7 +254,7 @@ export class AuthService {
   /**
    * First-run onboarding: registers the store owner with initial PIN.
    */
-  setupInitialOwner(name: string, pin: string): UserSession {
+  setupInitialOwner(name: string, pin: string, shop: ShopSetup = {}): UserSession {
     if (this.hasOwner()) {
       throw new Error('მფლობელის ანგარიში უკვე შექმნილია. გთხოვთ გაიაროთ ავტორიზაცია.');
     }
@@ -256,26 +269,61 @@ export class AuthService {
       throw new Error('PIN კოდი უნდა შედგებოდეს 4-დან 6 ციფრისგან');
     }
 
+    // Language, currency and time zone of the new shop (chosen on the first screen).
+    const language = shop.language === undefined || shop.language === null ? null : shop.language;
+    if (language !== null && !isLang(language)) throw new Error('ენა არასწორია');
+    if (shop.currency !== undefined && !isCurrency(shop.currency)) throw new Error('ვალუტა არასწორია');
+    if (shop.timezone !== undefined && !isValidTimeZone(shop.timezone)) throw new Error('დროის სარტყელი არასწორია');
+
     const salt = generateSalt();
     const hash = hashPin(pin, salt);
     const now = new Date().toISOString();
 
-    const insertResult = this.db.prepare(
-      "INSERT INTO users (name, role, pin_hash, pin_salt, is_active, created_at) VALUES (?, 'owner', ?, ?, 1, ?)"
-    ).run(trimmedName, hash, salt, now);
+    const newOwnerId = runInTransaction((db) => {
+      const insertResult = db.prepare(
+        "INSERT INTO users (name, role, pin_hash, pin_salt, is_active, created_at, ui_language) VALUES (?, 'owner', ?, ?, 1, ?, ?)"
+      ).run(trimmedName, hash, salt, now, language);
+      const id = Number(insertResult.lastInsertRowid);
+      const setting = db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)");
+      // The currency can only be chosen here while the shop has no money records yet.
+      if (shop.currency !== undefined) {
+        if (shop.currency !== this.currentSetting('currency', 'GEL') && hasMoneyRecords(db)) {
+          throw new Error('მაღაზიას უკვე აქვს ფულადი ჩანაწერები: ვალუტის შეცვლა შეუძლებელია');
+        }
+        setting.run('currency', shop.currency);
+      }
+      if (shop.timezone !== undefined) setting.run('timezone', shop.timezone);
+      db.prepare(
+        "INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (?, 'OWNER_SETUP', 'users', ?, ?, ?)"
+      ).run(id, String(id), `Initial owner created (language ${language ?? 'device'}, currency ${shop.currency ?? 'unchanged'}, time zone ${shop.timezone ?? 'unchanged'})`, now);
+      return id;
+    }, this.db);
+    applyShopSettings(this.db);
 
-    const newOwnerId = Number(insertResult.lastInsertRowid);
     const user: User = {
       id: newOwnerId,
       name: trimmedName,
       role: 'owner',
       is_active: 1,
-      created_at: now
+      created_at: now,
+      language,
     };
 
-    this.audit(newOwnerId, 'OWNER_SETUP', String(newOwnerId), 'Initial owner created');
-
     return createSession(user);
+  }
+
+  private currentSetting(key: string, fallback: string): string {
+    const row = this.db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row?.value ?? fallback;
+  }
+
+  /** Any user chooses their own interface language (it follows them to every computer screen). */
+  setOwnLanguage(requester: User, language: unknown): User {
+    if (!isLang(language)) throw new Error('ენა არასწორია');
+    this.db.prepare('UPDATE users SET ui_language = ? WHERE id = ?').run(language, requester.id);
+    const row = this.loadUser(requester.id);
+    if (!row) throw new Error('მომხმარებელი ვერ მოიძებნა');
+    return this.toUser(row);
   }
 
   /**

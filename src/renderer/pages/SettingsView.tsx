@@ -38,13 +38,21 @@ import {
   Archive,
   Eye
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
+import { CURRENCIES, Currency, isCurrency } from '../../shared/currency.ts';
+import { currencyName, timeZoneOptions } from '../utils/shopLocale.ts';
+import { fmtDateTime } from '../../shared/i18n/format.ts';
 
 interface SettingsViewProps {
   currentUser: User;
   onStoreNameChanged: (name: string) => void;
+  /** The currency or time zone was saved: amounts and dates are drawn again. */
+  onShopSettingsChanged?: () => void;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStoreNameChanged }) => {
+const DEFAULT_STORE_NAME = 'ჩემი მაღაზია';
+
+export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStoreNameChanged, onShopSettingsChanged }) => {
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [storeNameInput, setStoreNameInput] = useState<string>('');
   const [backupDirInput, setBackupDirInput] = useState<string>('');
@@ -52,6 +60,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
   const [retentionInput, setRetentionInput] = useState<string>('30');
   const [lockMinutesInput, setLockMinutesInput] = useState<string>('15');
   const [autoBackupEnabled, setAutoBackupEnabled] = useState<boolean>(true);
+  const [currencyInput, setCurrencyInput] = useState<Currency>('GEL');
+  const [timezoneInput, setTimezoneInput] = useState<string>('Asia/Tbilisi');
+  // The currency can change only while the shop has no money records (amounts are never converted).
+  const [canChangeCurrency, setCanChangeCurrency] = useState<boolean>(false);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   
   const [backupsList, setBackupsList] = useState<BackupInfo[]>([]);
@@ -74,7 +86,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
     e.preventDefault();
     setResetError('');
     if (!resetPinInput.trim()) {
-      setResetError('გთხოვთ შეიყვანოთ მფლობელის PIN კოდი');
+      setResetError(tr('გთხოვთ შეიყვანოთ მფლობელის PIN კოდი'));
       return;
     }
     try {
@@ -82,7 +94,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
       await invokeIpc('auth:resetStoreDatabase', { pin: resetPinInput.trim() });
       window.location.reload();
     } catch (err: any) {
-      setResetError(err.message || 'ბაზის გასუფთავება უარყოფილია');
+      setResetError(trServer(err.message) || tr('ბაზის გასუფთავება უარყოფილია'));
     } finally {
       setIsResetting(false);
     }
@@ -100,7 +112,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
           : Promise.resolve([])
       ]);
       setSettings(sets);
-      setStoreNameInput(sets.store_name || 'ჩემი მაღაზია');
+      setStoreNameInput(sets.store_name && sets.store_name !== DEFAULT_STORE_NAME ? sets.store_name : tr(DEFAULT_STORE_NAME));
+      setCurrencyInput(isCurrency(sets.currency) ? sets.currency : 'GEL');
+      setTimezoneInput(sets.timezone || 'Asia/Tbilisi');
+      invokeIpc<{ allowed: boolean }>('backup:canChangeCurrency').then((r) => setCanChangeCurrency(!!r.allowed)).catch(() => setCanChangeCurrency(false));
       setBackupDirInput(sets.backup_directory || '');
       setMirrorDirInput(sets.backup_mirror_directory || '');
       setRetentionInput(sets.backup_retention_count || '30');
@@ -125,7 +140,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
     try {
       await invokeIpc('backup:updateSettings', {
         settings: {
-          store_name: storeNameInput.trim() || 'ჩემი მაღაზია',
+          store_name: storeNameInput.trim() || tr(DEFAULT_STORE_NAME),
+          currency: currencyInput,
+          timezone: timezoneInput,
           backup_directory: backupDirInput.trim(),
           backup_mirror_directory: mirrorDirInput.trim(),
           backup_retention_count: retentionInput.trim() || '30',
@@ -134,11 +151,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         }
       });
       onStoreNameChanged(storeNameInput.trim());
-      setStatusMsg({ type: 'success', text: 'პარამეტრები და სარეზერვო კონფიგურაცია წარმატებით შეინახა!' });
+      onShopSettingsChanged?.();
+      setStatusMsg({ type: 'success', text: tr('პარამეტრები და სარეზერვო კონფიგურაცია წარმატებით შეინახა!') });
       setTimeout(() => setStatusMsg(null), 3000);
       loadData();
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.message || 'შენახვის შეცდომა' });
+      setStatusMsg({ type: 'error', text: trServer(err.message) || tr('შენახვის შეცდომა') });
     }
   };
 
@@ -154,15 +172,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         mirror_error?: string | null;
       }>('backup:create');
       const mirror = backup.mirror_filepath
-        ? ` ასლი ასევე ჩაიწერა: ${backup.mirror_filepath}.`
-        : backup.mirror_error ? ` დამატებით საქაღალდეში ჩაწერა ვერ მოხერხდა: ${backup.mirror_error}.` : '';
+        ? tr(' ასლი ასევე ჩაიწერა: {mirror_filepath}.', { mirror_filepath: backup.mirror_filepath })
+        : backup.mirror_error ? tr(' დამატებით საქაღალდეში ჩაწერა ვერ მოხერხდა: {mirror_error}.', { mirror_error: backup.mirror_error }) : '';
       setStatusMsg({
         type: backup.mirror_error ? 'error' : 'success',
-        text: `სარეზერვო ასლი შეიქმნა: ${backup.filepath} (${(backup.size_bytes / 1024).toFixed(1)} KB).${mirror}`
+        text: tr('სარეზერვო ასლი შეიქმნა: {filepath} ({toFixed} KB).{mirror}', { filepath: backup.filepath, toFixed: (backup.size_bytes / 1024).toFixed(1), mirror })
       });
       loadData();
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.message || 'სარეზერვო ასლის შექმნა ვერ მოხერხდა' });
+      setStatusMsg({ type: 'error', text: trServer(err.message) || tr('სარეზერვო ასლის შექმნა ვერ მოხერხდა') });
     } finally {
       setIsBusy(false);
     }
@@ -172,13 +190,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
     try {
       const ran = await invokeIpc<boolean>('backup:runDaily');
       if (ran) {
-        setStatusMsg({ type: 'success', text: 'დღევანდელი ავტომატური სარეზერვო ასლი შეიქმნა.' });
+        setStatusMsg({ type: 'success', text: tr('დღევანდელი ავტომატური სარეზერვო ასლი შეიქმნა.') });
       } else {
-        setStatusMsg({ type: 'success', text: 'დღევანდელი ავტომატური ასლი უკვე არსებობს (ან ავტომატური რეზერვირება გამორთულია).' });
+        setStatusMsg({ type: 'success', text: tr('დღევანდელი ავტომატური ასლი უკვე არსებობს (ან ავტომატური რეზერვირება გამორთულია).') });
       }
       loadData();
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.message || 'ავტომატური რეზერვირების შეცდომა' });
+      setStatusMsg({ type: 'error', text: trServer(err.message) || tr('ავტომატური რეზერვირების შეცდომა') });
     }
   };
 
@@ -187,7 +205,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
       const res = await invokeIpc<{ path: string | null }>('backup:chooseDirectory', { purpose });
       if (res.path) (purpose === 'primary' ? setBackupDirInput : setMirrorDirInput)(res.path);
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.message || 'საქაღალდის არჩევა ვერ მოხერხდა' });
+      setStatusMsg({ type: 'error', text: trServer(err.message) || tr('საქაღალდის არჩევა ვერ მოხერხდა') });
     }
   };
 
@@ -195,16 +213,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
     try {
       await invokeIpc('backup:openFolder');
     } catch (err: any) {
-      setStatusMsg({ type: 'error', text: err.message || 'საქაღალდის გახსნა ვერ მოხერხდა' });
+      setStatusMsg({ type: 'error', text: trServer(err.message) || tr('საქაღალდის გახსნა ვერ მოხერხდა') });
     }
   };
 
   const confirmRestore = (label: string) =>
-    confirm(`ყურადღება! "${label}"-დან აღდგენა ჩაანაცვლებს მიმდინარე მონაცემებს.\n\nმანამდე ავტომატურად შეიქმნება მიმდინარე მდგომარეობის სარეზერვო ასლი. შეცდომის შემთხვევაში არაფერი შეიცვლება.\n\nნამდვილად გსურთ გაგრძელება?`);
+    confirm(tr('ყურადღება! "{label}"-დან აღდგენა ჩაანაცვლებს მიმდინარე მონაცემებს.\n\nმანამდე ავტომატურად შეიქმნება მიმდინარე მდგომარეობის სარეზერვო ასლი. შეცდომის შემთხვევაში არაფერი შეიცვლება.\n\nნამდვილად გსურთ გაგრძელება?', { label }));
 
   const afterRestore = (res: { message?: string; cancelled?: boolean } | null) => {
     if (!res || res.cancelled) return;
-    alert(res.message || 'ბაზა წარმატებით აღდგა. გთხოვთ ხელახლა შეხვიდეთ.');
+    alert(trServer(res.message) || tr('ბაზა წარმატებით აღდგა. გთხოვთ ხელახლა შეხვიდეთ.'));
     window.location.reload();
   };
 
@@ -214,19 +232,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
       setIsBusy(true);
       afterRestore(await invokeIpc<{ message: string }>('backup:restoreFromList', { filename }));
     } catch (err: any) {
-      alert(err.message || 'აღდგენის შეცდომა');
+      alert(trServer(err.message) || tr('აღდგენის შეცდომა'));
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleRestoreFromFileDialog = async () => {
-    if (!confirmRestore('არჩეული ფაილი')) return;
+    if (!confirmRestore(tr('არჩეული ფაილი'))) return;
     try {
       setIsBusy(true);
       afterRestore(await invokeIpc<{ message?: string; cancelled?: boolean }>('backup:restoreFromFile'));
     } catch (err: any) {
-      alert(err.message || 'აღდგენის შეცდომა');
+      alert(trServer(err.message) || tr('აღდგენის შეცდომა'));
     } finally {
       setIsBusy(false);
     }
@@ -241,27 +259,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
       if (res.is_valid) {
         const statsStr = res.stats 
-          ? ` (პროდუქცია: ${res.stats.products_count}, გაყიდვები: ${res.stats.sales_count}, მომხმარებლები: ${res.stats.customers_count})`
+          ? tr(' (პროდუქცია: {products_count}, გაყიდვები: {sales_count}, მომხმარებლები: {customers_count})', { products_count: res.stats.products_count, sales_count: res.stats.sales_count, customers_count: res.stats.customers_count })
           : '';
-        alert(`ვალიდაცია წარმატებულია!\n\nსტატუსი: ${res.integrity_status}${statsStr}`);
+        alert(tr('ვალიდაცია წარმატებულია!\n\nსტატუსი: {integrity_status}{statsStr}', { integrity_status: res.integrity_status, statsStr }));
       } else {
-        alert(`ყურადღება! ასლის შემოწმება ჩაიშალა:\n\n${res.integrity_status}`);
+        alert(tr('ყურადღება! ასლის შემოწმება ჩაიშალა:\n\n{integrity_status}', { integrity_status: res.integrity_status }));
       }
     } catch (err: any) {
-      alert(`შემოწმების შეცდომა: ${err.message}`);
+      alert(tr('შემოწმების შეცდომა: {message}', { message: trServer(err.message) }));
     } finally {
       setVerifyingFilename(null);
     }
   };
 
   const handleClearErrorLogs = async () => {
-    if (!confirm('ნამდვილად გსურთ შეცდომების ლოგის გასუფთავება?')) return;
+    if (!confirm(tr('ნამდვილად გსურთ შეცდომების ლოგის გასუფთავება?'))) return;
     try {
       await invokeIpc('system:clearErrorLogs');
       setErrorLogs([]);
-      setStatusMsg({ type: 'success', text: 'შეცდომების ჟურნალი წარმატებით გასუფთავდა' });
+      setStatusMsg({ type: 'success', text: tr('შეცდომების ჟურნალი წარმატებით გასუფთავდა') });
     } catch (err: any) {
-      alert(err.message || 'შეცდომა');
+      alert(trServer(err.message) || tr('შეცდომა'));
     }
   };
 
@@ -286,10 +304,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         }
 
         const res = await invokeIpc<{ success: boolean; message: string }>('backup:restore', { base64Data: payloadData });
-        alert(res?.message || 'ბაზა წარმატებით აღდგა! გვერდი გადაიტვირთება.');
+        alert(trServer(res?.message) || tr('ბაზა წარმატებით აღდგა! გვერდი გადაიტვირთება.'));
         window.location.reload();
       } catch (err: any) {
-        alert(err.message || 'აღდგენის შეცდომა');
+        alert(trServer(err.message) || tr('აღდგენის შეცდომა'));
       }
     };
     reader.readAsDataURL(file);
@@ -303,11 +321,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
         <div>
           <h1 className="text-lg lg:text-xl font-bold text-white flex items-center space-x-2">
             <Settings className="w-5 h-5 lg:w-6 lg:h-6 text-emerald-400" />
-            <span>პარამეტრები, საიმედო რეზერვირება და დიაგნოსტიკა</span>
+            <span>{tr('პარამეტრები, საიმედო რეზერვირება და დიაგნოსტიკა')}</span>
           </h1>
-          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">
-            მონაცემთა ბაზის მთლიანობა, ფოტოების შენარჩუნება, ავტომატური რეზერვირება და უსაფრთხო აღდგენა
-          </p>
+          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">{tr('მონაცემთა ბაზის მთლიანობა, ფოტოების შენარჩუნება, ავტომატური რეზერვირება და უსაფრთხო აღდგენა')}</p>
         </div>
       </div>
 
@@ -332,12 +348,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-xl">
             <h2 className="text-xs sm:text-sm font-bold text-white flex items-center space-x-2 mb-3 sm:mb-4">
               <Store className="w-4 h-4 text-emerald-400" />
-              <span>მაღაზიის პარამეტრები და ლოკაცია</span>
+              <span>{tr('მაღაზიის პარამეტრები და ლოკაცია')}</span>
             </h2>
 
             <form onSubmit={handleSaveSettings} className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">მაღაზიის სახელი</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('მაღაზიის სახელი')}</label>
                 <input
                   type="text"
                   value={storeNameInput}
@@ -348,33 +364,51 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
               <div className="grid grid-cols-2 gap-3 text-xs">
                 <div>
-                  <label className="block text-slate-400 mb-1">ვალუტა</label>
-                  <div className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white font-mono font-bold">
-                    ₾ (GEL)
-                  </div>
+                  <label htmlFor="settings-currency" className="block text-slate-400 mb-1">{tr('ვალუტა')}</label>
+                  <select
+                    id="settings-currency"
+                    data-testid="settings-currency"
+                    value={currencyInput}
+                    disabled={!canChangeCurrency}
+                    onChange={(e) => setCurrencyInput(e.target.value as Currency)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-bold focus:border-emerald-500 focus:outline-none disabled:opacity-70 disabled:cursor-not-allowed"
+                  >
+                    {CURRENCIES.map((c) => <option key={c} value={c}>{currencyName(c)}</option>)}
+                  </select>
                 </div>
                 <div>
-                  <label className="block text-slate-400 mb-1">დროის სარტყელი</label>
-                  <div className="px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white font-mono">
-                    Asia/Tbilisi
-                  </div>
+                  <label htmlFor="settings-timezone" className="block text-slate-400 mb-1">{tr('დროის სარტყელი')}</label>
+                  <select
+                    id="settings-timezone"
+                    data-testid="settings-timezone"
+                    value={timezoneInput}
+                    onChange={(e) => setTimezoneInput(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono focus:border-emerald-500 focus:outline-none"
+                  >
+                    {timeZoneOptions(timezoneInput).map((z) => <option key={z} value={z}>{z}</option>)}
+                  </select>
                 </div>
               </div>
+              <p className="text-[11px] text-slate-400" data-testid="currency-note">
+                {canChangeCurrency
+                  ? tr('ვალუტის შეცვლა შესაძლებელია, სანამ მაღაზიას გაყიდვა, მარაგის მიღება, ხარჯი ან ნისიის ჩანაწერი არ აქვს. თანხები არ გადაიყვანება.')
+                  : tr('მაღაზიას უკვე აქვს ფულადი ჩანაწერები, ამიტომ ვალუტა აღარ იცვლება: თანხები არ გადაიყვანება.')}
+              </p>
 
               {/* Backup Directory & Automation */}
               <div className="pt-2 border-t border-slate-800/80 space-y-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center space-x-1.5">
                     <Folder className="w-3.5 h-3.5 text-amber-400" />
-                    <span>სარეზერვო საქაღალდე (HDD / SSD / USB)</span>
+                    <span>{tr('სარეზერვო საქაღალდე (HDD / SSD / USB)')}</span>
                   </label>
                   <div className="flex gap-1.5">
-                    <div className="flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-[11px] truncate" title={backupDirInput || 'ნაგულისხმევი (პროგრამის მონაცემების საქაღალდე)'}>
-                      {backupDirInput || 'ნაგულისხმევი (პროგრამის მონაცემების საქაღალდე)'}
+                    <div className="flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-[11px] truncate" title={backupDirInput || tr('ნაგულისხმევი (პროგრამის მონაცემების საქაღალდე)')}>
+                      {backupDirInput || tr('ნაგულისხმევი (პროგრამის მონაცემების საქაღალდე)')}
                     </div>
-                    <button type="button" onClick={() => chooseFolder('primary')} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold cursor-pointer">შეცვლა</button>
+                    <button type="button" onClick={() => chooseFolder('primary')} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold cursor-pointer">{tr('შეცვლა')}</button>
                     {backupDirInput && (
-                      <button type="button" onClick={() => setBackupDirInput('')} className="px-2 py-2 text-slate-400 hover:text-white text-[11px] cursor-pointer" title="ნაგულისხმევზე დაბრუნება">✕</button>
+                      <button type="button" onClick={() => setBackupDirInput('')} className="px-2 py-2 text-slate-400 hover:text-white text-[11px] cursor-pointer" title={tr('ნაგულისხმევზე დაბრუნება')}>✕</button>
                     )}
                   </div>
                 </div>
@@ -382,41 +416,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center space-x-1.5">
                     <Folder className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>დამატებითი ასლი (მაგ. USB დისკი) — სურვილისამებრ</span>
+                    <span>{tr('დამატებითი ასლი (მაგ. USB დისკი) — სურვილისამებრ')}</span>
                   </label>
                   <div className="flex gap-1.5">
-                    <div className="flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-[11px] truncate" title={mirrorDirInput || 'არ არის არჩეული'}>
-                      {mirrorDirInput || 'არ არის არჩეული'}
+                    <div className="flex-1 min-w-0 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white font-mono text-[11px] truncate" title={mirrorDirInput || tr('არ არის არჩეული')}>
+                      {mirrorDirInput || tr('არ არის არჩეული')}
                     </div>
-                    <button type="button" onClick={() => chooseFolder('mirror')} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold cursor-pointer">არჩევა</button>
+                    <button type="button" onClick={() => chooseFolder('mirror')} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-[11px] font-bold cursor-pointer">{tr('არჩევა')}</button>
                     {mirrorDirInput && (
-                      <button type="button" onClick={() => setMirrorDirInput('')} className="px-2 py-2 text-slate-400 hover:text-white text-[11px] cursor-pointer" title="მოხსნა">✕</button>
+                      <button type="button" onClick={() => setMirrorDirInput('')} className="px-2 py-2 text-slate-400 hover:text-white text-[11px] cursor-pointer" title={tr('მოხსნა')}>✕</button>
                     )}
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-1">
-                    ყოველი ასლი იქაც ჩაიწერება. თუ დისკი შეერთებული არ არის, მთავარი ასლი მაინც შეიქმნება და შეცდომა ჟურნალში ჩაიწერება.
-                  </p>
+                  <p className="text-[10px] text-slate-500 mt-1">{tr('ყოველი ასლი იქაც ჩაიწერება. თუ დისკი შეერთებული არ არის, მთავარი ასლი მაინც შეიქმნება და შეცდომა ჟურნალში ჩაიწერება.')}</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">შესანახი ავტომატური ასლები</label>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">{tr('შესანახი ავტომატური ასლები')}</label>
                     <input value={retentionInput} onChange={(e) => setRetentionInput(e.target.value.replace(/\D/g, ''))} inputMode="numeric"
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none" />
-                    <p className="text-[10px] text-slate-500 mt-1">ძველი ავტომატური ასლები იშლება (3–365); ხელით შექმნილი რჩება.</p>
+                    <p className="text-[10px] text-slate-500 mt-1">{tr('ძველი ავტომატური ასლები იშლება (3–365); ხელით შექმნილი რჩება.')}</p>
                   </div>
                   <div>
-                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">ავტო-ჩაკეტვა (წუთი)</label>
+                    <label className="block text-[11px] font-semibold text-slate-300 mb-1">{tr('ავტო-ჩაკეტვა (წუთი)')}</label>
                     <input value={lockMinutesInput} onChange={(e) => setLockMinutesInput(e.target.value.replace(/\D/g, ''))} inputMode="numeric"
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs focus:border-emerald-500 focus:outline-none" />
-                    <p className="text-[10px] text-slate-500 mt-1">უმოქმედობისას სესია იხურება (1–240).</p>
+                    <p className="text-[10px] text-slate-500 mt-1">{tr('უმოქმედობისას სესია იხურება (1–240).')}</p>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between p-3 bg-slate-950 border border-slate-800 rounded-xl">
                   <div>
-                    <span className="text-xs font-semibold text-slate-200 block">ავტომატური დღიური რეზერვირება</span>
-                    <span className="text-[10px] text-slate-400">დღეში ერთხელ, ავტომატურად, სანამ პროგრამა ჩართულია</span>
+                    <span className="text-xs font-semibold text-slate-200 block">{tr('ავტომატური დღიური რეზერვირება')}</span>
+                    <span className="text-[10px] text-slate-400">{tr('დღეში ერთხელ, ავტომატურად, სანამ პროგრამა ჩართულია')}</span>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input 
@@ -433,9 +465,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
               <button
                 type="submit"
                 className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-              >
-                პარამეტრების შენახვა
-              </button>
+              >{tr('პარამეტრების შენახვა')}</button>
             </form>
           </div>
 
@@ -443,34 +473,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
             <h2 className="text-sm font-bold text-white flex items-center space-x-2">
               <Database className="w-4 h-4 text-emerald-400" />
-              <span>ერთიანი სარეზერვო ასლი (.posbackup)</span>
+              <span>{tr('ერთიანი სარეზერვო ასლი (.posbackup)')}</span>
             </h2>
 
-            <p className="text-xs text-slate-400 leading-relaxed">
-              ერთი ფაილი შეიცავს მონაცემთა ბაზას, პროდუქციის ფოტოებს და პარამეტრებს, SHA-256 შემოწმებით. აღდგენამდე ფაილი სრულად მოწმდება; შეცდომისას მიმდინარე მონაცემები უცვლელი რჩება.
-            </p>
+            <p className="text-xs text-slate-400 leading-relaxed">{tr('ერთი ფაილი შეიცავს მონაცემთა ბაზას, პროდუქციის ფოტოებს და პარამეტრებს, SHA-256 შემოწმებით. აღდგენამდე ფაილი სრულად მოწმდება; შეცდომისას მიმდინარე მონაცემები უცვლელი რჩება.')}</p>
 
             <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] space-y-1.5">
               <div className="flex justify-between text-slate-400">
-                <span>მთლიანობის შემოწმება:</span>
+                <span>{tr('მთლიანობის შემოწმება:')}</span>
                 <span className="text-emerald-400 font-semibold flex items-center space-x-1">
                   <ShieldCheck className="w-3.5 h-3.5 inline" />
                   <span>SHA-256 + SQLite Integrity Check</span>
                 </span>
               </div>
               <div className="flex justify-between text-slate-400">
-                <span>აღდგენამდე:</span>
-                <span className="text-slate-300">მიმდინარე მდგომარეობის ასლი ავტომატურად</span>
+                <span>{tr('აღდგენამდე:')}</span>
+                <span className="text-slate-300">{tr('მიმდინარე მდგომარეობის ასლი ავტომატურად')}</span>
               </div>
               <div className="flex justify-between text-slate-400">
-                <span>ბოლო ასლის თარიღი:</span>
+                <span>{tr('ბოლო ასლის თარიღი:')}</span>
                 <span className="text-slate-300 font-mono">
-                  {settings.last_backup_date ? new Date(settings.last_backup_date).toLocaleString('ka-GE') : 'არ ფიქსირდება'}
+                  {settings.last_backup_date ? fmtDateTime(settings.last_backup_date) : tr('არ ფიქსირდება')}
                 </span>
               </div>
               <div className="flex justify-between text-slate-400">
-                <span>ბოლო ავტომატური ასლი:</span>
-                <span className="text-slate-300 font-mono">{settings.last_auto_backup_date || 'ჯერ არ შექმნილა'}</span>
+                <span>{tr('ბოლო ავტომატური ასლი:')}</span>
+                <span className="text-slate-300 font-mono">{settings.last_auto_backup_date || tr('ჯერ არ შექმნილა')}</span>
               </div>
             </div>
 
@@ -481,7 +509,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors shadow-lg shadow-emerald-900/30 cursor-pointer"
               >
                 <Download className="w-4 h-4" />
-                <span>{isBusy ? 'მიმდინარეობს...' : 'სარეზერვო ასლის შექმნა ახლავე'}</span>
+                <span>{isBusy ? tr('მიმდინარეობს...') : tr('სარეზერვო ასლის შექმნა ახლავე')}</span>
               </button>
 
               <div className="grid grid-cols-2 gap-2">
@@ -490,7 +518,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                   className="py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-1.5 cursor-pointer"
                 >
                   <Folder className="w-3.5 h-3.5 text-amber-400" />
-                  <span>საქაღალდის გახსნა</span>
+                  <span>{tr('საქაღალდის გახსნა')}</span>
                 </button>
                 <button
                   onClick={handleRestoreFromFileDialog}
@@ -498,7 +526,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                   className="py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-1.5 cursor-pointer"
                 >
                   <Upload className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>ფაილიდან აღდგენა…</span>
+                  <span>{tr('ფაილიდან აღდგენა…')}</span>
                 </button>
               </div>
 
@@ -507,12 +535,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors cursor-pointer"
               >
                 <Play className="w-3.5 h-3.5 text-amber-400" />
-                <span>დღიური რეზერვირების შემოწმება ახლავე</span>
+                <span>{tr('დღიური რეზერვირების შემოწმება ახლავე')}</span>
               </button>
 
               <label className="w-full py-3 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors cursor-pointer block text-center">
                 <Upload className="w-4 h-4 inline mr-1 text-emerald-400" />
-                <span>ასლის ატვირთვა და აღდგენა (.posbackup)</span>
+                <span>{tr('ასლის ატვირთვა და აღდგენა (.posbackup)')}</span>
                 <input
                   type="file"
                   accept=".posbackup,application/json"
@@ -528,11 +556,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
             <div className="bg-slate-900 border border-red-900/40 rounded-2xl p-5 shadow-xl space-y-3">
               <h2 className="text-sm font-bold text-red-400 flex items-center space-x-2">
                 <AlertTriangle className="w-4 h-4 text-red-400" />
-                <span>სისტემის გასუფთავება (Danger Zone)</span>
+                <span>{tr('სისტემის გასუფთავება (Danger Zone)')}</span>
               </h2>
-              <p className="text-xs text-slate-400 leading-relaxed">
-                ყველა პროდუქტის, გაყიდვის, ნისიისა და მომხმარებლის წაშლა. ოპერაციის წინ <strong className="text-slate-200">სისტემა ავტომატურად ქმნის საგანგებო ასლს</strong> (Emergency Pre-Reset Snapshot), რათა შეცდომის შემთხვევაში მონაცემები არ დაიკარგოს.
-              </p>
+              <p className="text-xs text-slate-400 leading-relaxed">{tr('ყველა პროდუქტის, გაყიდვის, ნისიისა და მომხმარებლის წაშლა. ოპერაციის წინ')}{' '}<strong className="text-slate-200">{tr('სისტემა ავტომატურად ქმნის საგანგებო ასლს')}</strong>{' '}{tr('(Emergency Pre-Reset Snapshot), რათა შეცდომის შემთხვევაში მონაცემები არ დაიკარგოს.')}</p>
               <button
                 type="button"
                 onClick={() => {
@@ -543,7 +569,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 className="w-full py-2.5 bg-red-950/60 hover:bg-red-900 border border-red-800 text-red-300 font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition-colors cursor-pointer"
               >
                 <Trash2 className="w-4 h-4" />
-                <span>მონაცემთა ბაზის გასუფთავება</span>
+                <span>{tr('მონაცემთა ბაზის გასუფთავება')}</span>
               </button>
             </div>
           )}
@@ -565,7 +591,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 }`}
               >
                 <Archive className="w-3.5 h-3.5" />
-                <span>ასლები ({backupsList.length})</span>
+                <span>{tr('ასლები ({length})', { length: backupsList.length })}</span>
               </button>
 
               <button
@@ -577,7 +603,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 }`}
               >
                 <FileText className="w-3.5 h-3.5" />
-                <span>აუდიტი ({auditLogs.length})</span>
+                <span>{tr('აუდიტი ({length})', { length: auditLogs.length })}</span>
               </button>
 
               <button
@@ -589,7 +615,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 }`}
               >
                 <AlertTriangle className="w-3.5 h-3.5" />
-                <span>შეცდომები ({errorLogs.length})</span>
+                <span>{tr('შეცდომები ({length})', { length: errorLogs.length })}</span>
               </button>
             </div>
 
@@ -598,16 +624,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 <button
                   onClick={handleClearErrorLogs}
                   className="px-2.5 py-1 bg-red-950/60 hover:bg-red-900 text-red-300 border border-red-800 rounded-lg text-xs font-semibold flex items-center space-x-1 cursor-pointer"
-                  title="შეცდომების გასუფთავება"
+                  title={tr('შეცდომების გასუფთავება')}
                 >
                   <Trash2 className="w-3 h-3" />
-                  <span>გასუფთავება</span>
+                  <span>{tr('გასუფთავება')}</span>
                 </button>
               )}
               <button
                 onClick={loadData}
                 className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg cursor-pointer"
-                title="განახლება"
+                title={tr('განახლება')}
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
@@ -620,11 +646,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
               <table className="w-full text-left text-xs min-w-[560px]">
                 <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                   <tr>
-                    <th className="py-2.5 px-3">ფაილი / თარიღი</th>
-                    <th className="py-2.5 px-3">ზომა</th>
-                    <th className="py-2.5 px-3">შინაარსი</th>
-                    <th className="py-2.5 px-3">მთლიანობა</th>
-                    <th className="py-2.5 px-3 text-right">მოქმედება</th>
+                    <th className="py-2.5 px-3">{tr('ფაილი / თარიღი')}</th>
+                    <th className="py-2.5 px-3">{tr('ზომა')}</th>
+                    <th className="py-2.5 px-3">{tr('შინაარსი')}</th>
+                    <th className="py-2.5 px-3">{tr('მთლიანობა')}</th>
+                    <th className="py-2.5 px-3 text-right">{tr('მოქმედება')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -632,8 +658,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                     <tr>
                       <td colSpan={5} className="py-12 text-center text-slate-500">
                         <Archive className="w-8 h-8 mx-auto mb-2 text-slate-600 opacity-60" />
-                        <span>სარეზერვო ასლები არ მოიძებნა მითითებულ საქაღალდეში</span>
-                        <div className="text-[11px] text-slate-600 mt-1">დააჭირეთ „ერთიანი ასლის შექმნა“-ს პირველი ასლის შესაქმნელად</div>
+                        <span>{tr('სარეზერვო ასლები არ მოიძებნა მითითებულ საქაღალდეში')}</span>
+                        <div className="text-[11px] text-slate-600 mt-1">{tr('დააჭირეთ „ერთიანი ასლის შექმნა“-ს პირველი ასლის შესაქმნელად')}</div>
                       </td>
                     </tr>
                   ) : (
@@ -644,10 +670,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                             {bk.filename}
                           </div>
                           <div className="text-[10px] text-slate-500 mt-0.5">
-                            {new Date(bk.created_at).toLocaleString('ka-GE')}
+                            {fmtDateTime(bk.created_at)}
                             {bk.kind && (
                               <span className="ml-1.5 text-slate-400">
-                                • {bk.kind === 'auto' ? 'ავტომატური' : bk.kind === 'manual' ? 'ხელით' : bk.kind === 'prereset' ? 'განულებამდე' : 'აღდგენამდე'}
+                                • {bk.kind === 'auto' ? tr('ავტომატური') : bk.kind === 'manual' ? tr('ხელით') : bk.kind === 'prereset' ? tr('განულებამდე') : tr('აღდგენამდე')}
                               </span>
                             )}
                           </div>
@@ -657,7 +683,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                         </td>
                         <td className="py-2.5 px-3 text-slate-400 text-[11px]">
                           {bk.stats ? (
-                            <span>პროდ: {bk.stats.products_count} | გაყ: {bk.stats.sales_count}</span>
+                            <span>{tr('პროდ: {products_count} | გაყ: {sales_count}', { products_count: bk.stats.products_count, sales_count: bk.stats.sales_count })}</span>
                           ) : (
                             <span>-</span>
                           )}
@@ -678,15 +704,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                             disabled={verifyingFilename === bk.filename}
                             className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
                           >
-                            {verifyingFilename === bk.filename ? 'მოწმდება...' : 'შემოწმება'}
+                            {verifyingFilename === bk.filename ? tr('მოწმდება...') : tr('შემოწმება')}
                           </button>
                           <button
                             onClick={() => handleRestoreFromList(bk.filename)}
                             disabled={isBusy || !bk.is_valid}
                             className="ml-1.5 px-2 py-1 bg-amber-950/50 hover:bg-amber-900/50 disabled:opacity-40 text-amber-200 text-[11px] font-semibold rounded-lg border border-amber-800/60 transition cursor-pointer"
-                          >
-                            აღდგენა
-                          </button>
+                          >{tr('აღდგენა')}</button>
                         </td>
                       </tr>
                     ))
@@ -702,24 +726,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
               <table className="w-full text-left text-xs min-w-[540px]">
                 <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                   <tr>
-                    <th className="py-2.5 px-3">თარიღი</th>
-                    <th className="py-2.5 px-3">მოქმედება</th>
-                    <th className="py-2.5 px-3">დეტალები</th>
-                    <th className="py-2.5 px-3">ავტორი</th>
+                    <th className="py-2.5 px-3">{tr('თარიღი')}</th>
+                    <th className="py-2.5 px-3">{tr('მოქმედება')}</th>
+                    <th className="py-2.5 px-3">{tr('დეტალები')}</th>
+                    <th className="py-2.5 px-3">{tr('ავტორი')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {auditLogs.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="py-8 text-center text-slate-500">
-                        აუდიტის ჩანაწერები არ არის
-                      </td>
+                      <td colSpan={4} className="py-8 text-center text-slate-500">{tr('აუდიტის ჩანაწერები არ არის')}</td>
                     </tr>
                   ) : (
                     auditLogs.map((log) => (
                       <tr key={log.id} className="hover:bg-slate-900/40">
                         <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                          {new Date(log.created_at).toLocaleString('ka-GE')}
+                          {fmtDateTime(log.created_at)}
                         </td>
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px]">
@@ -748,24 +770,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                   <div className="w-12 h-12 rounded-full bg-emerald-950/60 border border-emerald-800 flex items-center justify-center text-emerald-400 mb-2">
                     <CheckCircle2 className="w-6 h-6" />
                   </div>
-                  <div className="text-sm font-bold text-white">სისტემური შეცდომები არ ფიქსირდება</div>
-                  <div className="text-xs text-slate-500 mt-1">ყველა ოპერაცია და ტრანზაქცია მუშაობს გამართულად</div>
+                  <div className="text-sm font-bold text-white">{tr('სისტემური შეცდომები არ ფიქსირდება')}</div>
+                  <div className="text-xs text-slate-500 mt-1">{tr('ყველა ოპერაცია და ტრანზაქცია მუშაობს გამართულად')}</div>
                 </div>
               ) : (
                 <table className="w-full text-left text-xs min-w-[560px]">
                   <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                     <tr>
-                      <th className="py-2.5 px-3">თარიღი</th>
-                      <th className="py-2.5 px-3">სიმძიმე</th>
-                      <th className="py-2.5 px-3">წყარო</th>
-                      <th className="py-2.5 px-3">შეტყობინება</th>
+                      <th className="py-2.5 px-3">{tr('თარიღი')}</th>
+                      <th className="py-2.5 px-3">{tr('სიმძიმე')}</th>
+                      <th className="py-2.5 px-3">{tr('წყარო')}</th>
+                      <th className="py-2.5 px-3">{tr('შეტყობინება')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
                     {errorLogs.map((err) => (
                       <tr key={err.id} className="hover:bg-slate-900/40">
                         <td className="py-2.5 px-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                          {new Date(err.created_at).toLocaleString('ka-GE')}
+                          {fmtDateTime(err.created_at)}
                         </td>
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -782,7 +804,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                           {err.error_source}
                         </td>
                         <td className="py-2.5 px-3 text-slate-200">
-                          <div className="font-semibold text-rose-300">{err.error_message}</div>
+                          <div className="font-semibold text-rose-300">{trServer(err.error_message)}</div>
                           {err.stack_trace && (
                             <div className="text-[10px] font-mono text-slate-500 truncate max-w-sm mt-0.5">
                               {err.stack_trace.split('\n')[0]}
@@ -810,15 +832,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 <AlertTriangle className="w-5 h-5 text-red-400" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">ბაზის სრული გასუფთავება</h3>
-                <p className="text-xs text-red-300">ოპერაციის წინ შეიქმნება Emergency Backup</p>
+                <h3 className="text-base font-bold text-white">{tr('ბაზის სრული გასუფთავება')}</h3>
+                <p className="text-xs text-red-300">{tr('ოპერაციის წინ შეიქმნება Emergency Backup')}</p>
               </div>
             </div>
 
             <div className="p-4 sm:p-5 overflow-y-auto flex-1 min-h-0 space-y-3">
-              <p className="text-xs text-slate-300 leading-relaxed bg-red-950/40 p-3 rounded-xl border border-red-900/60">
-                ყურადღება! ყველა მონაცემი: პროდუქცია, ნაშთები, გაყიდვები, ნისიები და მომხმარებლები წაიშლება. უსაფრთხოების მიზნით სისტემა ჯერ ავტომატურად შეინახავს ბაზის ასლს. გასაგრძელებლად შეიყვანეთ მფლობელის PIN კოდი:
-              </p>
+              <p className="text-xs text-slate-300 leading-relaxed bg-red-950/40 p-3 rounded-xl border border-red-900/60">{tr('ყურადღება! ყველა მონაცემი: პროდუქცია, ნაშთები, გაყიდვები, ნისიები და მომხმარებლები წაიშლება. უსაფრთხოების მიზნით სისტემა ჯერ ავტომატურად შეინახავს ბაზის ასლს. გასაგრძელებლად შეიყვანეთ მფლობელის PIN კოდი:')}</p>
 
               {resetError && (
                 <div className="p-3 bg-red-950/80 border border-red-700 rounded-xl text-xs text-red-200 flex items-center space-x-2">
@@ -829,9 +849,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
 
               <form id="reset-db-form" onSubmit={handleResetDatabase} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    მფლობელის PIN კოდი
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('მფლობელის PIN კოდი')}</label>
                   <input
                     type="password"
                     maxLength={6}
@@ -851,9 +869,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 onClick={() => setIsResetModalOpen(false)}
                 disabled={isResetting}
                 className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition cursor-pointer"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="submit"
                 form="reset-db-form"
@@ -861,11 +877,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onStore
                 className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center justify-center space-x-2 transition cursor-pointer"
               >
                 {isResetting ? (
-                  <span>იშლება...</span>
+                  <span>{tr('იშლება...')}</span>
                 ) : (
                   <>
                     <Trash2 className="w-4 h-4" />
-                    <span>წაშლა და გასუფთავება</span>
+                    <span>{tr('წაშლა და გასუფთავება')}</span>
                   </>
                 )}
               </button>

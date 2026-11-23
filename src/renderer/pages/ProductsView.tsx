@@ -38,6 +38,8 @@ import {
   Pencil,
   Archive
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
+import { currencySymbol } from '../../shared/currency.ts';
 
 interface ProductsViewProps {
   currentUser: User;
@@ -92,7 +94,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
     barcode: string;
   }>>([
     {
-      variant_name: 'სტანდარტული',
+      variant_name: tr('სტანდარტული'),
       size: '',
       color: '',
       price_override: '',
@@ -158,7 +160,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
     setFormSuccess('');
 
     if (!prodName.trim()) {
-      setFormError('პროდუქტის დასახელება სავალდებულოა');
+      setFormError(tr('პროდუქტის დასახელება სავალდებულოა'));
       return;
     }
 
@@ -166,11 +168,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
     try {
       basePriceTetri = gelToTetri(prodBasePrice);
       if (basePriceTetri <= 0) {
-        setFormError('გასაყიდი ფასი უნდა აღემატებოდეს 0-ს');
+        setFormError(tr('გასაყიდი ფასი უნდა აღემატებოდეს 0-ს'));
         return;
       }
     } catch (err: any) {
-      setFormError(err.message);
+      setFormError(trServer(err.message));
       return;
     }
 
@@ -179,7 +181,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       try {
         baseCostTetri = gelToTetri(prodBaseCost);
       } catch (err: any) {
-        setFormError(`შესყიდვის ფასი: ${err.message}`);
+        setFormError(tr('შესყიდვის ფასი: {message}', { message: trServer(err.message) }));
         return;
       }
     }
@@ -187,18 +189,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
     // Validate variants
     const payloadVariants: any[] = [];
     for (const [idx, v] of variantsList.entries()) {
-      const vName = v.variant_name.trim() || `ვარიანტი ${idx + 1}`;
+      const vName = v.variant_name.trim() || tr('ვარიანტი {value}', { value: idx + 1 });
       const codes: any[] = [];
 
       if (!v.manual_5digit.trim() && !v.barcode.trim()) {
-        setFormError(`ვარიანტისთვის "${vName}" სავალდებულოა მიუთითოთ 5-ნიშნა კოდი ან ქარხნული შტრიხკოდი`);
+        setFormError(tr('ვარიანტისთვის "{vName}" სავალდებულოა მიუთითოთ 5-ნიშნა კოდი ან ქარხნული შტრიხკოდი', { vName }));
         return;
       }
 
       if (v.manual_5digit.trim()) {
         const manCode = v.manual_5digit.trim();
         if (!/^[1-9]\d{4}$/.test(manCode)) {
-          setFormError(`ხელით შესაყვანი კოდი უნდა იყოს ზუსტად 5-ნიშნა რიცხვი (10000-99999). ვარიანტი: "${vName}"`);
+          setFormError(tr('ხელით შესაყვანი კოდი უნდა იყოს ზუსტად 5-ნიშნა რიცხვი (10000-99999). ვარიანტი: "{vName}"', { vName }));
           return;
         }
         codes.push({ code_type: 'manual_5digit', code_value: manCode });
@@ -207,7 +209,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       if (v.barcode.trim()) {
         const barCode = v.barcode.trim();
         if (!/^\d+$/.test(barCode)) {
-          setFormError(`შტრიხკოდი უნდა შეიცავდეს მხოლოდ ციფრებს. ვარიანტი: "${vName}"`);
+          setFormError(tr('შტრიხკოდი უნდა შეიცავდეს მხოლოდ ციფრებს. ვარიანტი: "{vName}"', { vName }));
           return;
         }
         codes.push({ code_type: 'barcode', code_value: barCode });
@@ -230,8 +232,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         const parsed = prodUnitType === 'kg' ? weightToGrams(v.initial_stock) : finishInteger(v.initial_stock, 0);
         if (parsed === null || parsed === '') {
           setFormError(prodUnitType === 'kg'
-            ? `საწყისი მარაგი კილოგრამებში უნდა იყოს (მაგ. 12.500). ვარიანტი: "${vName}"`
-            : `საწყისი მარაგი უნდა იყოს მთელი რიცხვი (ცალი). ვარიანტი: "${vName}"`);
+            ? tr('საწყისი მარაგი კილოგრამებში უნდა იყოს (მაგ. 12.500). ვარიანტი: "{vName}"', { vName })
+            : tr('საწყისი მარაგი უნდა იყოს მთელი რიცხვი (ცალი). ვარიანტი: "{vName}"', { vName }));
           return;
         }
         initialStock = parsed;
@@ -260,7 +262,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         image_paths: newProductImages.length > 0 ? newProductImages : undefined
       });
 
-      setFormSuccess('პროდუქტი წარმატებით დაემატა!');
+      setFormSuccess(tr('პროდუქტი წარმატებით დაემატა!'));
       setIsNewProductOpen(false);
       // Reset form
       setProdName('');
@@ -270,7 +272,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       setProdUnitType('piece');
       setNewProductImages([]);
       setVariantsList([{
-        variant_name: 'სტანდარტული',
+        variant_name: tr('სტანდარტული'),
         size: '',
         color: '',
         price_override: '',
@@ -281,7 +283,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       }]);
       loadData();
     } catch (err: any) {
-      setFormError(err.message || 'პროდუქტის შექმნის შეცდომა');
+      setFormError(trServer(err.message) || tr('პროდუქტის შექმნის შეცდომა'));
     }
   };
 
@@ -304,12 +306,12 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
             setGalleryProduct(updated);
             loadData();
           } catch (err: any) {
-            alert(err.message || 'სურათის დამატება ვერ მოხერხდა');
+            alert(trServer(err.message) || tr('სურათის დამატება ვერ მოხერხდა'));
           }
         } else {
           setNewProductImages(prev => [...prev, base64]);
         }
-      }).catch((err: any) => alert(err.message || 'ფოტოს დამუშავება ვერ მოხერხდა'));
+      }).catch((err: any) => alert(trServer(err.message) || tr('ფოტოს დამუშავება ვერ მოხერხდა')));
     }
     // reset input
     e.target.value = '';
@@ -317,7 +319,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
   const handleDeleteGalleryImage = async (imageId: number) => {
     if (!galleryProduct) return;
-    if (!window.confirm('ნამდვილად გსურთ სურათის წაშლა?')) return;
+    if (!window.confirm(tr('ნამდვილად გსურთ სურათის წაშლა?'))) return;
     try {
       await invokeIpc('products:deleteImage', { imageId });
       const updated = await invokeIpc<Product>('products:getById', { productId: galleryProduct.id });
@@ -325,7 +327,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
       setActiveImageIndex(0);
       loadData();
     } catch (err: any) {
-      alert(err.message || 'სურათის წაშლა ვერ მოხერხდა');
+      alert(trServer(err.message) || tr('სურათის წაშლა ვერ მოხერხდა'));
     }
   };
 
@@ -337,9 +339,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
         <div>
           <h1 className="text-lg sm:text-xl font-bold text-white flex items-center space-x-2">
             <Package className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-400" />
-            <span>პროდუქცია და კატალოგი</span>
+            <span>{tr('პროდუქცია და კატალოგი')}</span>
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">სულ რეგისტრირებულია {products.length} პროდუქტი</p>
+          <p className="text-xs text-slate-400 mt-0.5">{tr('სულ რეგისტრირებულია {length} პროდუქტი', { length: products.length })}</p>
         </div>
 
         <div className="flex items-center space-x-2.5 sm:space-x-3">
@@ -348,19 +350,19 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               {canArchive && <button
                 onClick={() => setShowArchived((v) => !v)}
                 className={`px-3 sm:px-3.5 py-2 border text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer ${showArchived ? 'bg-amber-950/60 border-amber-700/60 text-amber-300' : 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200'}`}
-                title="დაარქივებული პროდუქტების ჩვენება"
+                title={tr('დაარქივებული პროდუქტების ჩვენება')}
               >
                 <Archive className="w-3.5 h-3.5" />
-                <span>{showArchived ? 'აქტიურები' : 'არქივი'}</span>
+                <span>{showArchived ? tr('აქტიურები') : tr('არქივი')}</span>
               </button>}
 
               {canCategories && <button
                 onClick={() => setIsCategoryManagerOpen(true)}
                 className="px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs font-semibold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer"
-                title="კატეგორიების მართვა, ფერები, რედაქტირება და წაშლა"
+                title={tr('კატეგორიების მართვა, ფერები, რედაქტირება და წაშლა')}
               >
                 <Tag className="w-3.5 h-3.5 text-emerald-400" />
-                <span>კატეგორიების მართვა</span>
+                <span>{tr('კატეგორიების მართვა')}</span>
               </button>}
 
               {canCreate && <button
@@ -371,7 +373,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                 className="px-3.5 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
-                <span>ახალი პროდუქტი</span>
+                <span>{tr('ახალი პროდუქტი')}</span>
               </button>}
             </>
           )}
@@ -385,7 +387,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="ძებნა სახელით, შტრიხკოდით ან 5-ნიშნა კოდით..."
+            placeholder={tr('ძებნა სახელით, შტრიხკოდით ან 5-ნიშნა კოდით...')}
             className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-400 text-xs focus:outline-none focus:border-emerald-500"
           />
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
@@ -400,9 +402,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                 ? 'bg-emerald-600 text-white font-bold'
                 : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
             }`}
-          >
-            ყველა
-          </button>
+          >{tr('ყველა')}</button>
           {categories.map((c) => (
             <button
               key={c.id}
@@ -426,23 +426,21 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
           <table className="w-full min-w-[760px] text-left text-xs">
             <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold tracking-wider sticky top-0 border-b border-slate-800">
               <tr>
-                <th className="py-3 px-4 w-16 text-center">ფოტო</th>
-                <th className="py-3 px-4">პროდუქტი</th>
-                <th className="py-3 px-4">კატეგორია</th>
-                <th className="py-3 px-4">ვარიანტები და კოდები</th>
-                <th className="py-3 px-4 text-right">გასაყიდი ფასი</th>
-                {canSeeCost && <th className="py-3 px-4 text-right">თვითღირებულება</th>}
-                <th className="py-3 px-4 text-right">მარაგი</th>
-                {canEditAny && <th className="py-3 px-4 text-center w-20">მართვა</th>}
+                <th className="py-3 px-4 w-16 text-center">{tr('ფოტო')}</th>
+                <th className="py-3 px-4">{tr('პროდუქტი')}</th>
+                <th className="py-3 px-4">{tr('კატეგორია')}</th>
+                <th className="py-3 px-4">{tr('ვარიანტები და კოდები')}</th>
+                <th className="py-3 px-4 text-right">{tr('გასაყიდი ფასი')}</th>
+                {canSeeCost && <th className="py-3 px-4 text-right">{tr('თვითღირებულება')}</th>}
+                <th className="py-3 px-4 text-right">{tr('მარაგი')}</th>
+                {canEditAny && <th className="py-3 px-4 text-center w-20">{tr('მართვა')}</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
               {products.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-12 text-center text-slate-400">
-                    <Package className="w-10 h-10 text-slate-700 mx-auto mb-2" />
-                    პროდუქცია არ მოიძებნა
-                  </td>
+                    <Package className="w-10 h-10 text-slate-700 mx-auto mb-2" />{tr('პროდუქცია არ მოიძებნა')}</td>
                 </tr>
               ) : (
                 products.map((p) => {
@@ -457,7 +455,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             type="button"
                             onClick={() => { setGalleryProduct(p); setActiveImageIndex(0); }}
                             className="relative group inline-block w-10 h-10 rounded-lg overflow-hidden border border-slate-700 bg-slate-950 hover:border-emerald-500 transition-colors cursor-pointer"
-                            title="გალერეის გახსნა"
+                            title={tr('გალერეის გახსნა')}
                           >
                             <img src={photoSrc(p.images![0])} alt={p.name} loading="lazy" className="w-full h-full object-cover" />
                             {p.images!.length > 1 && (
@@ -471,7 +469,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             type="button"
                             onClick={() => { setGalleryProduct(p); setActiveImageIndex(0); }}
                             className="w-10 h-10 rounded-lg border border-dashed border-slate-800 hover:border-slate-600 flex items-center justify-center text-slate-600 hover:text-slate-400 transition-colors cursor-pointer mx-auto"
-                            title="სურათის დამატება"
+                            title={tr('სურათის დამატება')}
                           >
                             <ImageIcon className="w-4 h-4" />
                           </button>
@@ -486,7 +484,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                           {p.category_color && (
                             <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: p.category_color }} />
                           )}
-                          {p.category_name || 'ზოგადი'}
+                          {p.category_name || tr('ზოგადი')}
                         </span>
                       </td>
                       <td className="py-3 px-4">
@@ -496,25 +494,25 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                               <span className="text-slate-300 font-semibold">{v.variant_name}:</span>
                               {v.codes?.map(c => (
                                 <span key={c.id} className="font-mono bg-slate-950 px-1.5 py-0.5 rounded text-emerald-400 border border-slate-800 whitespace-nowrap">
-                                  {c.code_value} ({c.code_type === 'manual_5digit' ? '5-ნიშნა' : 'შტრიხკოდი'})
+                                  {c.code_value} ({c.code_type === 'manual_5digit' ? tr('5-ნიშნა') : tr('შტრიხკოდი')})
                                 </span>
                               ))}
                               <span className="text-slate-400 font-medium">
-                                {hasStockNumber(v.stock_quantity) ? `(${p.unit_type === 'kg' ? `${gramsToKg(v.stock_quantity)} კგ` : `${v.stock_quantity} ც`})` : ''}
+                                {hasStockNumber(v.stock_quantity) ? `(${p.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(v.stock_quantity) }) : tr('{stock_quantity} ც', { stock_quantity: v.stock_quantity })})` : ''}
                               </span>
                             </div>
                           ))}
                         </div>
                       </td>
                       <td className="py-3 px-4 text-right font-bold text-white text-sm">
-                        {formatTetri(p.base_price_tetri)}{p.unit_type === 'kg' ? ' / კგ' : ''}
+                        {formatTetri(p.base_price_tetri)}{p.unit_type === 'kg' ? tr(' / კგ') : ''}
                       </td>
                       {canSeeCost && (
                         <td className="py-3 px-4 text-right text-slate-400">
                           {p.base_cost_tetri !== null && p.base_cost_tetri !== undefined ? (
-                            <>{formatTetri(p.base_cost_tetri)}{p.unit_type === 'kg' ? ' / კგ' : ''}</>
+                            <>{formatTetri(p.base_cost_tetri)}{p.unit_type === 'kg' ? tr(' / კგ') : ''}</>
                           ) : (
-                            <span className="italic text-slate-600">უცნობი</span>
+                            <span className="italic text-slate-600">{tr('უცნობი')}</span>
                           )}
                         </td>
                       )}
@@ -526,7 +524,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             ? 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
                             : 'bg-red-950/60 text-red-400 border border-red-800/40'
                         }`}>
-                          {!stockKnown ? '—' : p.unit_type === 'kg' ? `${gramsToKg(totalStock)} კგ` : `${totalStock} ცალი`}
+                          {!stockKnown ? '—' : p.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(totalStock) }) : tr('{totalStock} ცალი', { totalStock })}
                         </span>
                       </td>
                       {canEditAny && (
@@ -535,10 +533,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             type="button"
                             onClick={() => setEditingProductId(p.id)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 hover:bg-emerald-700 border border-slate-700 text-slate-200 hover:text-white rounded-lg text-[11px] font-semibold transition-colors cursor-pointer"
-                            title="რედაქტირება"
+                            title={tr('რედაქტირება')}
                           >
                             <Pencil className="w-3.5 h-3.5" />
-                            <span>შეცვლა</span>
+                            <span>{tr('შეცვლა')}</span>
                           </button>
                         </td>
                       )}
@@ -575,7 +573,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-3xl w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
             
             <div className="flex justify-between items-center border-b border-slate-800 pb-3 mb-3 shrink-0">
-              <h3 className="text-base sm:text-lg font-bold text-white">ახალი პროდუქტის რეგისტრაცია</h3>
+              <h3 className="text-base sm:text-lg font-bold text-white">{tr('ახალი პროდუქტის რეგისტრაცია')}</h3>
               <button onClick={() => setIsNewProductOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
@@ -592,25 +590,25 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               {/* Product main details */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">დასახელება *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('დასახელება *')}</label>
                   <input
                     type="text"
                     required
                     value={prodName}
                     onChange={(e) => setProdName(e.target.value)}
-                    placeholder="მაგ. საბავშვო კურტკა"
+                    placeholder={tr('მაგ. საბავშვო კურტკა')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">კატეგორია</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('კატეგორია')}</label>
                   <select
                     value={prodCategory || ''}
                     onChange={(e) => setProdCategory(e.target.value ? parseInt(e.target.value, 10) : null)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   >
-                    <option value="">-- აირჩიეთ კატეგორია --</option>
+                    <option value="">{tr('-- აირჩიეთ კატეგორია --')}</option>
                     {categories.map(c => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
@@ -618,7 +616,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">ერთეულის ტიპი *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('ერთეულის ტიპი *')}</label>
                   <select
                     value={prodUnitType}
                     onChange={(e) => {
@@ -628,14 +626,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                     }}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   >
-                    <option value="piece">ცალი (ც)</option>
-                    <option value="kg">კილოგრამი (კგ)</option>
+                    <option value="piece">{tr('ცალი (ც)')}</option>
+                    <option value="kg">{tr('კილოგრამი (კგ)')}</option>
                   </select>
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    {prodUnitType === 'kg' ? 'გასაყიდი ფასი 1 კგ-ზე (₾) *' : 'გასაყიდი ფასი (₾) *'}
+                    {prodUnitType === 'kg' ? tr('გასაყიდი ფასი 1 კგ-ზე ({currency}) *', { currency: currencySymbol() }) : tr('გასაყიდი ფასი ({currency}) *', { currency: currencySymbol() })}
                   </label>
                   <EditableMoneyInput
                     required
@@ -648,12 +646,12 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
                 <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    {prodUnitType === 'kg' ? 'შესყიდვის ფასი 1 კგ-ზე (₾, არასავალდებულო)' : 'შესყიდვის ფასი (₾, არასავალდებულო)'}
+                    {prodUnitType === 'kg' ? tr('შესყიდვის ფასი 1 კგ-ზე ({currency}, არასავალდებულო)', { currency: currencySymbol() }) : tr('შესყიდვის ფასი ({currency}, არასავალდებულო)', { currency: currencySymbol() })}
                   </label>
                   <EditableMoneyInput
                     value={prodBaseCost}
                     onChange={(val) => setProdBaseCost(val)}
-                    placeholder="თუ უცნობია დატოვეთ ცარიელი"
+                    placeholder={tr('თუ უცნობია დატოვეთ ცარიელი')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
                 </div>
@@ -661,9 +659,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
 
               {/* Product Photos / Images upload */}
               <div className="border-t border-slate-800 pt-3">
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  პროდუქტის ფოტოები (მრავალფოტოიანი გალერეა)
-                </label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">{tr('პროდუქტის ფოტოები (მრავალფოტოიანი გალერეა)')}</label>
                 <div className="flex flex-wrap items-center gap-2">
                   {newProductImages.map((img, idx) => (
                     <div key={idx} className="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-700 bg-slate-950 group">
@@ -672,7 +668,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                         type="button"
                         onClick={() => setNewProductImages(prev => prev.filter((_, i) => i !== idx))}
                         className="absolute top-0 right-0 bg-red-600/90 text-white p-0.5 rounded-bl hover:bg-red-700 cursor-pointer"
-                        title="წაშლა"
+                        title={tr('წაშლა')}
                       >
                         <X className="w-3 h-3" />
                       </button>
@@ -680,7 +676,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                   ))}
                   <label className="w-14 h-14 rounded-lg border-2 border-dashed border-slate-700 hover:border-emerald-500 bg-slate-950/60 flex flex-col items-center justify-center text-slate-400 hover:text-emerald-400 transition cursor-pointer">
                     <Upload className="w-4 h-4 mb-0.5" />
-                    <span className="text-[9px] font-medium">+ფოტო</span>
+                    <span className="text-[9px] font-medium">{tr('+ფოტო')}</span>
                     <input
                       type="file"
                       accept="image/*"
@@ -695,16 +691,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               {/* Variants Section */}
               <div className="border-t border-slate-800 pt-3">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                    ვარიანტები (ზომა / ფერი) და კოდები
-                  </span>
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">{tr('ვარიანტები (ზომა / ფერი) და კოდები')}</span>
                   <button
                     type="button"
                     onClick={addVariantRow}
                     className="text-xs text-emerald-400 hover:text-emerald-300 flex items-center space-x-1"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    <span>+ ვარიანტის დამატება</span>
+                    <span>{tr('+ ვარიანტის დამატება')}</span>
                   </button>
                 </div>
 
@@ -712,21 +706,19 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                   {variantsList.map((v, i) => (
                     <div key={i} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-emerald-400">ვარიანტი #{i + 1}</span>
+                        <span className="text-xs font-semibold text-emerald-400">{tr('ვარიანტი #{value}', { value: i + 1 })}</span>
                         {variantsList.length > 1 && (
                           <button
                             type="button"
                             onClick={() => removeVariantRow(i)}
                             className="text-xs text-red-400 hover:text-red-300"
-                          >
-                            წაშლა
-                          </button>
+                          >{tr('წაშლა')}</button>
                         )}
                       </div>
 
                       <div className="grid grid-cols-4 gap-2">
                         <div>
-                          <label className="block text-[11px] text-slate-400 mb-0.5">სახელი</label>
+                          <label className="block text-[11px] text-slate-400 mb-0.5">{tr('სახელი')}</label>
                           <input
                             type="text"
                             value={v.variant_name}
@@ -735,13 +727,13 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                               updated[i].variant_name = e.target.value;
                               setVariantsList(updated);
                             }}
-                            placeholder="მაგ. შავი / 42"
+                            placeholder={tr('მაგ. შავი / 42')}
                             className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-[11px] text-slate-400 mb-0.5">5-ნიშნა კოდი (მხოლოდ ხელით, 10000-99999)</label>
+                          <label className="block text-[11px] text-slate-400 mb-0.5">{tr('5-ნიშნა კოდი (მხოლოდ ხელით, 10000-99999)')}</label>
                           <input
                             type="text"
                             maxLength={5}
@@ -751,13 +743,13 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                               updated[i].manual_5digit = e.target.value.replace(/\D/g, '');
                               setVariantsList(updated);
                             }}
-                            placeholder="მაგ. 10001"
+                            placeholder={tr('მაგ. 10001')}
                             className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono text-emerald-400"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-[11px] text-slate-400 mb-0.5">ქარხნული შტრიხკოდი</label>
+                          <label className="block text-[11px] text-slate-400 mb-0.5">{tr('ქარხნული შტრიხკოდი')}</label>
                           <input
                             type="text"
                             value={v.barcode}
@@ -768,14 +760,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             }}
                             // A USB scanner ends with Enter: it must not submit the half-filled form.
                             onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}
-                            placeholder="სკანირება / ციფრები"
+                            placeholder={tr('სკანირება / ციფრები')}
                             className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono text-white"
                           />
                         </div>
 
                         <div>
                           <label className="block text-[11px] text-slate-400 mb-0.5">
-                            {prodUnitType === 'kg' ? 'საწყისი მარაგი (კგ)' : 'საწყისი მარაგი (ცალი)'}
+                            {prodUnitType === 'kg' ? tr('საწყისი მარაგი (კგ)') : tr('საწყისი მარაგი (ცალი)')}
                           </label>
                           {prodUnitType === 'kg' ? (
                             <EditableWeightInput
@@ -787,7 +779,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                               }}
                               placeholder="0.000"
                               className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
-                              ariaLabel="საწყისი მარაგი კილოგრამებში"
+                              ariaLabel={tr('საწყისი მარაგი კილოგრამებში')}
                             />
                           ) : (
                             <EditableIntegerInput
@@ -800,7 +792,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                               }}
                               placeholder="0"
                               className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white"
-                              ariaLabel="საწყისი მარაგი ცალობით"
+                              ariaLabel={tr('საწყისი მარაგი ცალობით')}
                             />
                           )}
                         </div>
@@ -816,15 +808,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                   type="button"
                   onClick={() => setIsNewProductOpen(false)}
                   className="flex-1 py-2.5 sm:py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs cursor-pointer transition-colors"
-                >
-                  გაუქმება
-                </button>
+                >{tr('გაუქმება')}</button>
                 <button
                   type="submit"
                   className="flex-1 py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40 cursor-pointer transition-colors"
-                >
-                  პროდუქტის რეგისტრაცია
-                </button>
+                >{tr('პროდუქტის რეგისტრაცია')}</button>
               </div>
             </form>
           </div>
@@ -839,11 +827,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               <div>
                 <h3 className="text-sm sm:text-base font-bold text-white flex items-center space-x-2">
                   <ImageIcon className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-400" />
-                  <span>{galleryProduct.name} — ფოტო გალერეა</span>
+                  <span>{tr('{name} — ფოტო გალერეა', { name: galleryProduct.name })}</span>
                 </h3>
-                <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">
-                  სულ {galleryProduct.images?.length || 0} ფოტო
-                </p>
+                <p className="text-[11px] sm:text-xs text-slate-400 mt-0.5">{tr('სულ {value} ფოტო', { value: galleryProduct.images?.length || 0 })}</p>
               </div>
               <button 
                 onClick={() => setGalleryProduct(null)} 
@@ -887,14 +873,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                       className="absolute top-3 right-3 px-3 py-1.5 bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-700/60 rounded-lg text-xs font-semibold flex items-center space-x-1 cursor-pointer transition shadow"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span>წაშლა</span>
+                      <span>{tr('წაშლა')}</span>
                     </button>
                   )}
                 </>
               ) : (
                 <div className="text-center p-8 text-slate-500">
                   <ImageIcon className="w-12 h-12 mx-auto mb-2 opacity-40" />
-                  <p className="text-sm">პროდუქტს არ აქვს ატვირთული ფოტო</p>
+                  <p className="text-sm">{tr('პროდუქტს არ აქვს ატვირთული ფოტო')}</p>
                 </div>
               )}
             </div>
@@ -922,7 +908,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
               {canPhotos ? (
                 <label className="flex items-center space-x-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold cursor-pointer transition">
                   <Upload className="w-4 h-4 text-emerald-400" />
-                  <span>ახალი ფოტოს დამატება</span>
+                  <span>{tr('ახალი ფოტოს დამატება')}</span>
                   <input
                     type="file"
                     accept="image/*"
@@ -937,9 +923,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                 type="button"
                 onClick={() => setGalleryProduct(null)}
                 className="px-5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
-              >
-                დახურვა
-              </button>
+              >{tr('დახურვა')}</button>
             </div>
           </div>
         </div>

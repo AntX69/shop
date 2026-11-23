@@ -10,6 +10,7 @@
 import { invokeIpc } from '../api/ipcClient.ts';
 import type { OcrResult } from '../../shared/ocr.ts';
 import type { Rect } from './cameraRoi.ts';
+import { tr } from '../../shared/i18n/index.ts';
 
 export type BoundingBox = Rect;
 
@@ -47,7 +48,7 @@ export function readRegion(sourceCanvas: HTMLCanvasElement, roi: BoundingBox): R
   out.width = target.width;
   out.height = target.height;
   const ctx = out.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('Canvas 2D context-ის მიღება ვერ მოხერხდა');
+  if (!ctx) throw new Error(tr('Canvas 2D context-ის მიღება ვერ მოხერხდა'));
   // Transparent parts of a PNG count as white paper, not as black ink.
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, target.width, target.height);
@@ -71,11 +72,11 @@ export async function recognizeRegion(region: RegionImage, diagnostics = false):
   } catch (ipcErr: any) {
     console.error('[OCR] recognition error:', ipcErr);
     throw new Error(
-      `ამოცნობა ვერ შესრულდა (${ipcErr?.message || 'შეცდომა'}). გთხოვთ შეიყვანოთ 5-ნიშნა კოდი ხელით ან გამოიყენოთ შტრიხკოდის სკანერი.`
+      tr('ამოცნობა ვერ შესრულდა ({value}). გთხოვთ შეიყვანოთ 5-ნიშნა კოდი ხელით ან გამოიყენოთ შტრიხკოდის სკანერი.', { value: ipcErr?.message || tr('შეცდომა') })
     );
   }
   if (!result || !Array.isArray(result.digits) || typeof result.status !== 'string') {
-    throw new Error('ONNX მოდელმა ვერ დააბრუნა ვალიდური შედეგი. გთხოვთ შეიყვანოთ 5-ნიშნა კოდი ხელით.');
+    throw new Error(tr('ONNX მოდელმა ვერ დააბრუნა ვალიდური შედეგი. გთხოვთ შეიყვანოთ 5-ნიშნა კოდი ხელით.'));
   }
   return result;
 }
@@ -86,14 +87,14 @@ export async function regionPng(region: RegionImage): Promise<Uint8Array> {
   c.width = region.width;
   c.height = region.height;
   const ctx = c.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D context-ის მიღება ვერ მოხერხდა');
+  if (!ctx) throw new Error(tr('Canvas 2D context-ის მიღება ვერ მოხერხდა'));
   ctx.putImageData(new ImageData(new Uint8ClampedArray(region.data), region.width, region.height), 0, 0);
   return canvasPng(c);
 }
 
 export async function canvasPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-  if (!blob) throw new Error('PNG-ის შექმნა ვერ მოხერხდა');
+  if (!blob) throw new Error(tr('PNG-ის შექმნა ვერ მოხერხდა'));
   return new Uint8Array(await blob.arrayBuffer());
 }
 
@@ -103,11 +104,11 @@ export const PHOTO_MAX_PIXELS = 40_000_000;
 
 /** Checks a photo before decoding it: type, size and the file's own signature bytes. */
 export async function checkPhotoFile(file: File): Promise<string | null> {
-  if (file.type !== 'image/png' && file.type !== 'image/jpeg') return 'მხოლოდ JPG ან PNG ფოტო';
-  if (file.size > PHOTO_MAX_BYTES) return 'ფოტო 15 MB-ზე დიდია';
+  if (file.type !== 'image/png' && file.type !== 'image/jpeg') return tr('მხოლოდ JPG ან PNG ფოტო');
+  if (file.size > PHOTO_MAX_BYTES) return tr('ფოტო 15 MB-ზე დიდია');
   const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
   const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((b, i) => head[i] === b);
   const jpeg = head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
-  if (!png && !jpeg) return 'ფაილი JPG ან PNG ფოტო არ არის';
+  if (!png && !jpeg) return tr('ფაილი JPG ან PNG ფოტო არ არის');
   return null;
 }

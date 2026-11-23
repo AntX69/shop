@@ -15,6 +15,7 @@
 
 import React, { useRef, useState, useEffect } from 'react';
 import { applyKey, applyPaste, isComplete, normalizeSlots, slotsFromValue, slotsKey, SlotUpdate } from '../utils/digitSlots.ts';
+import { tr } from '../../shared/i18n/index.ts';
 
 export interface SmartDigitInputProps {
   length: number;
@@ -45,7 +46,7 @@ export const SmartDigitInput: React.FC<SmartDigitInputProps> = ({
   isMasked = false,
   className = '',
   slotClassName = '',
-  ariaLabel = 'ციფრული კოდის შეყვანა'
+  ariaLabel = tr('ციფრული კოდის შეყვანა')
 }) => {
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const fromProps = () => (slotValues ? normalizeSlots(slotValues, length) : slotsFromValue(value, length));
@@ -148,9 +149,9 @@ export const SmartDigitInput: React.FC<SmartDigitInputProps> = ({
           onChange={() => {}} // Controlled strictly by onKeyDown and onPaste
           onKeyDown={(e) => handleKeyDown(idx, e)}
           onPaste={(e) => handlePaste(idx, e)}
-          aria-label={`ციფრი #${idx + 1}`}
+          aria-label={tr('ციფრი #{value}', { value: idx + 1 })}
           data-flagged={flagged?.[idx] ? 'true' : undefined}
-          title={flagged?.[idx] ? 'შეამოწმეთ ეს ციფრი' : undefined}
+          title={flagged?.[idx] ? tr('შეამოწმეთ ეს ციფრი') : undefined}
           placeholder="0"
           className={
             slotClassName ||

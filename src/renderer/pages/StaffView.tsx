@@ -22,6 +22,8 @@ import {
   X,
   AlertCircle
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
+import { fmtDate } from '../../shared/i18n/format.ts';
 
 interface StaffViewProps {
   currentUser: User;
@@ -68,11 +70,11 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
     setAddError('');
 
     if (!newUserName.trim()) {
-      setAddError('თანამშრომლის სახელი სავალდებულოა');
+      setAddError(tr('თანამშრომლის სახელი სავალდებულოა'));
       return;
     }
     if (!/^\d{4,6}$/.test(newUserPin)) {
-      setAddError('PIN კოდი უნდა შედგებოდეს 4-დან 6 ციფრისგან');
+      setAddError(tr('PIN კოდი უნდა შედგებოდეს 4-დან 6 ციფრისგან'));
       return;
     }
 
@@ -88,15 +90,15 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
       setNewUserPin('');
       loadUsers();
     } catch (err: any) {
-      setAddError(err.message || 'თანამშრომლის დამატება ვერ მოხერხდა');
+      setAddError(trServer(err.message) || tr('თანამშრომლის დამატება ვერ მოხერხდა'));
     }
   };
 
   const handleToggleActive = async (targetUser: User) => {
     const newStatus = targetUser.is_active === 1 ? false : true;
     const confirmMsg = newStatus 
-      ? `ნამდვილად გსურთ ${targetUser.name}-ის ანგარიშის გააქტიურება?`
-      : `ნამდვილად გსურთ ${targetUser.name}-ის ანგარიშის დაბლოკვა?`;
+      ? tr('ნამდვილად გსურთ {name}-ის ანგარიშის გააქტიურება?', { name: targetUser.name })
+      : tr('ნამდვილად გსურთ {name}-ის ანგარიშის დაბლოკვა?', { name: targetUser.name });
 
     if (!confirm(confirmMsg)) return;
 
@@ -107,7 +109,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
       });
       loadUsers();
     } catch (err: any) {
-      alert(err.message || 'სტატუსის შეცვლა ვერ მოხერხდა');
+      alert(trServer(err.message) || tr('სტატუსის შეცვლა ვერ მოხერხდა'));
     }
   };
 
@@ -117,13 +119,13 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
 
     if (!resetTargetUser) return;
     if (!/^\d{4,6}$/.test(resetPinValue)) {
-      setResetError('PIN კოდი უნდა შედგებოდეს 4-დან 6 ციფრისგან');
+      setResetError(tr('PIN კოდი უნდა შედგებოდეს 4-დან 6 ციფრისგან'));
       return;
     }
 
     const isSelf = resetTargetUser.id === currentUser.id;
     if (isSelf && !/^\d{4,6}$/.test(currentPinValue)) {
-      setResetError('შეიყვანეთ მიმდინარე PIN კოდი');
+      setResetError(tr('შეიყვანეთ მიმდინარე PIN კოდი'));
       return;
     }
 
@@ -137,13 +139,13 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
         await invokeIpc('auth:resetPin', { userId: resetTargetUser.id, newPin: resetPinValue });
       }
 
-      alert(`PIN კოდი წარმატებით შეიცვალა (${resetTargetUser.name})`);
+      alert(tr('PIN კოდი წარმატებით შეიცვალა ({name})', { name: resetTargetUser.name }));
       setResetTargetUser(null);
       setResetPinValue('');
       setCurrentPinValue('');
       loadUsers();
     } catch (err: any) {
-      setResetError(err.message || 'PIN-ის შეცვლა ვერ მოხერხდა');
+      setResetError(trServer(err.message) || tr('PIN-ის შეცვლა ვერ მოხერხდა'));
     }
   };
 
@@ -155,9 +157,9 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
         <div>
           <h1 className="text-lg lg:text-xl font-bold text-white flex items-center space-x-2">
             <UserCheck className="w-5 h-5 lg:w-6 lg:h-6 text-emerald-400" />
-            <span>თანამშრომლები და უფლებები</span>
+            <span>{tr('თანამშრომლები და უფლებები')}</span>
           </h1>
-          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">მფლობელისა და გამყიდველების ანგარიშები, PIN კოდების მართვა</p>
+          <p className="text-[11px] lg:text-xs text-slate-400 mt-0.5">{tr('მფლობელისა და გამყიდველების ანგარიშები, PIN კოდების მართვა')}</p>
         </div>
 
         <button
@@ -168,7 +170,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
           className="px-3.5 py-2 sm:px-4 sm:py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer"
         >
           <UserPlus className="w-4 h-4" />
-          <span>+ ახალი თანამშრომელი</span>
+          <span>{tr('+ ახალი თანამშრომელი')}</span>
         </button>
       </div>
 
@@ -178,11 +180,11 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
           <table className="w-full text-left text-xs min-w-[560px]">
             <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold tracking-wider sticky top-0 border-b border-slate-800">
               <tr>
-                <th className="py-3 px-4">სახელი</th>
-                <th className="py-3 px-4">როლი</th>
-                <th className="py-3 px-4">სტატუსი</th>
-                <th className="py-3 px-4">რეგისტრაციის თარიღი</th>
-                <th className="py-3 px-4 text-right">მოქმედებები</th>
+                <th className="py-3 px-4">{tr('სახელი')}</th>
+                <th className="py-3 px-4">{tr('როლი')}</th>
+                <th className="py-3 px-4">{tr('სტატუსი')}</th>
+                <th className="py-3 px-4">{tr('რეგისტრაციის თარიღი')}</th>
+                <th className="py-3 px-4 text-right">{tr('მოქმედებები')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
@@ -191,38 +193,34 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                 return (
                   <tr key={u.id} className="hover:bg-slate-800/40 transition-colors">
                     <td className="py-3 px-4 font-bold text-white text-xs sm:text-sm whitespace-nowrap">
-                      {u.name} {isSelf && <span className="text-emerald-400 text-xs font-normal">(თქვენ)</span>}
+                      {u.name} {isSelf && <span className="text-emerald-400 text-xs font-normal">{tr('(თქვენ)')}</span>}
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
                       <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
                         u.role === 'owner' ? 'bg-amber-950/60 text-amber-400 border border-amber-800/40' : 'bg-slate-800 text-slate-300'
                       }`}>
-                        {u.role === 'owner' ? 'მფლობელი' : 'გამყიდველი'}
+                        {u.role === 'owner' ? tr('მფლობელი') : tr('გამყიდველი')}
                       </span>
                     </td>
                     <td className="py-3 px-4 whitespace-nowrap">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                         u.is_active === 1 ? 'bg-emerald-950/60 text-emerald-400' : 'bg-red-950/60 text-red-400'
                       }`}>
-                        {u.is_active === 1 ? 'აქტიური' : 'დაბლოკილი'}
+                        {u.is_active === 1 ? tr('აქტიური') : tr('დაბლოკილი')}
                       </span>
                       {(u as any).locked_until && Date.parse((u as any).locked_until) > Date.now() && (
-                        <span className="ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/60 text-amber-300" title="ბევრი არასწორი PIN-ის გამო დროებით ჩაკეტილია">
-                          PIN ჩაკეტილია
-                        </span>
+                        <span className="ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/60 text-amber-300" title={tr('ბევრი არასწორი PIN-ის გამო დროებით ჩაკეტილია')}>{tr('PIN ჩაკეტილია')}</span>
                       )}
                     </td>
                     <td className="py-3 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
-                      {new Date(u.created_at).toLocaleDateString('ka-GE')}
+                      {fmtDate(u.created_at)}
                     </td>
                     <td className="py-3 px-4 text-right space-x-2 whitespace-nowrap">
                       {!isSelf && u.role === 'seller' && (
                         <button
                           onClick={() => setPermissionsTargetUser(u)}
                           className="px-2.5 py-1 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 border border-emerald-800/40 text-xs rounded-lg transition-colors cursor-pointer"
-                        >
-                          უფლებების მართვა
-                        </button>
+                        >{tr('უფლებების მართვა')}</button>
                       )}
 
                       <button
@@ -233,9 +231,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                           setResetError('');
                         }}
                         className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition-colors cursor-pointer"
-                      >
-                        PIN შეცვლა
-                      </button>
+                      >{tr('PIN შეცვლა')}</button>
 
                       {!isSelf && ((u as any).failed_pin_attempts > 0 || (u as any).locked_until) && (
                         <button
@@ -244,14 +240,12 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                               await invokeIpc('auth:unlockUser', { userId: u.id });
                               loadUsers();
                             } catch (err: any) {
-                              alert(err.message || 'განბლოკვა ვერ მოხერხდა');
+                              alert(trServer(err.message) || tr('განბლოკვა ვერ მოხერხდა'));
                             }
                           }}
                           className="px-2.5 py-1 bg-amber-950/40 hover:bg-amber-900/60 text-amber-300 text-xs rounded-lg transition-colors cursor-pointer"
-                          title="არასწორი PIN-ების მრიცხველის განულება"
-                        >
-                          განბლოკვა
-                        </button>
+                          title={tr('არასწორი PIN-ების მრიცხველის განულება')}
+                        >{tr('განბლოკვა')}</button>
                       )}
 
                       {!isSelf && (
@@ -263,7 +257,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                               : 'bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400'
                           }`}
                         >
-                          {u.is_active === 1 ? 'დაბლოკვა' : 'გააქტიურება'}
+                          {u.is_active === 1 ? tr('დაბლოკვა') : tr('გააქტიურება')}
                         </button>
                       )}
                     </td>
@@ -280,7 +274,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="flex justify-between items-center border-b border-slate-800 p-4 shrink-0">
-              <h3 className="text-base font-bold text-white">ახალი თანამშრომელი</h3>
+              <h3 className="text-base font-bold text-white">{tr('ახალი თანამშრომელი')}</h3>
               <button onClick={() => setIsAddUserOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
@@ -295,31 +289,31 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
 
               <form id="add-user-form" onSubmit={handleAddUserSubmit} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">სახელი *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('სახელი *')}</label>
                   <input
                     type="text"
                     required
                     value={newUserName}
                     onChange={(e) => setNewUserName(e.target.value)}
-                    placeholder="მაგ. ნინო გამყიდველი"
+                    placeholder={tr('მაგ. ნინო გამყიდველი')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">როლი</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('როლი')}</label>
                   <select
                     value={newUserRole}
                     onChange={(e) => setNewUserRole(e.target.value as any)}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   >
-                    <option value="seller">გამყიდველი (მხოლოდ სალარო & დაბრუნება)</option>
-                    <option value="owner">მფლობელი (სრული წვდომა)</option>
+                    <option value="seller">{tr('გამყიდველი (მხოლოდ სალარო & დაბრუნება)')}</option>
+                    <option value="owner">{tr('მფლობელი (სრული წვდომა)')}</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">PIN კოდი (4-6 ციფრი) *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('PIN კოდი (4-6 ციფრი) *')}</label>
                   <input
                     type="password"
                     maxLength={6}
@@ -338,16 +332,12 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                 type="button"
                 onClick={() => setIsAddUserOpen(false)}
                 className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="submit"
                 form="add-user-form"
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40"
-              >
-                დამატება
-              </button>
+              >{tr('დამატება')}</button>
             </div>
           </div>
         </div>
@@ -358,7 +348,7 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
             <div className="flex justify-between items-center border-b border-slate-800 p-4 shrink-0">
-              <h3 className="text-base font-bold text-white">PIN კოდის შეცვლა</h3>
+              <h3 className="text-base font-bold text-white">{tr('PIN კოდის შეცვლა')}</h3>
               <button onClick={() => setResetTargetUser(null)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
@@ -372,12 +362,11 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
               )}
 
               <form id="reset-pin-form" onSubmit={handleResetPinSubmit} className="space-y-3">
-                <div className="text-xs text-slate-400">
-                  მომხმარებელი: <span className="font-bold text-white">{resetTargetUser.name}</span>
+                <div className="text-xs text-slate-400">{tr('მომხმარებელი:')}{' '}<span className="font-bold text-white">{resetTargetUser.name}</span>
                 </div>
                 {resetTargetUser.id === currentUser.id ? (
                   <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">მიმდინარე PIN კოდი *</label>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('მიმდინარე PIN კოდი *')}</label>
                     <input
                       type="password"
                       maxLength={6}
@@ -389,11 +378,11 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                     />
                   </div>
                 ) : (
-                  <p className="text-[11px] text-slate-500">ძველი PIN არავისთვის ჩანს. ახალი PIN-ის დაყენებისას თანამშრომლის ღია სესია დაიხურება.</p>
+                  <p className="text-[11px] text-slate-500">{tr('ძველი PIN არავისთვის ჩანს. ახალი PIN-ის დაყენებისას თანამშრომლის ღია სესია დაიხურება.')}</p>
                 )}
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">ახალი PIN კოდი (4-6 ციფრი) *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('ახალი PIN კოდი (4-6 ციფრი) *')}</label>
                   <input
                     type="password"
                     maxLength={6}
@@ -412,16 +401,12 @@ export const StaffView: React.FC<StaffViewProps> = ({ currentUser }) => {
                 type="button"
                 onClick={() => setResetTargetUser(null)}
                 className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="submit"
                 form="reset-pin-form"
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40"
-              >
-                შეცვლა
-              </button>
+              >{tr('შეცვლა')}</button>
             </div>
           </div>
         </div>

@@ -26,6 +26,7 @@ import {
   FolderSync,
   Layers
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
 
 interface CategoryManagerModalProps {
   onClose: () => void;
@@ -71,7 +72,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
       const data = await invokeIpc<Category[]>('products:getCategories', { includeArchived: true });
       setCategories(data);
     } catch (err: any) {
-      setError(err.message || 'კატეგორიების ჩატვირთვა ვერ მოხერხდა');
+      setError(trServer(err.message) || tr('კატეგორიების ჩატვირთვა ვერ მოხერხდა'));
     } finally {
       setLoading(false);
     }
@@ -109,7 +110,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nameInput.trim()) {
-      setError('კატეგორიის სახელი სავალდებულოა');
+      setError(tr('კატეგორიის სახელი სავალდებულოა'));
       return;
     }
 
@@ -122,13 +123,13 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
           name: nameInput.trim(),
           color: colorInput
         });
-        setNotice(`კატეგორია "${nameInput.trim()}" განახლებულია`);
+        setNotice(tr('კატეგორია "{trim}" განახლებულია', { trim: nameInput.trim() }));
       } else {
         await invokeIpc('products:createCategory', {
           name: nameInput.trim(),
           color: colorInput
         });
-        setNotice(`ახალი კატეგორია "${nameInput.trim()}" შექმნილია`);
+        setNotice(tr('ახალი კატეგორია "{trim}" შექმნილია', { trim: nameInput.trim() }));
       }
       setIsEditing(false);
       setEditingId(null);
@@ -136,7 +137,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
       loadCategories();
       onChanged();
     } catch (err: any) {
-      setError(err.message || 'შენახვა ვერ მოხერხდა');
+      setError(trServer(err.message) || tr('შენახვა ვერ მოხერხდა'));
     } finally {
       setSubmitting(false);
     }
@@ -149,11 +150,11 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
         categoryId: cat.id,
         isArchived: nextArchived
       });
-      setNotice(nextArchived ? `კატეგორია "${cat.name}" დაარქივდა` : `კატეგორია "${cat.name}" აღდგა`);
+      setNotice(nextArchived ? tr('კატეგორია "{name}" დაარქივდა', { name: cat.name }) : tr('კატეგორია "{name}" აღდგა', { name: cat.name }));
       loadCategories();
       onChanged();
     } catch (err: any) {
-      setError(err.message || 'სტატუსის შეცვლა ვერ მოხერხდა');
+      setError(trServer(err.message) || tr('სტატუსის შეცვლა ვერ მოხერხდა'));
     }
   };
 
@@ -185,12 +186,12 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
         categoryId: deleteTarget.id,
         reassignToCategoryId: reassignTargetId === '' ? null : Number(reassignTargetId)
       });
-      setNotice(`კატეგორია "${deleteTarget.name}" უსაფრთხოდ წაიშალა`);
+      setNotice(tr('კატეგორია "{name}" უსაფრთხოდ წაიშალა', { name: deleteTarget.name }));
       closeDeleteDialog();
       loadCategories();
       onChanged();
     } catch (err: any) {
-      setError(err.message || 'კატეგორიის წაშლა ვერ მოხერხდა');
+      setError(trServer(err.message) || tr('კატეგორიის წაშლა ვერ მოხერხდა'));
     } finally {
       setDeleting(false);
     }
@@ -209,8 +210,8 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
               <Layers className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">კატეგორიების მართვა</h2>
-              <p className="text-[11px] text-slate-400">პროდუქტების კატეგორიები, ფერები და უსაფრთხო არქივაცია</p>
+              <h2 className="text-base font-bold text-white">{tr('კატეგორიების მართვა')}</h2>
+              <p className="text-[11px] text-slate-400">{tr('პროდუქტების კატეგორიები, ფერები და უსაფრთხო არქივაცია')}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 cursor-pointer">
@@ -238,37 +239,35 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
                 <Tag className="w-3.5 h-3.5" />
-                {editingId ? 'კატეგორიის რედაქტირება' : 'ახალი კატეგორიის შექმნა'}
+                {editingId ? tr('კატეგორიის რედაქტირება') : tr('ახალი კატეგორიის შექმნა')}
               </span>
-              <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-white text-xs cursor-pointer">
-                გაუქმება
-              </button>
+              <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-white text-xs cursor-pointer">{tr('გაუქმება')}</button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1">დასახელება *</label>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">{tr('დასახელება *')}</label>
                 <input
                   type="text"
                   autoFocus
                   required
                   value={nameInput}
                   onChange={(e) => setNameInput(e.target.value)}
-                  placeholder="მაგ. ხილი და ბოსტნეული"
+                  placeholder={tr('მაგ. ხილი და ბოსტნეული')}
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs focus:border-emerald-500 focus:outline-none"
                   maxLength={60}
                 />
               </div>
 
               <div>
-                <label className="block text-[11px] font-semibold text-slate-300 mb-1">ფერი</label>
+                <label className="block text-[11px] font-semibold text-slate-300 mb-1">{tr('ფერი')}</label>
                 <div className="flex items-center space-x-2">
                   <input
                     type="color"
                     value={colorInput}
                     onChange={(e) => setColorInput(e.target.value)}
                     className="w-9 h-8 bg-transparent rounded cursor-pointer border border-slate-700"
-                    title="ფერის ამომრჩევი"
+                    title={tr('ფერის ამომრჩევი')}
                   />
                   <div className="flex-1 flex items-center gap-1 overflow-x-auto py-1">
                     {CATEGORY_PALETTE.map((c) => (
@@ -278,7 +277,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
                         onClick={() => setColorInput(c.hex)}
                         className={`w-6 h-6 rounded-full border-2 transition-transform cursor-pointer shrink-0 ${colorInput.toLowerCase() === c.hex.toLowerCase() ? 'scale-110 border-white' : 'border-transparent hover:scale-105'}`}
                         style={{ backgroundColor: c.hex }}
-                        title={c.name}
+                        title={tr(c.name)}
                       />
                     ))}
                   </div>
@@ -288,14 +287,12 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
 
             {/* Live Preview */}
             <div className="flex items-center justify-between pt-1 text-xs text-slate-400">
-              <span className="flex items-center gap-2">
-                ცოცხალი ხედი:
-                <span 
+              <span className="flex items-center gap-2">{tr('ცოცხალი ხედი:')}<span 
                   className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white shadow-sm"
                   style={{ backgroundColor: colorInput }}
                 >
                   <Tag className="w-3 h-3 mr-1" />
-                  {nameInput.trim() || 'კატეგორიის ნიმუში'}
+                  {nameInput.trim() || tr('კატეგორიის ნიმუში')}
                 </span>
               </span>
 
@@ -304,7 +301,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
                 disabled={submitting}
                 className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold cursor-pointer transition-colors"
               >
-                {submitting ? 'ინახება...' : (editingId ? 'განახლება' : 'შექმნა')}
+                {submitting ? tr('ინახება...') : (editingId ? tr('განახლება') : tr('შექმნა'))}
               </button>
             </div>
           </form>
@@ -313,7 +310,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
         {/* Toolbar & Filter */}
         <div className="px-5 py-2.5 flex items-center justify-between border-b border-slate-800/60 bg-slate-900/50 text-xs">
           <div className="flex items-center space-x-3">
-            <span className="text-slate-400 font-medium">სულ: {categories.length}</span>
+            <span className="text-slate-400 font-medium">{tr('სულ: {length}', { length: categories.length })}</span>
             <label className="flex items-center space-x-1.5 text-slate-400 hover:text-white cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -321,7 +318,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
                 onChange={(e) => setShowArchived(e.target.checked)}
                 className="rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-0"
               />
-              <span className="text-[11px]">დაარქივებულების ჩვენება</span>
+              <span className="text-[11px]">{tr('დაარქივებულების ჩვენება')}</span>
             </label>
           </div>
 
@@ -331,7 +328,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
               className="flex items-center space-x-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold text-xs cursor-pointer transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>ახალი კატეგორია</span>
+              <span>{tr('ახალი კატეგორია')}</span>
             </button>
           )}
         </div>
@@ -339,9 +336,9 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
         {/* Categories List */}
         <div className="flex-1 overflow-y-auto p-5 space-y-2 min-h-0">
           {loading ? (
-            <div className="py-12 text-center text-slate-500 text-sm">იტვირთება...</div>
+            <div className="py-12 text-center text-slate-500 text-sm">{tr('იტვირთება...')}</div>
           ) : visibleCategories.length === 0 ? (
-            <div className="py-12 text-center text-slate-500 text-xs">კატეგორიები ვერ მოიძებნა</div>
+            <div className="py-12 text-center text-slate-500 text-xs">{tr('კატეგორიები ვერ მოიძებნა')}</div>
           ) : (
             visibleCategories.map((cat) => {
               const isArchived = cat.is_archived === 1;
@@ -365,16 +362,12 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
                           {cat.name}
                         </span>
                         {isArchived && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950/60 text-amber-400 border border-amber-800/40 font-semibold">
-                            დაარქივებული
-                          </span>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950/60 text-amber-400 border border-amber-800/40 font-semibold">{tr('დაარქივებული')}</span>
                         )}
                       </div>
-                      <div className="text-[11px] text-slate-500">
-                        აქტიური პროდუქტი: <span className="font-semibold text-slate-300">{cat.products_count || 0}</span>
+                      <div className="text-[11px] text-slate-500">{tr('აქტიური პროდუქტი:')}{' '}<span className="font-semibold text-slate-300">{cat.products_count || 0}</span>
                         {(cat.archived_products_count || 0) > 0 && (
-                          <span className="ml-2">
-                            (დაარქივებული: <span className="font-semibold text-slate-400">{cat.archived_products_count}</span>)
+                          <span className="ml-2">{tr('(დაარქივებული:')}{' '}<span className="font-semibold text-slate-400">{cat.archived_products_count}</span>)
                           </span>
                         )}
                       </div>
@@ -386,21 +379,21 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
                     <button
                       onClick={() => startEdit(cat)}
                       className="p-1.5 text-slate-400 hover:text-emerald-400 rounded-lg hover:bg-slate-800 cursor-pointer"
-                      title="რედაქტირება"
+                      title={tr('რედაქტირება')}
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => handleToggleArchive(cat)}
                       className="p-1.5 text-slate-400 hover:text-amber-400 rounded-lg hover:bg-slate-800 cursor-pointer"
-                      title={isArchived ? 'აღდგენა' : 'დაარქივება'}
+                      title={isArchived ? tr('აღდგენა') : tr('დაარქივება')}
                     >
                       {isArchived ? <ArchiveRestore className="w-3.5 h-3.5" /> : <Archive className="w-3.5 h-3.5" />}
                     </button>
                     <button
                       onClick={() => openDeleteDialog(cat)}
                       className="p-1.5 text-slate-400 hover:text-red-400 rounded-lg hover:bg-slate-800 cursor-pointer"
-                      title="უსაფრთხო წაშლა"
+                      title={tr('უსაფრთხო წაშლა')}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -416,9 +409,7 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
           <button
             onClick={onClose}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold cursor-pointer"
-          >
-            დახურვა
-          </button>
+          >{tr('დახურვა')}</button>
         </div>
 
       </div>
@@ -429,50 +420,39 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
           <div className="bg-slate-900 border border-red-900/60 rounded-2xl w-full max-w-md p-5 space-y-4 shadow-2xl">
             <div className="flex items-center space-x-2.5 text-red-400">
               <AlertTriangle className="w-5 h-5 shrink-0" />
-              <h3 className="text-sm font-bold text-white">კატეგორიის წაშლა: "{deleteTarget.name}"</h3>
+              <h3 className="text-sm font-bold text-white">{tr('კატეგორიის წაშლა: "{name}"', { name: deleteTarget.name })}</h3>
             </div>
 
             {usageInfo && usageInfo.total > 0 ? (
               <div className="space-y-3 text-xs text-slate-300">
                 <div className="p-3 bg-amber-950/40 border border-amber-800/40 rounded-xl space-y-1">
-                  <div className="font-bold text-amber-300">ყურადღება! კატეგორია შეიცავს პროდუქტებს:</div>
-                  <div className="text-[11px] text-slate-300">
-                    აქტიური: <b>{usageInfo.active_products_count}</b> &bull; დაარქივებული: <b>{usageInfo.archived_products_count}</b> (სულ {usageInfo.total})
-                  </div>
-                  <p className="text-[10px] text-slate-400 pt-1">
-                    წაშლისას პროდუქტები და გაყიდვების ისტორია <b>არ წაიშლება</b>.
+                  <div className="font-bold text-amber-300">{tr('ყურადღება! კატეგორია შეიცავს პროდუქტებს:')}</div>
+                  <div className="text-[11px] text-slate-300">{tr('აქტიური:')}{' '}<b>{usageInfo.active_products_count}</b>{' '}{tr('• დაარქივებული:')}{' '}<b>{usageInfo.archived_products_count}</b>{' '}{tr('(სულ {total})', { total: usageInfo.total })}</div>
+                  <p className="text-[10px] text-slate-400 pt-1">{tr('წაშლისას პროდუქტები და გაყიდვების ისტორია')}{' '}<b>{tr('არ წაიშლება')}</b>.
                   </p>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">
-                    სად გადავიტანოთ ეს პროდუქტები?
-                  </label>
+                  <label className="block text-[11px] font-semibold text-slate-300 mb-1">{tr('სად გადავიტანოთ ეს პროდუქტები?')}</label>
                   <select
                     value={reassignTargetId}
                     onChange={(e) => setReassignTargetId(e.target.value ? Number(e.target.value) : '')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
                   >
-                    <option value="">-- აირჩიეთ კატეგორია (სავალდებულოა) --</option>
+                    <option value="">{tr('-- აირჩიეთ კატეგორია (სავალდებულოა) --')}</option>
                     {categories
                       .filter((c) => c.id !== deleteTarget.id && !c.is_archived)
                       .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          გადატანა: {c.name}
-                        </option>
+                        <option key={c.id} value={c.id}>{tr('გადატანა: {name}', { name: c.name })}</option>
                       ))}
                   </select>
                   {categories.filter((c) => c.id !== deleteTarget.id && !c.is_archived).length === 0 && (
-                    <p className="text-[10px] text-amber-300 pt-1">
-                      სხვა აქტიური კატეგორია არ არის: ჯერ შექმენით ან აღადგინეთ კატეგორია, სადაც პროდუქტები გადავა.
-                    </p>
+                    <p className="text-[10px] text-amber-300 pt-1">{tr('სხვა აქტიური კატეგორია არ არის: ჯერ შექმენით ან აღადგინეთ კატეგორია, სადაც პროდუქტები გადავა.')}</p>
                   )}
                 </div>
               </div>
             ) : (
-              <p className="text-xs text-slate-300">
-                კატეგორია ცარიელია (პროდუქტები არ ეკუთვნის). ნამდვილად გსურთ წაშლა?
-              </p>
+              <p className="text-xs text-slate-300">{tr('კატეგორია ცარიელია (პროდუქტები არ ეკუთვნის). ნამდვილად გსურთ წაშლა?')}</p>
             )}
 
             <div className="flex space-x-2 pt-2">
@@ -481,16 +461,14 @@ export const CategoryManagerModal: React.FC<CategoryManagerModalProps> = ({ onCl
                 onClick={closeDeleteDialog}
                 disabled={deleting}
                 className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold cursor-pointer"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="button"
                 onClick={handleExecuteDelete}
                 disabled={deleting || !usageInfo || (usageInfo.total > 0 && reassignTargetId === '')}
                 className="flex-1 py-2 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
               >
-                {deleting ? 'იშლება...' : 'დადასტურება და წაშლა'}
+                {deleting ? tr('იშლება...') : tr('დადასტურება და წაშლა')}
               </button>
             </div>
           </div>

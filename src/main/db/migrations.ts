@@ -735,6 +735,17 @@ export const migrations: Migration[] = [
         'expenses', 'user_permissions',
       ]);
     }
+  },
+  {
+    version: 12,
+    name: 'languages_and_shop_currency',
+    up: (db: DatabaseSync) => {
+      // Each user's interface language (ka, en, ru, es); NULL = the language chosen on this computer.
+      addColumnIfMissing(db, 'users', 'ui_language', 'TEXT');
+      // The shop currency and time zone have existed as settings since the first version
+      // (GEL, Asia/Tbilisi); from V1.2 they are used. A shop set up earlier keeps them.
+      db.exec(`INSERT OR IGNORE INTO app_settings (key, value) VALUES ('currency', 'GEL'), ('timezone', 'Asia/Tbilisi');`);
+    }
   }
 ];
 
@@ -801,6 +812,12 @@ export function runMigrations(db: DatabaseSync, dbPath?: string): void {
 
   const appliedRows = db.prepare('SELECT version FROM schema_migrations ORDER BY version ASC').all() as Array<{ version: number }>;
   const appliedVersions = new Set(appliedRows.map(r => r.version));
+
+  // A database written by a newer StorePOS is never changed by this one (its rules may differ).
+  const newest = appliedRows.reduce((max, r) => Math.max(max, r.version), 0);
+  if (newest > LATEST_SCHEMA_VERSION) {
+    throw new Error(`ბაზა შექმნილია StorePOS-ის უფრო ახალი ვერსიით (სქემა v${newest}). დააინსტალირეთ ეს ან უფრო ახალი ვერსია.`);
+  }
 
   const pending = migrations.filter(m => !appliedVersions.has(m.version));
   if (pending.length === 0) {

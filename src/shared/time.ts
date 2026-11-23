@@ -2,13 +2,35 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * Business calendar helpers for the store time zone (Asia/Tbilisi).
+ * Business calendar helpers for the store time zone (Asia/Tbilisi unless the shop set another).
  * Timestamps are stored as UTC ISO strings; reporting periods, receipt dates and
  * expense dates are local calendar days, so "today" starts at Tbilisi midnight,
  * not at UTC midnight.
  */
 
 export const STORE_TIME_ZONE = 'Asia/Tbilisi';
+
+/** True for an IANA time zone name this runtime knows (e.g. "Europe/Madrid"). */
+export function isValidTimeZone(value: unknown): value is string {
+  if (typeof value !== 'string' || !value || value.length > 64) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let storeTimeZone: string = STORE_TIME_ZONE;
+
+/** The shop's time zone: calendar days for reports, receipt numbers and the daily backup. */
+export function getStoreTimeZone(): string {
+  return storeTimeZone;
+}
+
+export function setStoreTimeZone(value: unknown): void {
+  if (isValidTimeZone(value)) storeTimeZone = value;
+}
 
 const formatterCache = new Map<string, Intl.DateTimeFormat>();
 
@@ -46,13 +68,13 @@ function zoneOffsetMs(date: Date, timeZone: string): number {
 const pad = (n: number, width = 2) => String(n).padStart(width, '0');
 
 /** Local calendar day of an instant, as YYYY-MM-DD. */
-export function localDate(date: Date = new Date(), timeZone: string = STORE_TIME_ZONE): string {
+export function localDate(date: Date = new Date(), timeZone: string = storeTimeZone): string {
   const p = zonedParts(date, timeZone);
   return `${pad(p.year, 4)}-${pad(p.month)}-${pad(p.day)}`;
 }
 
 /** Local wall-clock time of an instant, as YYYY-MM-DD HH:mm. */
-export function localDateTime(date: Date = new Date(), timeZone: string = STORE_TIME_ZONE): string {
+export function localDateTime(date: Date = new Date(), timeZone: string = storeTimeZone): string {
   const p = zonedParts(date, timeZone);
   return `${pad(p.year, 4)}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`;
 }
@@ -70,7 +92,7 @@ export function addDays(localDay: string, days: number): string {
 }
 
 /** UTC instant at which the given local calendar day begins. */
-export function startOfLocalDayUtc(localDay: string, timeZone: string = STORE_TIME_ZONE): Date {
+export function startOfLocalDayUtc(localDay: string, timeZone: string = storeTimeZone): Date {
   const [y, m, d] = localDay.split('-').map(Number);
   const wallMidnight = Date.UTC(y, m - 1, d);
   let ts = wallMidnight - zoneOffsetMs(new Date(wallMidnight), timeZone);
@@ -103,7 +125,7 @@ export interface ResolvedPeriod {
  * Resolves a reporting period to local days and UTC bounds.
  * Weeks start on Monday, as is customary in Georgia.
  */
-export function resolvePeriod(input: PeriodInput = {}, now: Date = new Date(), timeZone: string = STORE_TIME_ZONE): ResolvedPeriod {
+export function resolvePeriod(input: PeriodInput = {}, now: Date = new Date(), timeZone: string = storeTimeZone): ResolvedPeriod {
   const preset: PeriodPreset = input.preset || (input.from || input.to ? 'custom' : 'all');
   const today = localDate(now, timeZone);
   const [ty, tm] = today.split('-').map(Number);
@@ -169,7 +191,7 @@ export function resolvePeriod(input: PeriodInput = {}, now: Date = new Date(), t
  * ISO instant into a UTC ISO string. Local days map to the start of that day, or to
  * the start of the next day when used as an exclusive end bound.
  */
-export function boundToUtc(value: string, kind: 'start' | 'end', timeZone: string = STORE_TIME_ZONE): string {
+export function boundToUtc(value: string, kind: 'start' | 'end', timeZone: string = storeTimeZone): string {
   if (isValidLocalDate(value)) {
     return startOfLocalDayUtc(kind === 'start' ? value : addDays(value, 1), timeZone).toISOString();
   }

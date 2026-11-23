@@ -12,6 +12,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { runMigrations } from './migrations.ts';
 import { registerDowngradeGuardFunction } from './downgradeGuard.ts';
+import { setCurrency } from '../../shared/currency.ts';
+import { setStoreTimeZone, STORE_TIME_ZONE } from '../../shared/time.ts';
 
 let dbInstance: DatabaseSync | null = null;
 let currentDbPath: string = '';
@@ -117,6 +119,7 @@ export function initDatabase(customPath?: string): DatabaseSync {
 
     // Run schema migrations with safety pre-backup
     runMigrations(db, dbPath);
+    applyShopSettings(db);
   } catch (err) {
     // Never keep a half-opened connection (it would block the next attempt).
     try { db.close(); } catch {}
@@ -125,6 +128,41 @@ export function initDatabase(customPath?: string): DatabaseSync {
 
   dbInstance = db;
   return dbInstance;
+}
+
+/**
+ * True once the shop has a money record: a sale, a stock receipt with its cost, an expense,
+ * a repayment, a debt correction or a return. From then on the currency cannot change, because
+ * amounts are never converted.
+ */
+export function hasMoneyRecords(db: DatabaseSync = getDb()): boolean {
+  for (const table of ['sales', 'inventory_lots', 'expenses', 'debt_repayments', 'debt_adjustments', 'returns']) {
+    try {
+      if (db.prepare(`SELECT 1 AS x FROM ${table} LIMIT 1`).get()) return true;
+    } catch {
+      // table not created yet
+    }
+  }
+  return false;
+}
+
+/**
+ * The shop's currency and time zone are kept in app_settings. This process formats amounts
+ * and counts calendar days with them; called whenever a database is opened (start, restore)
+ * and after the owner changes the settings.
+ */
+export function applyShopSettings(db: DatabaseSync): void {
+  setCurrency('GEL');
+  setStoreTimeZone(STORE_TIME_ZONE);
+  try {
+    const rows = db.prepare("SELECT key, value FROM app_settings WHERE key IN ('currency', 'timezone')").all() as Array<{ key: string; value: string }>;
+    for (const r of rows) {
+      if (r.key === 'currency') setCurrency(r.value);
+      if (r.key === 'timezone') setStoreTimeZone(r.value);
+    }
+  } catch {
+    // No settings table yet: the defaults stay.
+  }
 }
 
 /**

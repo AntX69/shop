@@ -26,6 +26,7 @@ import {
   AlertTriangle,
   Lock
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
 
 /** Permissions that touch money or hidden figures: marked so the owner notices them. */
 const SENSITIVE = new Set(['sales.discount', 'debts.correct', 'reports.profit', 'reports.financial', 'expenses.manage', 'products.prices']);
@@ -58,7 +59,7 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
         setSelectedPermissions(set);
         setInitialPermissions(new Set(set));
       } catch (err: any) {
-        setError(err.message || 'უფლებების ჩატვირთვა ვერ მოხერხდა');
+        setError(trServer(err.message) || tr('უფლებების ჩატვირთვა ვერ მოხერხდა'));
       } finally {
         setLoading(false);
       }
@@ -116,7 +117,7 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
 
   const handleClose = () => {
     if (isDirty) {
-      if (!confirm('გაქვთ შეუნახავი ცვლილებები. ნამდვილად გსურთ ფანჯრის დახურვა?')) {
+      if (!confirm(tr('გაქვთ შეუნახავი ცვლილებები. ნამდვილად გსურთ ფანჯრის დახურვა?'))) {
         return;
       }
     }
@@ -135,13 +136,13 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
         permissions: permsArray
       });
 
-      setSuccessMsg('უფლებები წარმატებით შეინახა');
+      setSuccessMsg(tr('უფლებები წარმატებით შეინახა'));
       setInitialPermissions(new Set(selectedPermissions));
       setTimeout(() => {
         onSaved();
       }, 700);
     } catch (err: any) {
-      setError(err.message || 'უფლებების შენახვა ვერ მოხერხდა');
+      setError(trServer(err.message) || tr('უფლებების შენახვა ვერ მოხერხდა'));
     } finally {
       setSaving(false);
     }
@@ -159,12 +160,10 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
             </div>
             <div>
               <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
-                <span>უფლებების მართვა:</span>
+                <span>{tr('უფლებების მართვა:')}</span>
                 <span className="text-emerald-400">{user.name}</span>
               </h2>
-              <p className="text-xs text-slate-400">
-                ინდივიდუალური წვდომები და შეზღუდვები გამყიდველისთვის
-              </p>
+              <p className="text-xs text-slate-400">{tr('ინდივიდუალური წვდომები და შეზღუდვები გამყიდველისთვის')}</p>
             </div>
           </div>
           <button
@@ -184,7 +183,7 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
               className="px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer"
             >
               <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
-              <span>ყველას მონიშვნა</span>
+              <span>{tr('ყველას მონიშვნა')}</span>
             </button>
             <button
               type="button"
@@ -192,7 +191,7 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
               className="px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer"
             >
               <Square className="w-3.5 h-3.5 text-slate-400" />
-              <span>ყველას გაუქმება</span>
+              <span>{tr('ყველას გაუქმება')}</span>
             </button>
             <button
               type="button"
@@ -200,12 +199,11 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
               className="px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors flex items-center space-x-1.5 cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
-              <span>ნაგულისხმევი</span>
+              <span>{tr('ნაგულისხმევი')}</span>
             </button>
           </div>
 
-          <div className="text-xs font-medium text-slate-400">
-            არჩეულია: <span className="text-emerald-400 font-bold">{selectedPermissions.size}</span> / {ALL_PERMISSION_IDS.length}
+          <div className="text-xs font-medium text-slate-400">{tr('არჩეულია:')}{' '}<span className="text-emerald-400 font-bold">{selectedPermissions.size}</span> / {ALL_PERMISSION_IDS.length}
           </div>
         </div>
 
@@ -228,7 +226,7 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
           {loading ? (
             <div className="flex flex-col items-center justify-center py-12 text-slate-400 space-y-2">
               <div className="w-7 h-7 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-              <p className="text-xs">უფლებების ჩატვირთვა...</p>
+              <p className="text-xs">{tr('უფლებების ჩატვირთვა...')}</p>
             </div>
           ) : (
             <>
@@ -247,12 +245,12 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
                     <div className="px-4 py-3 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
                       <div>
                         <h3 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
-                          <span>{group.title}</span>
+                          <span>{tr(group.title)}</span>
                           <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-slate-400">
                             {selectedInGroup} / {group.permissions.length}
                           </span>
                         </h3>
-                        <p className="text-[11px] text-slate-400 mt-0.5">{group.description}</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">{tr(group.description)}</p>
                       </div>
 
                       <div className="flex items-center space-x-2">
@@ -261,7 +259,7 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
                           onClick={() => handleToggleGroup(group.id, !allSelected)}
                           className="text-[11px] font-medium text-emerald-400 hover:text-emerald-300 hover:underline cursor-pointer"
                         >
-                          {allSelected ? 'ყველას გაუქმება' : 'ყველას მონიშვნა'}
+                          {allSelected ? tr('ყველას გაუქმება') : tr('ყველას მონიშვნა')}
                         </button>
                       </div>
                     </div>
@@ -287,13 +285,13 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
                             />
                             <div className="flex-1 min-w-0">
                               <div className="text-xs font-bold text-white leading-tight flex items-center gap-1.5 flex-wrap">
-                                <span>{perm.name}</span>
+                                <span>{tr(perm.name)}</span>
                                 {SENSITIVE.has(perm.id) && (
-                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-950/70 border border-amber-800/60 text-amber-300">ფულს ეხება</span>
+                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-950/70 border border-amber-800/60 text-amber-300">{tr('ფულს ეხება')}</span>
                                 )}
                               </div>
                               <div className="text-[11px] text-slate-400 leading-normal mt-0.5">
-                                {perm.description}
+                                {tr(perm.description)}
                               </div>
                             </div>
                           </label>
@@ -309,10 +307,8 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
                 <div className="px-4 py-3 bg-amber-950/20 border-b border-amber-800/40 flex items-center gap-2">
                   <Lock className="w-4 h-4 text-amber-400 shrink-0" />
                   <div>
-                    <h3 className="text-xs sm:text-sm font-bold text-amber-300">მხოლოდ მფლობელი</h3>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      ეს მოქმედებები გამყიდველს ვერ გადაეცემა: მათით შესაძლებელი იქნებოდა საკუთარი უფლებების გაზრდა ან მფლობელის ჩაკეტვა.
-                    </p>
+                    <h3 className="text-xs sm:text-sm font-bold text-amber-300">{tr('მხოლოდ მფლობელი')}</h3>
+                    <p className="text-[11px] text-slate-400 mt-0.5">{tr('ეს მოქმედებები გამყიდველს ვერ გადაეცემა: მათით შესაძლებელი იქნებოდა საკუთარი უფლებების გაზრდა ან მფლობელის ჩაკეტვა.')}</p>
                   </div>
                 </div>
                 <div className="p-3 grid grid-cols-1 md:grid-cols-2 gap-2.5">
@@ -320,8 +316,8 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
                     <div key={cap.id} className="flex items-start space-x-3 p-2.5 rounded-xl border border-slate-800/80 bg-slate-900/30 opacity-80">
                       <Lock className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-bold text-slate-300 leading-tight">{cap.name}</div>
-                        <div className="text-[11px] text-slate-500 leading-normal mt-0.5">{cap.description}</div>
+                        <div className="text-xs font-bold text-slate-300 leading-tight">{tr(cap.name)}</div>
+                        <div className="text-[11px] text-slate-500 leading-normal mt-0.5">{tr(cap.description)}</div>
                       </div>
                     </div>
                   ))}
@@ -336,9 +332,7 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
           <div>
             {isDirty && (
               <span className="text-xs text-amber-400 font-medium flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                გაქვთ შეუნახავი ცვლილებები
-              </span>
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />{tr('გაქვთ შეუნახავი ცვლილებები')}</span>
             )}
           </div>
           
@@ -348,9 +342,7 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
               onClick={handleClose}
               disabled={saving}
               className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-xl transition-colors cursor-pointer"
-            >
-              გაუქმება
-            </button>
+            >{tr('გაუქმება')}</button>
             <button
               type="button"
               onClick={handleSave}
@@ -360,12 +352,12 @@ export const StaffPermissionsModal: React.FC<StaffPermissionsModalProps> = ({
               {saving ? (
                 <>
                   <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>ინახება...</span>
+                  <span>{tr('ინახება...')}</span>
                 </>
               ) : (
                 <>
                   <Check className="w-4 h-4" />
-                  <span>შენახვა</span>
+                  <span>{tr('შენახვა')}</span>
                 </>
               )}
             </button>

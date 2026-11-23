@@ -24,6 +24,8 @@ import { saveOcrSample } from '../ocr/samples.ts';
 import { noteActivity } from '../activity.ts';
 import { User } from '../../shared/types.ts';
 import { userCan } from '../../shared/permissions.ts';
+import { isLang } from '../../shared/i18n/index.ts';
+import { getDeviceLanguage, installerLanguage, setDeviceLanguage } from '../deviceLanguage.ts';
 
 export interface IpcRequest {
   channel: string;
@@ -84,7 +86,10 @@ const PUBLIC_SETTING_KEYS = ['store_name', 'inactivity_lock_minutes', 'currency'
 const routes: Record<string, Route> = {
   // 1. Public channels that do not require an active user session
   'auth:hasOwner': { access: 'public', handler: () => auth().hasOwner() },
-  'auth:setupOwner': { access: 'public', handler: (c) => auth().setupInitialOwner(p(c).name, p(c).pin) },
+  'auth:setupOwner': {
+    access: 'public',
+    handler: (c) => auth().setupInitialOwner(p(c).name, p(c).pin, { language: p(c).language, currency: p(c).currency, timezone: p(c).timezone }),
+  },
   'auth:getActiveUsers': { access: 'public', handler: () => auth().getActiveUsers() },
   'auth:login': { access: 'public', handler: (c) => auth().login(p(c).userId, p(c).pin) },
   'settings:getPublic': {
@@ -95,8 +100,13 @@ const routes: Record<string, Route> = {
     }
   },
 
+  // Language of this computer's screens before sign-in (no data, no money: open to the sign-in screen).
+  'app:getDeviceLanguage': { access: 'public', handler: () => ({ language: getDeviceLanguage(), installer: installerLanguage() }) },
+  'app:setDeviceLanguage': { access: 'public', handler: (c) => ({ language: setDeviceLanguage(p(c).language) }) },
+
   // 2. Session & own account
   'auth:logout': { access: 'user', handler: (c) => { auth().logout(c.token); return { logged_out: true }; } },
+  'auth:setLanguage': { access: 'user', handler: (c) => auth().setOwnLanguage(c.user, p(c).language) },
   'auth:me': { access: 'user', handler: (c) => c.user },
   'auth:changeOwnPin': { access: 'user', handler: (c) => { auth().changeOwnPin(c.user, p(c).currentPin, p(c).newPin, c.token); return { changed: true }; } },
 
@@ -208,7 +218,7 @@ const routes: Record<string, Route> = {
   },
   'finance:createExpense': { access: 'user', permission: 'expenses.manage', handler: (c) => finance().createExpense(c.user, c.payload) },
   'finance:listExpenses': { access: 'user', permission: 'reports.financial', handler: (c) => finance().listExpenses(c.user, p(c).limit) },
-  'finance:exportSalesCSV': { access: 'user', permission: 'reports.export', handler: (c) => finance().exportSalesCSV(c.user) },
+  'finance:exportSalesCSV': { access: 'user', permission: 'reports.export', handler: (c) => finance().exportSalesCSV(c.user, isLang(p(c).lang) ? p(c).lang : 'ka') },
 
   // 11. Backup, Settings & Logs (owner; making a backup and its list can be given to a seller)
   'backup:create': { access: 'user', permission: 'backups.create', handler: (c) => backup().createBackupWithMirror(c.user) },
@@ -246,6 +256,7 @@ const routes: Record<string, Route> = {
   'backup:getLogs': { access: 'owner', handler: (c) => backup().getAuditLogs(p(c).limit) },
   'backup:getSettings': { access: 'owner', handler: () => backup().getSettings() },
   'backup:updateSettings': { access: 'owner', handler: (c) => { backup().updateSettings(c.user, p(c).settings); return { updated: true }; } },
+  'backup:canChangeCurrency': { access: 'owner', handler: (c) => ({ allowed: backup().canChangeCurrency(c.user) }) },
   'system:getErrorLogs': { access: 'owner', handler: (c) => backup().getErrorLogs(p(c).limit) },
   'system:clearErrorLogs': { access: 'owner', handler: (c) => { backup().clearErrorLogs(c.user); return { cleared: true }; } },
 };

@@ -9,6 +9,8 @@
  * Internal storage is ALWAYS integer base units.
  */
 
+import { tr } from './i18n/index.ts';
+
 export type UnitType = 'piece' | 'kg';
 
 /**
@@ -78,20 +80,20 @@ export function safeParseGrams(input: string | number | null | undefined): numbe
 }
 
 /**
- * Formats a quantity in its unit for user display.
+ * Formats a quantity in its unit for user display (unit name in the current language).
  * e.g. (15, 'piece') -> "15 ცალი"
  * e.g. (1250, 'kg') -> "1.250 კგ"
  */
 export function formatUnitQuantity(quantity: number | null | undefined, unit: UnitType = 'piece', includeUnitName: boolean = true): string {
   if (quantity === null || quantity === undefined || isNaN(quantity)) {
-    return unit === 'kg' ? (includeUnitName ? '0.000 კგ' : '0.000') : (includeUnitName ? '0 ცალი' : '0');
+    return unit === 'kg' ? (includeUnitName ? tr('0.000 კგ') : '0.000') : (includeUnitName ? tr('0 ცალი') : '0');
   }
   if (unit === 'kg') {
     const kgStr = gramsToKg(quantity, true);
-    return includeUnitName ? `${kgStr} კგ` : kgStr;
+    return includeUnitName ? tr('{kgStr} კგ', { kgStr }) : kgStr;
   }
   const qtyStr = String(Math.round(quantity));
-  return includeUnitName ? `${qtyStr} ცალი` : qtyStr;
+  return includeUnitName ? tr('{qtyStr} ცალი', { qtyStr }) : qtyStr;
 }
 
 /**

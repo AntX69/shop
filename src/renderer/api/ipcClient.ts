@@ -7,6 +7,8 @@
  * or via local /api/ipc endpoint in Web Dev mode.
  */
 
+import { tr, trServer } from '../../shared/i18n/index.ts';
+
 // The token is kept for the life of the window only (sessionStorage survives a reload,
 // not an app restart; the main process forgets all sessions on restart anyway).
 const TOKEN_KEY = 'storepos_session_token';
@@ -47,7 +49,8 @@ export async function invokeIpc<T = any>(channel: string, payload?: any): Promis
   if (typeof window !== 'undefined' && (window as any).electronAPI?.invoke) {
     const res = await (window as any).electronAPI.invoke(channel, payload, token);
     if (!res.success) {
-      throw new Error(res.error || 'მოთხოვნა ვერ შესრულდა');
+      // Messages from the main process are Georgian; they are shown in the user's language.
+      throw new Error(trServer(res.error) || tr('მოთხოვნა ვერ შესრულდა'));
     }
     return res.data as T;
   }
@@ -66,12 +69,12 @@ export async function invokeIpc<T = any>(channel: string, payload?: any): Promis
   });
 
   if (!response.ok) {
-    throw new Error(`სერვერის შეცდომა (${response.status})`);
+    throw new Error(tr('სერვერის შეცდომა ({status})', { status: response.status }));
   }
 
   const result = await response.json();
   if (!result.success) {
-    throw new Error(result.error || 'მოთხოვნა ვერ შესრულდა');
+    throw new Error(trServer(result.error) || tr('მოთხოვნა ვერ შესრულდა'));
   }
 
   return result.data as T;

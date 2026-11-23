@@ -31,7 +31,7 @@ import { can, hasStockNumber, stockLimit } from '../utils/access.ts';
 const stockOf = (v: { stock_quantity?: number | null }) => stockLimit(v.stock_quantity);
 /** Stock as text, or a dash when this user may not see quantities. */
 const stockText = (stock: number | null | undefined, isKg: boolean) =>
-  hasStockNumber(stock) ? (isKg ? `${gramsToKg(stock)} კგ` : `${stock} ცალი`) : '—';
+  hasStockNumber(stock) ? (isKg ? tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(stock) }) : tr('{stock} ცალი', { stock })) : '—';
 import { 
   Barcode, 
   Search, 
@@ -48,6 +48,8 @@ import {
   Printer,
   ShoppingBag
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
+import { CASH_BILLS, currencySymbol, getCurrency } from '../../shared/currency.ts';
 
 interface PosViewProps {
   currentUser: User;
@@ -248,12 +250,12 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       }
 
       if (filteredVariants.length > 1) {
-        setSearchError('მოიძებნა რამდენიმე პროდუქტი, გთხოვთ აირჩიოთ სიიდან');
+        setSearchError(tr('მოიძებნა რამდენიმე პროდუქტი, გთხოვთ აირჩიოთ სიიდან'));
       } else {
-        setSearchError(`კოდით "${code}" პროდუქტი ვერ მოიძებნა`);
+        setSearchError(tr('კოდით "{code}" პროდუქტი ვერ მოიძებნა', { code }));
       }
     } catch (err: any) {
-      setSearchError(err.message || 'ძებნის შეცდომა');
+      setSearchError(trServer(err.message) || tr('ძებნის შეცდომა'));
     }
   };
 
@@ -285,8 +287,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         ...current,
         quantityToAdd: next,
         scanNote: next > current.quantityToAdd
-          ? (isKg ? `იგივე პროდუქტი კიდევ ერთხელ: წონა ${gramsToKg(next)} კგ` : `იგივე პროდუქტი კიდევ ერთხელ: რაოდენობა ${next}`)
-          : (isKg ? `მარაგში მეტი არ არის (${gramsToKg(stockOf(variant))} კგ)` : `მარაგში მეტი არ არის (${stockOf(variant)} ცალი)`)
+          ? (isKg ? tr('იგივე პროდუქტი კიდევ ერთხელ: წონა {gramsToKg} კგ', { gramsToKg: gramsToKg(next) }) : tr('იგივე პროდუქტი კიდევ ერთხელ: რაოდენობა {next}', { next }))
+          : (isKg ? tr('მარაგში მეტი არ არის ({gramsToKg} კგ)', { gramsToKg: gramsToKg(stockOf(variant)) }) : tr('მარაგში მეტი არ არის ({stockOf} ცალი)', { stockOf: stockOf(variant) }))
       });
       return;
     }
@@ -308,7 +310,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         variant: next.variant,
         codeUsed: next.codeUsed,
         quantityToAdd,
-        scanNote: next.quantity > 1 ? `დასკანერდა ${next.quantity}-ჯერ: რაოდენობა ${quantityToAdd}` : undefined
+        scanNote: next.quantity > 1 ? tr('დასკანერდა {quantity}-ჯერ: რაოდენობა {quantityToAdd}', { quantity: next.quantity, quantityToAdd }) : undefined
       });
     } else {
       showConfirm(null);
@@ -329,7 +331,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   const handleScannedCode = async (code: string) => {
     const open = modalStateRef.current;
     if (open.checkout || open.newCustomer) {
-      setCheckoutError(`დასკანერებული კოდი ${code} არ დამუშავდა: ჯერ დაასრულეთ გადახდა ან დახურეთ ეს ფანჯარა (Esc) და დაასკანერეთ თავიდან.`);
+      setCheckoutError(tr('დასკანერებული კოდი {code} არ დამუშავდა: ჯერ დაასრულეთ გადახდა ან დახურეთ ეს ფანჯარა (Esc) და დაასკანერეთ თავიდან.', { code }));
       return;
     }
     if (open.receipt) setCompletedSale(null); // the next customer's first item
@@ -342,13 +344,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         code_used: string;
       } | null>('products:lookupCode', { code });
       if (!found) {
-        setSearchError(`დასკანერებული კოდი "${code}" ბაზაში ვერ მოიძებნა`);
+        setSearchError(tr('დასკანერებული კოდი "{code}" ბაზაში ვერ მოიძებნა', { code }));
         focusSearch();
         return;
       }
       openConfirmationModal(found.product, found.variant, found.code_used);
     } catch (err: any) {
-      setSearchError(err.message || 'ძებნის შეცდომა');
+      setSearchError(trServer(err.message) || tr('ძებნის შეცდომა'));
     }
   };
 
@@ -416,7 +418,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       const existing = cart[existingIndex];
       const newQty = existing.quantity + quantityToAdd;
       if (newQty > stockOf(variant)) {
-        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(stockOf(variant)) + ' კგ' : stockOf(variant) + ' ცალი'}`);
+        alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? gramsToKg(stockOf(variant)) + tr(' კგ') : stockOf(variant) + tr(' ცალი') }));
         return;
       }
       const updatedCart = [...cart];
@@ -424,7 +426,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       setCart(updatedCart);
     } else {
       if (quantityToAdd > stockOf(variant)) {
-        alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(stockOf(variant)) + ' კგ' : stockOf(variant) + ' ცალი'}`);
+        alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? gramsToKg(stockOf(variant)) + tr(' კგ') : stockOf(variant) + tr(' ცალი') }));
         return;
       }
       setCart(prev => [
@@ -457,7 +459,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           const newQty = item.quantity + step;
           if (newQty < minQty) return null;
           if (newQty > item.available_stock) {
-            alert(`მარაგი შეზღუდულია! ხელმისაწვდომია: ${isKg ? gramsToKg(item.available_stock) + ' კგ' : item.available_stock + ' ცალი'}`);
+            alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? gramsToKg(item.available_stock) + tr(' კგ') : item.available_stock + tr(' ცალი') }));
             return item;
           }
           return { ...item, quantity: newQty };
@@ -472,7 +474,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
   };
 
   const clearCart = () => {
-    if (cart.length > 0 && confirm('ნამდვილად გსურთ კალათის გასუფთავება?')) {
+    if (cart.length > 0 && confirm(tr('ნამდვილად გსურთ კალათის გასუფთავება?'))) {
       setCart([]);
       focusSearch();
     }
@@ -524,32 +526,32 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
 
     if (paymentMethod === 'cash') {
       if (parsedCashReceived < cartTotalTetri) {
-        setCheckoutError(`მიღებული თანხა ნაკლებია გადასახდელ თანხაზე (${formatTetri(cartTotalTetri)})`);
+        setCheckoutError(tr('მიღებული თანხა ნაკლებია გადასახდელ თანხაზე ({amount})', { amount: formatTetri(cartTotalTetri) }));
         return;
       }
     } else if (paymentMethod === 'debt' || paymentMethod === 'mixed') {
       if (!selectedCustomerId) {
-        setCheckoutError('ნისიით ან შერეული გადახდისას კლიენტის არჩევა სავალდებულოა');
+        setCheckoutError(tr('ნისიით ან შერეული გადახდისას კლიენტის არჩევა სავალდებულოა'));
         return;
       }
       if (paymentMethod === 'mixed') {
         if (parsedCashReceived <= 0 || parsedCashReceived >= cartTotalTetri) {
-          setCheckoutError('შერეული გადახდისას ნაღდი თანხა უნდა იყოს 0-ზე მეტი და მთლიან თანხაზე ნაკლები');
+          setCheckoutError(tr('შერეული გადახდისას ნაღდი თანხა უნდა იყოს 0-ზე მეტი და მთლიან თანხაზე ნაკლები'));
           return;
         }
       }
     }
 
     if (cashReceivedInput.trim() && safeParseTetri(cashReceivedInput) === null) {
-      setCheckoutError('ნაღდი თანხა არასწორადაა შეყვანილი (მაგ. 25.50 ან 25,50)');
+      setCheckoutError(tr('ნაღდი თანხა არასწორადაა შეყვანილი (მაგ. 25.50 ან 25,50)'));
       return;
     }
     if (canDiscount && cartDiscountInput.trim() && parsedCartDiscount === null) {
-      setCheckoutError('ფასდაკლების თანხა არასწორადაა შეყვანილი');
+      setCheckoutError(tr('ფასდაკლების თანხა არასწორადაა შეყვანილი'));
       return;
     }
     if (totalDiscountTetri > cartSubtotalTetri || cartTotalTetri <= 0) {
-      setCheckoutError('ფასდაკლება არ შეიძლება უდრიდეს ან აღემატებოდეს ჯამურ თანხას');
+      setCheckoutError(tr('ფასდაკლება არ შეიძლება უდრიდეს ან აღემატებოდეს ჯამურ თანხას'));
       return;
     }
 
@@ -583,7 +585,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       loadCatalogue(); // Refresh local stock counts
       loadCustomers();
     } catch (err: any) {
-      setCheckoutError(err.message || 'გაყიდვის დასრულება ვერ მოხერხდა');
+      setCheckoutError(trServer(err.message) || tr('გაყიდვის დასრულება ვერ მოხერხდა'));
     } finally {
       setIsSubmitting(false);
     }
@@ -607,7 +609,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       setNewCustLastName('');
       setNewCustPhone('');
     } catch (err: any) {
-      alert(err.message || 'კლიენტის დამატება ვერ მოხერხდა');
+      alert(trServer(err.message) || tr('კლიენტის დამატება ვერ მოხერხდა'));
     }
   };
 
@@ -629,7 +631,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   type="text"
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="სკანირება (შტრიხკოდი) / 5-ნიშნა კოდი / სახელი..."
+                  placeholder={tr('სკანირება (შტრიხკოდი) / 5-ნიშნა კოდი / სახელი...')}
                   className="w-full pl-10 sm:pl-11 pr-3 sm:pr-4 py-2.5 sm:py-3 bg-slate-900 border border-slate-700 rounded-xl text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500 font-medium text-sm sm:text-base shadow-inner"
                 />
                 <Barcode className="w-4 h-4 sm:w-5 sm:h-5 text-slate-400 absolute left-3 sm:left-3.5 top-3 sm:top-3.5" />
@@ -640,14 +642,14 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 className="px-3.5 sm:px-5 py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold flex items-center space-x-1.5 sm:space-x-2 transition-colors cursor-pointer text-xs sm:text-sm shrink-0"
               >
                 <Search className="w-4 h-4" />
-                <span className="hidden sm:inline">ძებნა (Enter)</span>
-                <span className="sm:hidden inline">ძებნა</span>
+                <span className="hidden sm:inline">{tr('ძებნა (Enter)')}</span>
+                <span className="sm:hidden inline">{tr('ძებნა')}</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setIsWebcamModalOpen(true)}
-                title="ვებკამერით 5-ნიშნა კოდის ამოცნობა (M6)"
+                title={tr('ვებკამერით 5-ნიშნა კოდის ამოცნობა (M6)')}
                 className="p-2.5 sm:p-3 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-emerald-400 rounded-xl transition-colors cursor-pointer shrink-0"
               >
                 <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -665,8 +667,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           {/* Search suggestions / Filtered list */}
           <div className="flex-1 overflow-y-auto pr-1 space-y-2">
             <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex justify-between items-center">
-              <span>{searchInput ? 'ძებნის შედეგები' : 'ხელმისაწვდომი პროდუქცია'}</span>
-              <span className="text-[11px] text-slate-400">დააკლიკეთ პროდუქტზე დასადასტურებლად</span>
+              <span>{searchInput ? tr('ძებნის შედეგები') : tr('ხელმისაწვდომი პროდუქცია')}</span>
+              <span className="text-[11px] text-slate-400">{tr('დააკლიკეთ პროდუქტზე დასადასტურებლად')}</span>
             </div>
 
             {(searchInput ? filteredVariants : catalogueProducts.flatMap(p => (p.variants || []).map(v => ({ variant: v, product: p })))).map(({ variant, product }) => {
@@ -696,8 +698,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       <div className="text-sm font-bold text-white group-hover:text-emerald-400 transition-colors">
                         {product.name}
                       </div>
-                      <div className="text-xs text-slate-400">
-                        ვარიანტი: <span className="text-slate-300 font-medium">{variant.variant_name}</span> &bull; კოდი: <span className="font-mono text-emerald-400">{primaryCode}</span>
+                      <div className="text-xs text-slate-400">{tr('ვარიანტი:')}{' '}<span className="text-slate-300 font-medium">{variant.variant_name}</span>{' '}{tr('• კოდი:')}{' '}<span className="font-mono text-emerald-400">{primaryCode}</span>
                       </div>
                     </div>
                   </div>
@@ -706,8 +707,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     <div className="text-base font-extrabold text-white">
                       {formatTetri(effectivePrice)}
                     </div>
-                    <div className={`text-xs font-medium ${isOutOfStock ? 'text-red-400' : 'text-slate-400'}`}>
-                      მარაგი: <span className={isOutOfStock ? 'font-bold' : 'text-slate-200'}>{stockText(variant.stock_quantity, (product.unit_type || variant.unit_type) === 'kg')}</span>
+                    <div className={`text-xs font-medium ${isOutOfStock ? 'text-red-400' : 'text-slate-400'}`}>{tr('მარაგი:')}{' '}<span className={isOutOfStock ? 'font-bold' : 'text-slate-200'}>{stockText(variant.stock_quantity, (product.unit_type || variant.unit_type) === 'kg')}</span>
                     </div>
                   </div>
                 </div>
@@ -722,10 +722,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           
           <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 lg:pb-3 mb-2.5 lg:mb-3 shrink-0">
             <div className="flex items-center space-x-2">
-              <h2 className="text-sm lg:text-base font-bold text-white">კალათა</h2>
-              <span className="px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 text-xs font-bold tabular-nums">
-                {cartItemCount} ცალი
-              </span>
+              <h2 className="text-sm lg:text-base font-bold text-white">{tr('კალათა')}</h2>
+              <span className="px-2 py-0.5 rounded-full bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 text-xs font-bold tabular-nums">{tr('{cartItemCount} ცალი', { cartItemCount })}</span>
             </div>
 
             {cart.length > 0 && (
@@ -734,7 +732,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 className="text-xs text-red-400 hover:text-red-300 flex items-center space-x-1 cursor-pointer transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5" />
-                <span>გასუფთავება</span>
+                <span>{tr('გასუფთავება')}</span>
               </button>
             )}
           </div>
@@ -744,8 +742,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
             {cart.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-400 text-center p-4 lg:p-6">
                 <ShoppingBag className="w-10 h-10 lg:w-12 lg:h-12 text-slate-700 mb-2.5" />
-                <p className="text-sm font-medium">კალათა ცარიელია</p>
-                <p className="text-xs text-slate-400 mt-1">დაასკანირეთ შტრიხკოდი ან აირჩიეთ პროდუქტი</p>
+                <p className="text-sm font-medium">{tr('კალათა ცარიელია')}</p>
+                <p className="text-xs text-slate-400 mt-1">{tr('დაასკანირეთ შტრიხკოდი ან აირჩიეთ პროდუქტი')}</p>
               </div>
             ) : (
               cart.map((item) => (
@@ -760,9 +758,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     </div>
                     <div className="text-xs text-slate-300 font-semibold mt-0.5 tabular-nums">
                       {item.unit_type === 'kg' ? (
-                        <>
-                          {formatTetri(item.unit_price_tetri)}/კგ &times; {gramsToKg(item.quantity)} კგ = {formatTetri(lineSubtotalOf(item))}
-                          {canDiscount && (item.line_discount_tetri || 0) > 0 && (
+                        <>{tr('{amount}/კგ × {gramsToKg} კგ = {amount2}', { amount: formatTetri(item.unit_price_tetri), gramsToKg: gramsToKg(item.quantity), amount2: formatTetri(lineSubtotalOf(item)) })}{canDiscount && (item.line_discount_tetri || 0) > 0 && (
                             <span className="ml-1.5 text-amber-400">− {formatTetri(item.line_discount_tetri)} = {formatTetri(lineSubtotalOf(item) - (item.line_discount_tetri || 0))}</span>
                           )}
                         </>
@@ -781,7 +777,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                           autoFocus
                           inputMode="decimal"
                           defaultValue={item.line_discount_tetri ? (item.line_discount_tetri / 100).toFixed(2) : ''}
-                          placeholder="ფასდაკლება ₾ (მთელ პოზიციაზე)"
+                          placeholder={tr('ფასდაკლება {currency} (მთელ პოზიციაზე)', { currency: currencySymbol() })}
                           onKeyDown={(e) => {
                             e.stopPropagation();
                             if (e.key === 'Enter' || e.key === 'Escape') {
@@ -798,7 +794,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                           onClick={() => setLineDiscountEditor(item.variant_id)}
                           className="mt-0.5 text-[10px] text-amber-400/80 hover:text-amber-300 underline cursor-pointer"
                         >
-                          {(item.line_discount_tetri || 0) > 0 ? 'ფასდაკლების შეცვლა' : 'ფასდაკლება'}
+                          {(item.line_discount_tetri || 0) > 0 ? tr('ფასდაკლების შეცვლა') : tr('ფასდაკლება')}
                         </button>
                       )
                     )}
@@ -807,15 +803,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   <div className="flex items-center space-x-1 sm:space-x-1.5 shrink-0">
                     <button
                       onClick={() => updateCartQuantity(item.variant_id, -1)}
-                      aria-label="რაოდენობის შემცირება"
+                      aria-label={tr('რაოდენობის შემცირება')}
                       className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors cursor-pointer"
                     >
                       <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                     </button>
                     {item.unit_type === 'kg' ? (
-                      <span className="min-w-14 text-center text-xs font-bold text-white tabular-nums px-1">
-                        {gramsToKg(item.quantity)} კგ
-                      </span>
+                      <span className="min-w-14 text-center text-xs font-bold text-white tabular-nums px-1">{tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(item.quantity) })}</span>
                     ) : (
                       <span className="w-5 sm:w-6 text-center text-xs sm:text-sm font-bold text-white tabular-nums">
                         {item.quantity}
@@ -823,14 +817,14 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     )}
                     <button
                       onClick={() => updateCartQuantity(item.variant_id, 1)}
-                      aria-label="რაოდენობის გაზრდა"
+                      aria-label={tr('რაოდენობის გაზრდა')}
                       className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center justify-center transition-colors cursor-pointer"
                     >
                       <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                     </button>
                     <button
                       onClick={() => removeFromCart(item.variant_id)}
-                      aria-label="კალათიდან ამოღება"
+                      aria-label={tr('კალათიდან ამოღება')}
                       className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-red-950/40 hover:bg-red-900/60 text-red-400 flex items-center justify-center transition-colors ml-0.5 cursor-pointer"
                     >
                       <X className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
@@ -845,12 +839,12 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           <div className="border-t border-slate-800 pt-3 mt-2 bg-slate-900/90 rounded-2xl p-3 lg:p-4 shadow-xl shrink-0">
             {totalDiscountTetri > 0 && (
               <div className="flex justify-between items-center mb-1 text-xs text-amber-300 tabular-nums">
-                <span>ფასდაკლება ({formatTetri(cartSubtotalTetri)}-დან):</span>
+                <span>{tr('ფასდაკლება ({amount}-დან):', { amount: formatTetri(cartSubtotalTetri) })}</span>
                 <span>− {formatTetri(totalDiscountTetri)}</span>
               </div>
             )}
             <div className="flex justify-between items-center mb-2.5 lg:mb-3">
-              <span className="text-slate-400 text-xs sm:text-sm font-medium">სულ გადასახდელი:</span>
+              <span className="text-slate-400 text-xs sm:text-sm font-medium">{tr('სულ გადასახდელი:')}</span>
               <span className="text-xl sm:text-2xl font-black text-emerald-400 tabular-nums">
                 {formatTetri(cartTotalTetri)}
               </span>
@@ -862,7 +856,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
               className="w-full py-3 sm:py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white font-extrabold text-sm sm:text-base rounded-xl transition-all shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer"
             >
               <CreditCard className="w-4 h-4 sm:w-5 sm:h-5" />
-              <span>გაყიდვის დადასტურება</span>
+              <span>{tr('გაყიდვის დადასტურება')}</span>
               <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] bg-emerald-800/80 rounded border border-emerald-400/40 font-mono text-emerald-100 font-normal">Space</kbd>
             </button>
           </div>
@@ -883,16 +877,14 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl animate-in fade-in zoom-in-95 overflow-hidden">
             <div className="flex justify-between items-start border-b border-slate-800 pb-3 mb-3 shrink-0">
               <div>
-                <h3 className="text-base sm:text-lg font-bold text-white">პროდუქტის დადასტურება</h3>
+                <h3 className="text-base sm:text-lg font-bold text-white">{tr('პროდუქტის დადასტურება')}</h3>
                 {queuedCount > 0 && (
-                  <div className="text-[11px] font-semibold text-amber-300 mt-0.5">
-                    რიგში კიდევ {queuedCount} დასკანერებული პროდუქტი
-                  </div>
+                  <div className="text-[11px] font-semibold text-amber-300 mt-0.5">{tr('რიგში კიდევ {queuedCount} დასკანერებული პროდუქტი', { queuedCount })}</div>
                 )}
               </div>
               <button
                 onClick={closeConfirmModal}
-                aria-label="დახურვა"
+                aria-label={tr('დახურვა')}
                 className="text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-5 h-5" />
@@ -902,12 +894,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
             <div className="space-y-4 overflow-y-auto flex-1 pr-1">
               <div>
                 <div className="text-lg font-extrabold text-white">{confirmModalData.product.name}</div>
-                <div className="text-sm text-slate-400 mt-0.5">
-                  ვარიანტი: <span className="text-emerald-400 font-bold">{confirmModalData.variant.variant_name}</span>
+                <div className="text-sm text-slate-400 mt-0.5">{tr('ვარიანტი:')}{' '}<span className="text-emerald-400 font-bold">{confirmModalData.variant.variant_name}</span>
                 </div>
-                <div className="text-xs text-slate-400 font-mono mt-0.5">
-                  კოდი: {confirmModalData.codeUsed}
-                </div>
+                <div className="text-xs text-slate-400 font-mono mt-0.5">{tr('კოდი: {codeUsed}', { codeUsed: confirmModalData.codeUsed })}</div>
               </div>
 
               {(() => {
@@ -917,13 +906,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   <>
                     <div className="grid grid-cols-2 gap-3 bg-slate-950 p-3 rounded-xl border border-slate-800">
                       <div>
-                        <div className="text-[11px] text-slate-400 uppercase font-semibold">ერთეულის ფასი</div>
+                        <div className="text-[11px] text-slate-400 uppercase font-semibold">{tr('ერთეულის ფასი')}</div>
                         <div className="text-xl font-black text-white mt-0.5">
-                          {formatTetri(unitPrice)}{isKg ? ' / კგ' : ''}
+                          {formatTetri(unitPrice)}{isKg ? tr(' / კგ') : ''}
                         </div>
                       </div>
                       <div>
-                        <div className="text-[11px] text-slate-400 uppercase font-semibold">ნაშთი მარაგში</div>
+                        <div className="text-[11px] text-slate-400 uppercase font-semibold">{tr('ნაშთი მარაგში')}</div>
                         <div className="text-xl font-bold text-slate-200 mt-0.5">
                           {stockText(confirmModalData.variant.stock_quantity, isKg)}
                         </div>
@@ -933,7 +922,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     {/* Quantity Picker */}
                     <div>
                       <label className="block text-xs font-semibold text-slate-400 uppercase mb-2">
-                        {isKg ? 'წონა (კილოგრამი / კგ)' : 'რაოდენობა (ცალი)'}
+                        {isKg ? tr('წონა (კილოგრამი / კგ)') : tr('რაოდენობა (ცალი)')}
                       </label>
                       {confirmModalData.scanNote && (
                         <div className="text-[11px] font-semibold text-emerald-300 mb-2">{confirmModalData.scanNote}</div>
@@ -945,18 +934,14 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                               type="button"
                               onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.max(1, prev.quantityToAdd - 500) })}
                               className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
-                              title="-500 გრამი"
-                            >
-                              -500გ
-                            </button>
+                              title={tr('-500 გრამი')}
+                            >{tr('-500გ')}</button>
                             <button
                               type="button"
                               onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.max(1, prev.quantityToAdd - 100) })}
                               className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
-                              title="-100 გრამი"
-                            >
-                              -100გ
-                            </button>
+                              title={tr('-100 გრამი')}
+                            >{tr('-100გ')}</button>
                             <EditableWeightInput
                               maxGrams={stockOf(confirmModalData.variant)}
                               value={confirmModalData.quantityToAdd > 0 ? gramsToKg(confirmModalData.quantityToAdd, false) : ''}
@@ -965,30 +950,26 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                                 const parsed = weightToGrams(val) ?? 0;
                                 setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(stockOf(prev.variant), parsed) });
                               }}
-                              ariaLabel="წონა კილოგრამებში"
+                              ariaLabel={tr('წონა კილოგრამებში')}
                               className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                             />
                             <button
                               type="button"
                               onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(stockOf(confirmModalData.variant), prev.quantityToAdd + 100) })}
                               className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
-                              title="+100 გრამი"
-                            >
-                              +100გ
-                            </button>
+                              title={tr('+100 გრამი')}
+                            >{tr('+100გ')}</button>
                             <button
                               type="button"
                               onClick={() => setConfirmModalData(prev => prev && { ...prev, quantityToAdd: Math.min(stockOf(confirmModalData.variant), prev.quantityToAdd + 500) })}
                               className="px-2 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
-                              title="+500 გრამი"
-                            >
-                              +500გ
-                            </button>
+                              title={tr('+500 გრამი')}
+                            >{tr('+500გ')}</button>
                           </div>
                           <div className="text-right text-xs text-emerald-400 font-bold mt-1.5">
                             {confirmModalData.quantityToAdd > 0
-                              ? <>ჯამი: {formatTetri(lineTotalTetri(unitPrice, confirmModalData.quantityToAdd, 'kg'))}</>
-                              : <span className="text-amber-400">მიუთითეთ წონა</span>}
+                              ? <>{tr('ჯამი: {amount}', { amount: formatTetri(lineTotalTetri(unitPrice, confirmModalData.quantityToAdd, 'kg')) })}</>
+                              : <span className="text-amber-400">{tr('მიუთითეთ წონა')}</span>}
                           </div>
                         </>
                       ) : (
@@ -1008,7 +989,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                               // Empty -> 0 (the add button stays disabled), never the old quantity.
                               setConfirmModalData(prev => prev && { ...prev, quantityToAdd: val === '' ? 0 : Math.min(stockOf(prev.variant), val) });
                             }}
-                            ariaLabel="რაოდენობა"
+                            ariaLabel={tr('რაოდენობა')}
                             className="flex-1 py-2 text-center text-xl font-bold bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-emerald-500"
                           />
                           <button
@@ -1030,17 +1011,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   type="button"
                   onClick={closeConfirmModal}
                   className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-colors cursor-pointer"
-                >
-                  გაუქმება (Esc)
-                </button>
+                >{tr('გაუქმება (Esc)')}</button>
                 <button
                   type="button"
                   onClick={confirmAddToCart}
                   disabled={confirmModalData.quantityToAdd < 1}
                   className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  კალათაში დამატება
-                </button>
+                >{tr('კალათაში დამატება')}</button>
               </div>
             </div>
           </div>
@@ -1059,8 +1036,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full max-h-[92vh] flex flex-col p-4 sm:p-6 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95">
             <div className="flex justify-between items-start border-b border-slate-800 pb-3 mb-3 shrink-0">
               <div>
-                <h3 className="text-base sm:text-lg font-bold text-white">გადახდის დადასტურება</h3>
-                <div className="text-xs text-slate-400">ჯამი: <span className="text-emerald-400 font-bold text-sm tabular-nums">{formatTetri(cartTotalTetri)}</span></div>
+                <h3 className="text-base sm:text-lg font-bold text-white">{tr('გადახდის დადასტურება')}</h3>
+                <div className="text-xs text-slate-400">{tr('ჯამი:')}{' '}<span className="text-emerald-400 font-bold text-sm tabular-nums">{formatTetri(cartTotalTetri)}</span></div>
               </div>
               <button
                 onClick={() => setIsCheckoutModalOpen(false)}
@@ -1088,15 +1065,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     setCheckoutError('');
                   }}
                   disabled={!canPay.cash}
-                  title={canPay.cash ? undefined : 'ნაღდი გაყიდვის უფლება არ გაქვთ'}
+                  title={canPay.cash ? undefined : tr('ნაღდი გაყიდვის უფლება არ გაქვთ')}
                   className={`disabled:opacity-30 disabled:cursor-not-allowed py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
                     paymentMethod === 'cash'
                       ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-900/30'
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-white'
                   }`}
-                >
-                  1. ნაღდი
-                </button>
+                >{tr('1. ნაღდი')}</button>
 
                 <button
                   type="button"
@@ -1106,15 +1081,13 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     setCheckoutError('');
                   }}
                   disabled={!canPay.debt}
-                  title={canPay.debt ? undefined : 'ნისიით გაყიდვის უფლება არ გაქვთ'}
+                  title={canPay.debt ? undefined : tr('ნისიით გაყიდვის უფლება არ გაქვთ')}
                   className={`disabled:opacity-30 disabled:cursor-not-allowed py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
                     paymentMethod === 'debt'
                       ? 'bg-amber-600 text-white border-amber-500 shadow-lg shadow-amber-900/30'
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-white'
                   }`}
-                >
-                  2. ნისია
-                </button>
+                >{tr('2. ნისია')}</button>
 
                 <button
                   type="button"
@@ -1124,22 +1097,19 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     setCheckoutError('');
                   }}
                   disabled={!canPay.mixed}
-                  title={canPay.mixed ? undefined : 'შერეული გადახდის უფლება არ გაქვთ'}
+                  title={canPay.mixed ? undefined : tr('შერეული გადახდის უფლება არ გაქვთ')}
                   className={`disabled:opacity-30 disabled:cursor-not-allowed py-2.5 sm:py-3 px-2 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
                     paymentMethod === 'mixed'
                       ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-900/30'
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-white'
                   }`}
-                >
-                  3. შერეული
-                </button>
+                >{tr('3. შერეული')}</button>
               </div>
 
               {/* Customer Selection (REQUIRED for Debt and Mixed; Optional for Cash) */}
               <div>
                 <div className="flex justify-between items-center mb-1.5">
-                  <label className="text-xs font-semibold text-slate-300">
-                    კლიენტი {paymentMethod !== 'cash' ? <span className="text-red-400 font-bold">* (სავალდებულოა)</span> : <span className="text-slate-400 font-normal">(სურვილისამებრ)</span>}
+                  <label className="text-xs font-semibold text-slate-300">{tr('კლიენტი')}{' '}{paymentMethod !== 'cash' ? <span className="text-red-400 font-bold">{tr('* (სავალდებულოა)')}</span> : <span className="text-slate-400 font-normal">{tr('(სურვილისამებრ)')}</span>}
                   </label>
                   {canCreateCustomer && <button
                     type="button"
@@ -1147,7 +1117,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     className="text-xs text-emerald-400 hover:underline flex items-center space-x-1 cursor-pointer"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
-                    <span>+ ახალი კლიენტი</span>
+                    <span>{tr('+ ახალი კლიენტი')}</span>
                   </button>}
                 </div>
 
@@ -1156,11 +1126,9 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   onChange={(e) => setSelectedCustomerId(e.target.value ? parseInt(e.target.value, 10) : null)}
                   className="w-full px-3 py-2 sm:py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs sm:text-sm focus:outline-none focus:border-emerald-500"
                 >
-                  <option value="">-- აირჩიეთ კლიენტი სიიდან --</option>
+                  <option value="">{tr('-- აირჩიეთ კლიენტი სიიდან --')}</option>
                   {customers.map(c => (
-                    <option key={c.id} value={c.id}>
-                      {c.first_name} {c.last_name || ''} {c.phone ? `(${c.phone})` : ''} — დავალიანება: {formatTetri(c.total_debt_tetri)}
-                    </option>
+                    <option key={c.id} value={c.id}>{tr('{first_name} {value} {value2} — დავალიანება: {amount}', { first_name: c.first_name, value: c.last_name || '', value2: c.phone ? `(${c.phone})` : '', amount: formatTetri(c.total_debt_tetri) })}</option>
                   ))}
                 </select>
               </div>
@@ -1170,12 +1138,12 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 <div className="space-y-2.5">
                   <div>
                     <label className="block text-xs font-semibold text-slate-300 mb-1">
-                      {paymentMethod === 'cash' ? 'მიღებული ნაღდი თანხა (₾)' : 'ახლა გადახდილი ნაღდი თანხა (₾)'}
+                      {paymentMethod === 'cash' ? tr('მიღებული ნაღდი თანხა ({currency})', { currency: currencySymbol() }) : tr('ახლა გადახდილი ნაღდი თანხა ({currency})', { currency: currencySymbol() })}
                     </label>
                     <EditableMoneyInput
                       value={cashReceivedInput}
                       onChange={(val) => setCashReceivedInput(val)}
-                      ariaLabel="მიღებული ნაღდი თანხა"
+                      ariaLabel={tr('მიღებული ნაღდი თანხა')}
                       placeholder="0.00"
                       className="w-full px-3.5 py-2 sm:py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white text-lg sm:text-xl font-bold focus:outline-none focus:border-emerald-500 tabular-nums"
                     />
@@ -1184,23 +1152,21 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   {/* Quick denomination buttons for cash */}
                   {paymentMethod === 'cash' && (
                     <div className="flex flex-wrap gap-1.5">
-                      {[10, 20, 50, 100, 200].map(bill => (
+                      {CASH_BILLS[getCurrency()].map(bill => (
                         <button
                           key={bill}
                           type="button"
                           onClick={() => setCashReceivedInput(String(bill))}
                           className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-bold text-slate-200 transition-colors cursor-pointer"
                         >
-                          +{bill} ₾
+                          +{bill} {currencySymbol()}
                         </button>
                       ))}
                       <button
                         type="button"
                         onClick={() => setCashReceivedInput((cartTotalTetri / 100).toFixed(2))}
                         className="px-2.5 py-1 bg-emerald-950/60 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 rounded-lg text-xs font-bold cursor-pointer"
-                      >
-                        ზუსტად
-                      </button>
+                      >{tr('ზუსტად')}</button>
                     </div>
                   )}
 
@@ -1208,14 +1174,14 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-1">
                     {paymentMethod === 'cash' && (
                       <div className="flex justify-between items-center text-xs sm:text-sm">
-                        <span className="text-slate-400">ხურდა დასაბრუნებელი:</span>
+                        <span className="text-slate-400">{tr('ხურდა დასაბრუნებელი:')}</span>
                         <span className="text-base sm:text-lg font-black text-amber-400 tabular-nums">{formatTetri(changeTetri)}</span>
                       </div>
                     )}
 
                     {paymentMethod === 'mixed' && (
                       <div className="flex justify-between items-center text-xs sm:text-sm">
-                        <span className="text-slate-400">დარჩენილი ვალი (ნისია):</span>
+                        <span className="text-slate-400">{tr('დარჩენილი ვალი (ნისია):')}</span>
                         <span className="text-base sm:text-lg font-black text-amber-400 tabular-nums">{formatTetri(debtTetri)}</span>
                       </div>
                     )}
@@ -1224,19 +1190,17 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
               )}
 
               {paymentMethod === 'debt' && (
-                <div className="bg-amber-950/30 border border-amber-800/60 p-3.5 rounded-xl text-xs text-amber-200">
-                  სრული თანხა <span className="font-bold text-sm text-white tabular-nums">{formatTetri(cartTotalTetri)}</span> ჩაიწერება კლიენტის დავალიანებად.
-                </div>
+                <div className="bg-amber-950/30 border border-amber-800/60 p-3.5 rounded-xl text-xs text-amber-200">{tr('სრული თანხა')}{' '}<span className="font-bold text-sm text-white tabular-nums">{formatTetri(cartTotalTetri)}</span>{' '}{tr('ჩაიწერება კლიენტის დავალიანებად.')}</div>
               )}
 
               {canDiscount && (
                 <div className="bg-slate-950/50 border border-amber-900/50 p-3 rounded-xl space-y-2">
-                  <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wide">ფასდაკლება</div>
+                  <div className="text-[11px] font-bold text-amber-300 uppercase tracking-wide">{tr('ფასდაკლება')}</div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <EditableMoneyInput
                       value={cartDiscountInput}
                       onChange={(val) => setCartDiscountInput(val)}
-                      placeholder="კალათაზე ₾"
+                      placeholder={tr('კალათაზე {currency}', { currency: currencySymbol() })}
                       className="w-28 px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-amber-500 tabular-nums"
                     />
                     {[5, 10, 15, 20].map((pct) => (
@@ -1250,7 +1214,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       </button>
                     ))}
                     {cartDiscountInput && (
-                      <button type="button" onClick={() => setCartDiscountInput('')} className="px-2 py-1 text-slate-400 hover:text-white text-[11px] cursor-pointer">გასუფთავება</button>
+                      <button type="button" onClick={() => setCartDiscountInput('')} className="px-2 py-1 text-slate-400 hover:text-white text-[11px] cursor-pointer">{tr('გასუფთავება')}</button>
                     )}
                   </div>
                   {totalDiscountTetri > 0 && (
@@ -1258,14 +1222,12 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       value={discountReason}
                       onChange={(e) => setDiscountReason(e.target.value)}
                       maxLength={300}
-                      placeholder="მიზეზი (მაგ. მუდმივი კლიენტი)"
+                      placeholder={tr('მიზეზი (მაგ. მუდმივი კლიენტი)')}
                       className="w-full px-2.5 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-amber-500"
                     />
                   )}
                   {totalDiscountTetri > 0 && (
-                    <div className="text-[11px] text-amber-200 tabular-nums">
-                      ფასდაკლებამდე {formatTetri(cartSubtotalTetri)} • ფასდაკლება {formatTetri(totalDiscountTetri)} • გადასახდელი {formatTetri(cartTotalTetri)}
-                    </div>
+                    <div className="text-[11px] text-amber-200 tabular-nums">{tr('ფასდაკლებამდე {amount} • ფასდაკლება {amount2} • გადასახდელი {amount3}', { amount: formatTetri(cartSubtotalTetri), amount2: formatTetri(totalDiscountTetri), amount3: formatTetri(cartTotalTetri) })}</div>
                   )}
                 </div>
               )}
@@ -1277,16 +1239,14 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 type="button"
                 onClick={() => setIsCheckoutModalOpen(false)}
                 className="flex-1 py-2.5 sm:py-3 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl transition-colors cursor-pointer text-xs sm:text-sm"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="button"
                 disabled={isSubmitting}
                 onClick={handleCheckoutSubmit}
                 className="flex-1 py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold rounded-xl transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer text-xs sm:text-sm"
               >
-                {isSubmitting ? 'სრულდება...' : 'გაყიდვის დასრულება'}
+                {isSubmitting ? tr('სრულდება...') : tr('გაყიდვის დასრულება')}
               </button>
             </div>
           </div>
@@ -1297,36 +1257,36 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       {isNewCustomerModalOpen && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-sm w-full max-h-[92vh] flex flex-col p-5 sm:p-6 shadow-2xl overflow-y-auto">
-            <h3 className="text-sm sm:text-base font-bold text-white mb-3">ახალი კლიენტის რეგისტრაცია</h3>
+            <h3 className="text-sm sm:text-base font-bold text-white mb-3">{tr('ახალი კლიენტის რეგისტრაცია')}</h3>
             <form onSubmit={handleCreateCustomer} className="space-y-3">
               <div>
-                <label className="block text-xs text-slate-400 mb-1">სახელი *</label>
+                <label className="block text-xs text-slate-400 mb-1">{tr('სახელი *')}</label>
                 <input
                   type="text"
                   required
                   value={newCustFirstName}
                   onChange={(e) => setNewCustFirstName(e.target.value)}
-                  placeholder="მაგ. დავით"
+                  placeholder={tr('მაგ. დავით')}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs sm:text-sm focus:outline-none focus:border-emerald-500"
                 />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">გვარი (არასავალდებულო)</label>
+                <label className="block text-xs text-slate-400 mb-1">{tr('გვარი (არასავალდებულო)')}</label>
                 <input
                   type="text"
                   value={newCustLastName}
                   onChange={(e) => setNewCustLastName(e.target.value)}
-                  placeholder="მაგ. ბერიძე"
+                  placeholder={tr('მაგ. ბერიძე')}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs sm:text-sm focus:outline-none focus:border-emerald-500"
                 />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">ტელეფონი (არასავალდებულო)</label>
+                <label className="block text-xs text-slate-400 mb-1">{tr('ტელეფონი (არასავალდებულო)')}</label>
                 <input
                   type="text"
                   value={newCustPhone}
                   onChange={(e) => setNewCustPhone(e.target.value)}
-                  placeholder="მაგ. 599 12 34 56"
+                  placeholder={tr('მაგ. 599 12 34 56')}
                   className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs sm:text-sm focus:outline-none focus:border-emerald-500"
                 />
               </div>
@@ -1336,15 +1296,11 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   type="button"
                   onClick={() => setIsNewCustomerModalOpen(false)}
                   className="flex-1 py-2 bg-slate-800 text-slate-300 rounded-lg text-xs font-bold cursor-pointer hover:bg-slate-700 transition-colors"
-                >
-                  გაუქმება
-                </button>
+                >{tr('გაუქმება')}</button>
                 <button
                   type="submit"
                   className="flex-1 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold cursor-pointer hover:bg-emerald-500 transition-colors shadow-sm"
-                >
-                  შენახვა
-                </button>
+                >{tr('შენახვა')}</button>
               </div>
             </form>
           </div>
@@ -1365,49 +1321,49 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
               <div className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-600/20 text-emerald-400 border border-emerald-600/40 rounded-full flex items-center justify-center mx-auto mb-2">
                 <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7" />
               </div>
-              <h3 className="text-base sm:text-lg font-bold text-white">გაყიდვა წარმატებით დასრულდა!</h3>
-              <div className="text-xs text-slate-400 font-mono mt-0.5">ჩეკის #: {completedSale.receipt_number}</div>
+              <h3 className="text-base sm:text-lg font-bold text-white">{tr('გაყიდვა წარმატებით დასრულდა!')}</h3>
+              <div className="text-xs text-slate-400 font-mono mt-0.5">{tr('ჩეკის #: {receipt_number}', { receipt_number: completedSale.receipt_number })}</div>
             </div>
 
             {/* Receipt Summary */}
             <div className="space-y-2 mb-3 text-xs overflow-y-auto flex-1 pr-1">
               <div className="flex justify-between text-slate-400">
-                <span>გადახდის მეთოდი:</span>
+                <span>{tr('გადახდის მეთოდი:')}</span>
                 <span className="font-bold text-white">
-                  {completedSale.payment_method === 'cash' ? 'ნაღდი' : completedSale.payment_method === 'debt' ? 'ნისია' : 'შერეული'}
+                  {completedSale.payment_method === 'cash' ? tr('ნაღდი') : completedSale.payment_method === 'debt' ? tr('ნისია') : tr('შერეული')}
                 </span>
               </div>
               {completedSale.customer_name && (
                 <div className="flex justify-between text-slate-400">
-                  <span>კლიენტი:</span>
+                  <span>{tr('კლიენტი:')}</span>
                   <span className="font-bold text-white">{completedSale.customer_name}</span>
                 </div>
               )}
               {(completedSale.discount_tetri || 0) > 0 && (
                 <div className="flex justify-between text-slate-400">
-                  <span>ფასდაკლება:</span>
+                  <span>{tr('ფასდაკლება:')}</span>
                   <span className="text-amber-400 tabular-nums">− {formatTetri(completedSale.discount_tetri)}</span>
                 </div>
               )}
               <div className="flex justify-between text-slate-400">
-                <span>ჯამური თანხა:</span>
+                <span>{tr('ჯამური თანხა:')}</span>
                 <span className="font-black text-emerald-400 text-sm tabular-nums">{formatTetri(completedSale.total_tetri)}</span>
               </div>
               {completedSale.payment_method === 'cash' && (
                 <>
                   <div className="flex justify-between text-slate-400">
-                    <span>მიღებული თანხა:</span>
+                    <span>{tr('მიღებული თანხა:')}</span>
                     <span className="text-slate-200 tabular-nums">{formatTetri(completedSale.cash_received_tetri)}</span>
                   </div>
                   <div className="flex justify-between text-slate-400">
-                    <span>დაბრუნებული ხურდა:</span>
+                    <span>{tr('დაბრუნებული ხურდა:')}</span>
                     <span className="font-bold text-amber-400 tabular-nums">{formatTetri(completedSale.change_given_tetri)}</span>
                   </div>
                 </>
               )}
               {completedSale.debt_amount_tetri > 0 && (
                 <div className="flex justify-between text-slate-400">
-                  <span>დარჩენილი ნისია:</span>
+                  <span>{tr('დარჩენილი ნისია:')}</span>
                   <span className="font-bold text-amber-400 tabular-nums">{formatTetri(completedSale.debt_amount_tetri)}</span>
                 </div>
               )}
@@ -1417,7 +1373,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 {completedSale.items?.map((it) => (
                   <div key={it.id} className="flex justify-between items-center">
                     <span className="text-slate-300 truncate pr-2">
-                      {it.product_name_snap} ({it.variant_name_snap}) &times; {it.unit_type === 'kg' ? `${gramsToKg(it.quantity)} კგ` : `${it.quantity} ც`}
+                      {it.product_name_snap} ({it.variant_name_snap}) &times; {it.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(it.quantity) }) : tr('{quantity} ც', { quantity: it.quantity })}
                     </span>
                     <span className="font-semibold text-white shrink-0 tabular-nums">{formatTetri(it.total_price_tetri)}</span>
                   </div>
@@ -1433,7 +1389,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 className="flex-1 py-2.5 sm:py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl flex items-center justify-center space-x-1.5 cursor-pointer text-xs"
               >
                 <Printer className="w-4 h-4" />
-                <span>ბეჭდვა</span>
+                <span>{tr('ბეჭდვა')}</span>
               </button>
               <button
                 onClick={() => {
@@ -1441,9 +1397,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                   focusSearch();
                 }}
                 className="flex-1 py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl cursor-pointer text-xs shadow-lg shadow-emerald-900/30"
-              >
-                ახალი გაყიდვა
-              </button>
+              >{tr('ახალი გაყიდვა')}</button>
             </div>
           </div>
         </div>

@@ -77,11 +77,11 @@ function dump(db: DatabaseSync): Record<string, string> {
   return out;
 }
 
-test('migration 11: schema v11, every guard trigger is installed', () => {
+test('migration 11: every guard trigger is installed (schema v12 since V1.2)', () => {
   const db = new DatabaseSync(':memory:');
   runMigrations(db);
-  assert.equal(LATEST_SCHEMA_VERSION, 11);
-  assert.equal((db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as any).v, 11);
+  assert.equal(LATEST_SCHEMA_VERSION, 12);
+  assert.equal((db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get() as any).v, 12);
   assert.deepEqual(missingDowngradeGuardTriggers(db), []);
   assert.equal(downgradeGuardTriggers().length, GUARDED_TABLES.length * 3 + 3);
   // every guarded table really exists (a trigger on a missing table would fail the migration)

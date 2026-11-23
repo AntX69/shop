@@ -21,7 +21,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { getDb, runInTransaction } from '../db/database.ts';
 import { ExchangePayload, ReturnPayload, ReturnRecord, User } from '../../shared/types.ts';
-import { proratedLineAmount } from '../../shared/money.ts';
+import { proratedLineAmount, formatTetri } from '../../shared/money.ts';
 import { boundToUtc } from '../../shared/time.ts';
 import { PosService } from './posService.ts';
 import { AuthService } from './authService.ts';
@@ -432,7 +432,7 @@ export class ReturnsService {
         throw new Error('ნისიით ან შერეული გადახდისთვის ორიგინალ გაყიდვაზე კლიენტი უნდა იყოს მითითებული');
       }
       if (due > 0 && method !== 'debt' && cashInput === null) {
-        throw new Error(`მიუთითეთ კლიენტისგან მიღებული ნაღდი თანხა (გადასახდელია ${(due / 100).toFixed(2)} ₾)`);
+        throw new Error(`მიუთითეთ კლიენტისგან მიღებული ნაღდი თანხა (გადასახდელია ${formatTetri(due)})`);
       }
       const cashReceived = due === 0 || method === 'debt' ? 0 : (cashInput ?? 0);
 

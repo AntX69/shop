@@ -6,7 +6,10 @@
  * All monetary amounts in the database and calculations MUST be stored
  * as non-negative or signed INTEGER Tetri (1 GEL = 100 Tetri).
  * Floating-point representation for money is strictly prohibited.
+ * The same holds for euro and dollar shops (cents); see ./currency.ts.
  */
+
+import { formatMoney } from './currency.ts';
 
 /**
  * Converts a GEL amount (string or number) to integer tetri.
@@ -49,21 +52,12 @@ export function gelToTetri(gel: number | string): number {
 }
 
 /**
- * Formats tetri into a standard GEL display string (e.g. "25.50 ₾").
+ * Formats an amount in minor units (tetri, cents) in the shop's currency, e.g. "25.50 ₾",
+ * "25,50 €" or "$25.50" depending on the interface language. Without the symbol it is the
+ * plain number "25.50" that input fields accept.
  */
 export function formatTetri(tetri: number | null | undefined, includeSymbol: boolean = true): string {
-  if (tetri === null || tetri === undefined || isNaN(tetri)) {
-    return includeSymbol ? '0.00 ₾' : '0.00';
-  }
-
-  const sign = tetri < 0 ? '-' : '';
-  const absTetri = Math.abs(Math.round(tetri));
-  const whole = Math.floor(absTetri / 100);
-  const fraction = absTetri % 100;
-  const fracStr = fraction < 10 ? `0${fraction}` : `${fraction}`;
-
-  const formatted = `${sign}${whole}.${fracStr}`;
-  return includeSymbol ? `${formatted} ₾` : formatted;
+  return formatMoney(tetri, { symbol: includeSymbol });
 }
 
 /**

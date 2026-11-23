@@ -78,7 +78,8 @@ test('defaults: a new seller gets exactly what an RC3 seller could do', () => {
 });
 
 test('every IPC channel: refused without the permission, allowed with it (no unlisted open channel)', async () => {
-  const OPEN_TO_ANY_USER = new Set(['auth:logout', 'auth:me', 'auth:changeOwnPin', 'products:getCategories', 'ocr:isModelReady', 'ocr:recognize', 'ocr:saveSample']);
+  // auth:setLanguage changes only the caller's own interface language.
+  const OPEN_TO_ANY_USER = new Set(['auth:logout', 'auth:me', 'auth:changeOwnPin', 'auth:setLanguage', 'products:getCategories', 'ocr:isModelReady', 'ocr:recognize', 'ocr:saveSample']);
   const SKIP_CALL = new Set(['auth:logout']); // would end the test session
   const strong = await must('auth:addUser', { name: 'ყველა უფლებით', pin: '551203', role: 'seller', permissions: ALL_PERMISSION_IDS }, OT);
   const strongToken = (await must('auth:login', { userId: strong.id, pin: '551203' })).token;

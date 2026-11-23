@@ -10,15 +10,20 @@ import React, { useState, useEffect } from 'react';
 import { User, UserSession } from '../../shared/types.ts';
 import { invokeIpc, setClientToken } from '../api/ipcClient.ts';
 import { ShieldCheck, User as UserIcon, Delete, KeyRound, AlertCircle } from 'lucide-react';
+import { getLanguage, isLang, Lang, setLanguage, tr, trServer } from '../../shared/i18n/index.ts';
+import { CURRENCIES, Currency } from '../../shared/currency.ts';
+import { LanguageSwitcher } from '../components/LanguageSwitcher.tsx';
+import { currencyName, suggestedCurrency, systemTimeZone, timeZoneOptions } from '../utils/shopLocale.ts';
 
 /** package.json version, set by Vite at build time (vite.config.ts). */
 declare const __APP_VERSION__: string;
 
 interface LoginViewProps {
   onLoginSuccess: (session: UserSession) => void;
+  onChangeLanguage: (lang: Lang) => void;
 }
 
-export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
+export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onChangeLanguage }) => {
   const [hasOwner, setHasOwner] = useState<boolean | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
@@ -27,6 +32,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const [ownerName, setOwnerName] = useState<string>('');
   const [ownerPin, setOwnerPin] = useState<string>('');
   const [ownerPinConfirm, setOwnerPinConfirm] = useState<string>('');
+  // The new shop's currency and time zone (first guess from the Windows time zone).
+  const [shopTimeZone, setShopTimeZone] = useState<string>(() => systemTimeZone());
+  const [shopCurrency, setShopCurrency] = useState<Currency>(() => suggestedCurrency(systemTimeZone()));
 
   // User Selection & PIN Keypad state
   const [users, setUsers] = useState<User[]>([]);
@@ -48,7 +56,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
         }
       }
     } catch (err: any) {
-      setError(err.message || 'სისტემური შეცდომა მონაცემების ჩატვირთვისას');
+      setError(trServer(err.message) || tr('სისტემური შეცდომა მონაცემების ჩატვირთვისას'));
     } finally {
       setLoading(false);
     }
@@ -86,15 +94,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
     setError('');
 
     if (!ownerName.trim()) {
-      setError('გთხოვთ შეიყვანოთ მფლობელის სახელი');
+      setError(tr('გთხოვთ შეიყვანოთ მფლობელის სახელი'));
       return;
     }
     if (!/^\d{4,6}$/.test(ownerPin)) {
-      setError('PIN კოდი უნდა შედგებოდეს 4-დან 6 ციფრისგან');
+      setError(tr('PIN კოდი უნდა შედგებოდეს 4-დან 6 ციფრისგან'));
       return;
     }
     if (ownerPin !== ownerPinConfirm) {
-      setError('შეყვანილი PIN კოდები არ ემთხვევა ერთმანეთს');
+      setError(tr('შეყვანილი PIN კოდები არ ემთხვევა ერთმანეთს'));
       return;
     }
 
@@ -103,11 +111,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       const session = await invokeIpc<UserSession>('auth:setupOwner', {
         name: ownerName.trim(),
         pin: ownerPin,
+        language: getLanguage(),
+        currency: shopCurrency,
+        timezone: shopTimeZone,
       });
       setClientToken(session.token);
       onLoginSuccess(session);
     } catch (err: any) {
-      setError(err.message || 'მფლობელის რეგისტრაცია ვერ მოხერხდა');
+      setError(trServer(err.message) || tr('მფლობელის რეგისტრაცია ვერ მოხერხდა'));
     } finally {
       setLoading(false);
     }
@@ -116,7 +127,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   const submitPin = async () => {
     if (!selectedUser) return;
     if (pinInput.length < 4) {
-      setError('PIN კოდი უნდა იყოს მინიმუმ 4 ციფრი');
+      setError(tr('PIN კოდი უნდა იყოს მინიმუმ 4 ციფრი'));
       return;
     }
 
@@ -130,7 +141,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       setClientToken(session.token);
       onLoginSuccess(session);
     } catch (err: any) {
-      setError(err.message || 'არასწორი PIN კოდი');
+      setError(trServer(err.message) || tr('არასწორი PIN კოდი'));
       setPinInput('');
     } finally {
       setLoading(false);
@@ -156,7 +167,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-300">
         <div className="text-center">
           <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-sm font-medium">სისტემის ინიციალიზაცია...</p>
+          <p className="text-sm font-medium">{tr('სისტემის ინიციალიზაცია...')}</p>
         </div>
       </div>
     );
@@ -165,14 +176,18 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-3 sm:p-6 overflow-y-auto select-none">
       
+      <div className="w-full max-w-md flex justify-end mb-2 shrink-0">
+        <LanguageSwitcher onChange={onChangeLanguage} />
+      </div>
+
       {/* Brand Header */}
       <div className="text-center mb-4 sm:mb-6 shrink-0">
         <div className="inline-flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-900/40 mb-2 sm:mb-3">
           <ShieldCheck className="w-7 h-7 sm:w-8 sm:h-8" />
         </div>
         <h1 className="text-xl sm:text-2xl font-bold text-white tracking-wide">StorePOS Windows Desktop</h1>
-        <p className="text-xs sm:text-sm text-slate-400 mt-0.5">ოფლაინ მაღაზიის მართვა და სალარო სისტემა</p>
-        <p className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5 font-mono" data-testid="app-version">ვერსია {__APP_VERSION__}</p>
+        <p className="text-xs sm:text-sm text-slate-400 mt-0.5">{tr('ოფლაინ მაღაზიის მართვა და სალარო სისტემა')}</p>
+        <p className="text-[10px] sm:text-[11px] text-slate-500 mt-0.5 font-mono" data-testid="app-version">{tr('ვერსია {__APP_VERSION__}', { __APP_VERSION__ })}</p>
       </div>
 
       {error && (
@@ -186,31 +201,25 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       {hasOwner === false && (
         <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-5 sm:p-8 shadow-2xl">
           <div className="border-b border-slate-800 pb-3 sm:pb-4 mb-4 sm:mb-6">
-            <h2 className="text-base sm:text-lg font-bold text-white">პირველი გაშვება: მფლობელის რეგისტრაცია</h2>
-            <p className="text-xs text-slate-400 mt-1">
-              სისტემა მუშაობს სრულიად ლოკალურად. პირველ ეტაპზე შექმენით მაღაზიის მფლობელის ანგარიში.
-            </p>
+            <h2 className="text-base sm:text-lg font-bold text-white">{tr('პირველი გაშვება: მფლობელის რეგისტრაცია')}</h2>
+            <p className="text-xs text-slate-400 mt-1">{tr('სისტემა მუშაობს სრულიად ლოკალურად. პირველ ეტაპზე შექმენით მაღაზიის მფლობელის ანგარიში.')}</p>
           </div>
 
           <form onSubmit={handleOwnerSetupSubmit} className="space-y-3 sm:space-y-4">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                მფლობელის სახელი
-              </label>
+              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">{tr('მფლობელის სახელი')}</label>
               <input
                 type="text"
                 required
                 value={ownerName}
                 onChange={(e) => setOwnerName(e.target.value)}
-                placeholder="მაგ. გიორგი ბერიძე"
+                placeholder={tr('მაგ. გიორგი ბერიძე')}
                 className="w-full px-3.5 py-2 rounded-lg bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 text-xs sm:text-sm"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                PIN კოდი (4-6 ციფრი)
-              </label>
+              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">{tr('PIN კოდი (4-6 ციფრი)')}</label>
               <input
                 type="password"
                 maxLength={6}
@@ -223,9 +232,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                გაიმეორეთ PIN კოდი
-              </label>
+              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">{tr('გაიმეორეთ PIN კოდი')}</label>
               <input
                 type="password"
                 maxLength={6}
@@ -237,12 +244,40 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               />
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="setup-currency" className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">{tr('მაღაზიის ვალუტა')}</label>
+                <select
+                  id="setup-currency"
+                  data-testid="setup-currency"
+                  value={shopCurrency}
+                  onChange={(e) => setShopCurrency(e.target.value as Currency)}
+                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-white focus:outline-none focus:border-emerald-500 text-xs sm:text-sm"
+                >
+                  {CURRENCIES.map((c) => <option key={c} value={c}>{currencyName(c)}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="setup-timezone" className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">{tr('დროის სარტყელი')}</label>
+                <select
+                  id="setup-timezone"
+                  data-testid="setup-timezone"
+                  value={shopTimeZone}
+                  onChange={(e) => setShopTimeZone(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-white focus:outline-none focus:border-emerald-500 text-xs sm:text-sm font-mono"
+                >
+                  {timeZoneOptions(shopTimeZone).map((z) => <option key={z} value={z}>{z}</option>)}
+                </select>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400">{tr('მაღაზიის ყველა ფასი, გაყიდვა, ნისია და ანგარიში ამ ვალუტაში იქნება. ვალუტის შეცვლა შესაძლებელია მხოლოდ პირველ გაყიდვამდე ან მარაგის მიღებამდე.')}</p>
+
             <button
               type="submit"
               disabled={loading}
               className="w-full py-2.5 sm:py-3 px-4 mt-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold text-xs sm:text-sm transition-colors shadow-lg shadow-emerald-900/40 disabled:opacity-50"
             >
-              {loading ? 'ინახება...' : 'მფლობელის შექმნა და შესვლა'}
+              {loading ? tr('ინახება...') : tr('მფლობელის შექმნა და შესვლა')}
             </button>
           </form>
         </div>
@@ -255,12 +290,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
           {/* User selector tab */}
           {!selectedUser ? (
             <div>
-              <h2 className="text-sm sm:text-base font-bold text-white mb-3 sm:mb-4 text-center">აირჩიეთ მომხმარებელი</h2>
+              <h2 className="text-sm sm:text-base font-bold text-white mb-3 sm:mb-4 text-center">{tr('აირჩიეთ მომხმარებელი')}</h2>
               <div className="space-y-2.5 sm:space-y-3">
                 {users.map((u) => (
                   <button
                     key={u.id}
                     onClick={() => {
+                      // The PIN screen opens in the user's own language.
+                      if (isLang(u.language)) setLanguage(u.language);
                       setSelectedUser(u);
                       setPinInput('');
                       setError('');
@@ -275,7 +312,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                       </div>
                       <div>
                         <div className="text-xs sm:text-sm font-bold text-white group-hover:text-emerald-400 transition-colors">{u.name}</div>
-                        <div className="text-[11px] text-slate-400">{u.role === 'owner' ? 'მფლობელი (Admin)' : 'გამყიდველი (Seller)'}</div>
+                        <div className="text-[11px] text-slate-400">{u.role === 'owner' ? tr('მფლობელი (Admin)') : tr('გამყიდველი (Seller)')}</div>
                       </div>
                     </div>
                     <KeyRound className="w-4 h-4 text-slate-500 group-hover:text-slate-300" />
@@ -294,7 +331,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                   </div>
                   <div>
                     <div className="text-xs sm:text-sm font-bold text-white">{selectedUser.name}</div>
-                    <div className="text-[10px] sm:text-[11px] text-slate-400">{selectedUser.role === 'owner' ? 'მფლობელი' : 'გამყიდველი'}</div>
+                    <div className="text-[10px] sm:text-[11px] text-slate-400">{selectedUser.role === 'owner' ? tr('მფლობელი') : tr('გამყიდველი')}</div>
                   </div>
                 </div>
                 <button
@@ -303,9 +340,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                     setPinInput('');
                   }}
                   className="text-xs text-slate-400 hover:text-white underline transition-colors"
-                >
-                  შეცვლა
-                </button>
+                >{tr('შეცვლა')}</button>
               </div>
 
               {/* PIN circles display */}
@@ -337,9 +372,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                 <button
                   onClick={handleClear}
                   className="py-2.5 sm:py-3 bg-slate-950 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 active:scale-95 text-slate-400 hover:text-white font-bold text-xs sm:text-sm rounded-xl transition-all cursor-pointer"
-                >
-                  გასუფთავება
-                </button>
+                >{tr('გასუფთავება')}</button>
 
                 <button
                   onClick={() => handleKeypadPress('0')}
@@ -362,7 +395,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
                 disabled={pinInput.length < 4 || loading}
                 className="w-full mt-3.5 sm:mt-4 py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm sm:text-base transition-colors shadow-lg shadow-emerald-900/40 disabled:opacity-40 disabled:hover:bg-emerald-600 cursor-pointer"
               >
-                {loading ? 'შემოწმება...' : 'შესვლა (Enter)'}
+                {loading ? tr('შემოწმება...') : tr('შესვლა (Enter)')}
               </button>
 
             </div>
@@ -372,9 +405,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
       )}
 
       {/* Footer info */}
-      <div className="mt-4 sm:mt-6 text-center text-[10px] sm:text-xs text-slate-500 shrink-0">
-        100% ლოკალური შენახვა (SQLite) &bull; კლავიატურის მხარდაჭერა &bull; ქართული ინტერფეისი
-      </div>
+      <div className="mt-4 sm:mt-6 text-center text-[10px] sm:text-xs text-slate-500 shrink-0">{tr('100% ლოკალური შენახვა (SQLite) • კლავიატურის მხარდაჭერა • ქართული ინტერფეისი')}</div>
 
     </div>
   );

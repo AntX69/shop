@@ -40,7 +40,7 @@ const ReturnQuantityField: React.FC<{
       value={value > 0 ? gramsToField(value) : ''}
       onChange={(val) => onChange(Math.min(max, weightToGrams(val) ?? 0))}
       className={className}
-      ariaLabel="დასაბრუნებელი წონა (კგ)"
+      ariaLabel={tr('დასაბრუნებელი წონა (კგ)')}
     />
   ) : (
     <EditableIntegerInput
@@ -49,7 +49,7 @@ const ReturnQuantityField: React.FC<{
       value={value > 0 ? value : ''}
       onChange={(val) => onChange(val === '' ? 0 : Math.min(max, val))}
       className={className}
-      ariaLabel="დასაბრუნებელი რაოდენობა"
+      ariaLabel={tr('დასაბრუნებელი რაოდენობა')}
     />
   );
 import { 
@@ -71,6 +71,8 @@ import {
   Banknote,
   Clock
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
+import { fmtDateTime } from '../../shared/i18n/format.ts';
 
 interface SalesHistoryViewProps {
   currentUser: User;
@@ -181,7 +183,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
       setAllProducts(prods);
       setIsExchangeModalOpen(true);
     } catch (e: any) {
-      alert('პროდუქტების კატალოგის ჩატვირთვა ვერ მოხერხდა: ' + e.message);
+      alert(tr('პროდუქტების კატალოგის ჩატვირთვა ვერ მოხერხდა: ') + trServer(e.message));
     }
   };
 
@@ -241,7 +243,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
     }
 
     if (payloadItems.length === 0) {
-      setReturnError('გთხოვთ აირჩიოთ მინიმუმ 1 დასაბრუნებელი პროდუქტი (რაოდენობა > 0)');
+      setReturnError(tr('გთხოვთ აირჩიოთ მინიმუმ 1 დასაბრუნებელი პროდუქტი (რაოდენობა > 0)'));
       return;
     }
 
@@ -257,17 +259,17 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
 
       returnIdempotencyKeyRef.current = null;
       alert(
-        `დაბრუნება წარმატებით გაფორმდა!\n` +
-        `ჯამური დასაბრუნებელი თანხა: ${formatTetri(res.total_refund_tetri)}\n` +
-        `ჩამოწერილი ვალი: ${formatTetri(res.debt_deduction_tetri)}\n` +
-        `დაბრუნებული ნაღდი ფული: ${formatTetri(res.cash_refund_tetri)}`
+        tr('დაბრუნება წარმატებით გაფორმდა!\n') +
+        tr('ჯამური დასაბრუნებელი თანხა: {amount}\n', { amount: formatTetri(res.total_refund_tetri) }) +
+        tr('ჩამოწერილი ვალი: {amount}\n', { amount: formatTetri(res.debt_deduction_tetri) }) +
+        tr('დაბრუნებული ნაღდი ფული: {amount}', { amount: formatTetri(res.cash_refund_tetri) })
       );
 
       setIsReturnModalOpen(false);
       setReturnReason('');
       await loadData();
     } catch (err: any) {
-      setReturnError(err.message || 'დაბრუნების შეცდომა');
+      setReturnError(trServer(err.message) || tr('დაბრუნების შეცდომა'));
     } finally {
       setIsSubmitting(false);
     }
@@ -279,17 +281,17 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
 
     if (!selectedSale) return;
     if (!selectedNewVariant) {
-      setExchangeError('გთხოვთ აირჩიოთ ახალი პროდუქტი გასაცვლელად');
+      setExchangeError(tr('გთხოვთ აირჩიოთ ახალი პროდუქტი გასაცვლელად'));
       return;
     }
     if (newVariantQty < 1) {
       setExchangeError(unitOf(selectedNewVariant.product.unit_type) === 'kg'
-        ? 'მიუთითეთ ახალი პროდუქტის წონა (კგ)'
-        : 'მიუთითეთ ახალი პროდუქტის რაოდენობა');
+        ? tr('მიუთითეთ ახალი პროდუქტის წონა (კგ)')
+        : tr('მიუთითეთ ახალი პროდუქტის რაოდენობა'));
       return;
     }
     if (newVariantQty > stockLimit(selectedNewVariant.variant.stock_quantity)) {
-      setExchangeError(`ახალი პროდუქტის მარაგი არ კმარა (${formatUnitQuantity(selectedNewVariant.variant.stock_quantity, unitOf(selectedNewVariant.product.unit_type))})`);
+      setExchangeError(tr('ახალი პროდუქტის მარაგი არ კმარა ({formatUnitQuantity})', { formatUnitQuantity: formatUnitQuantity(selectedNewVariant.variant.stock_quantity, unitOf(selectedNewVariant.product.unit_type)) }));
       return;
     }
 
@@ -307,7 +309,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
     }
 
     if (payloadReturnItems.length === 0) {
-      setExchangeError('გთხოვთ აირჩიოთ მინიმუმ 1 დასაბრუნებელი ნივთი');
+      setExchangeError(tr('გთხოვთ აირჩიოთ მინიმუმ 1 დასაბრუნებელი ნივთი'));
       return;
     }
 
@@ -316,21 +318,21 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
     let cashReceived: number | undefined;
     if (preview.due > 0) {
       if ((exchangePayMethod === 'debt' || exchangePayMethod === 'mixed') && !selectedSale.customer_id) {
-        setExchangeError('ნისიით გადახდა შესაძლებელია მხოლოდ კლიენტზე გაფორმებული გაყიდვისთვის');
+        setExchangeError(tr('ნისიით გადახდა შესაძლებელია მხოლოდ კლიენტზე გაფორმებული გაყიდვისთვის'));
         return;
       }
       if (exchangePayMethod !== 'debt') {
         const parsed = safeParseTetri(exchangeCashInput);
         if (parsed === null) {
-          setExchangeError('მიუთითეთ კლიენტისგან მიღებული ნაღდი თანხა');
+          setExchangeError(tr('მიუთითეთ კლიენტისგან მიღებული ნაღდი თანხა'));
           return;
         }
         if (exchangePayMethod === 'cash' && parsed < preview.due) {
-          setExchangeError(`მიღებული ნაღდი ნაკლებია გადასახდელზე (${formatTetri(preview.due)})`);
+          setExchangeError(tr('მიღებული ნაღდი ნაკლებია გადასახდელზე ({amount})', { amount: formatTetri(preview.due) }));
           return;
         }
         if (exchangePayMethod === 'mixed' && (parsed <= 0 || parsed >= preview.due)) {
-          setExchangeError('შერეული გადახდისას ნაღდი უნდა იყოს 0-ზე მეტი და გადასახდელზე ნაკლები');
+          setExchangeError(tr('შერეული გადახდისას ნაღდი უნდა იყოს 0-ზე მეტი და გადასახდელზე ნაკლები'));
           return;
         }
         cashReceived = parsed;
@@ -355,23 +357,23 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
       exchangeIdempotencyKeyRef.current = null;
 
       const lines = [
-        'გაცვლა წარმატებით განხორციელდა!',
-        `დაბრუნებული ნივთ(ებ)ის ღირებულება: ${formatTetri(res.returned_value_tetri)}`,
-        `ახალი ნივთის ღირებულება: ${formatTetri(res.new_items_value_tetri)}`,
+        tr('გაცვლა წარმატებით განხორციელდა!'),
+        tr('დაბრუნებული ნივთ(ებ)ის ღირებულება: {amount}', { amount: formatTetri(res.returned_value_tetri) }),
+        tr('ახალი ნივთის ღირებულება: {amount}', { amount: formatTetri(res.new_items_value_tetri) }),
       ];
       if (res.amount_due_tetri > 0) {
-        lines.push(`კლიენტმა დაამატა: ${formatTetri(res.amount_due_tetri)} (${exchangePayMethod === 'cash' ? 'ნაღდი' : exchangePayMethod === 'debt' ? 'ნისიაზე' : 'ნაღდი + ნისია'})`);
-        if (exchangePayMethod === 'cash' && res.new_sale?.change_given_tetri > 0) lines.push(`ხურდა: ${formatTetri(res.new_sale.change_given_tetri)}`);
+        lines.push(tr('კლიენტმა დაამატა: {amount} ({value})', { amount: formatTetri(res.amount_due_tetri), value: exchangePayMethod === 'cash' ? tr('ნაღდი') : exchangePayMethod === 'debt' ? tr('ნისიაზე') : tr('ნაღდი + ნისია') }));
+        if (exchangePayMethod === 'cash' && res.new_sale?.change_given_tetri > 0) lines.push(tr('ხურდა: {amount}', { amount: formatTetri(res.new_sale.change_given_tetri) }));
       }
-      if (res.debt_deduction_tetri > 0) lines.push(`ნისია შემცირდა: ${formatTetri(res.debt_deduction_tetri)}`);
-      if (res.cash_refund_tetri > 0) lines.push(`კლიენტს დაუბრუნდა ნაღდი: ${formatTetri(res.cash_refund_tetri)}`);
-      if (res.amount_due_tetri === 0 && res.cash_refund_tetri === 0 && res.debt_deduction_tetri === 0) lines.push('თანაბარი გაცვლა — ფული არ მოძრაობს');
+      if (res.debt_deduction_tetri > 0) lines.push(tr('ნისია შემცირდა: {amount}', { amount: formatTetri(res.debt_deduction_tetri) }));
+      if (res.cash_refund_tetri > 0) lines.push(tr('კლიენტს დაუბრუნდა ნაღდი: {amount}', { amount: formatTetri(res.cash_refund_tetri) }));
+      if (res.amount_due_tetri === 0 && res.cash_refund_tetri === 0 && res.debt_deduction_tetri === 0) lines.push(tr('თანაბარი გაცვლა — ფული არ მოძრაობს'));
 
       alert(lines.join('\n'));
       setIsExchangeModalOpen(false);
       await loadData();
     } catch (err: any) {
-      setExchangeError(err.message || 'გაცვლის შეცდომა');
+      setExchangeError(trServer(err.message) || tr('გაცვლის შეცდომა'));
     } finally {
       setIsSubmitting(false);
     }
@@ -393,11 +395,9 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
         <div>
           <h1 className="text-base sm:text-lg lg:text-xl font-bold text-white flex items-center space-x-2">
             <History className="w-5 h-5 lg:w-6 lg:h-6 text-emerald-400" />
-            <span>გაყიდვების, დაბრუნებებისა და ნისიების ისტორია</span>
+            <span>{tr('გაყიდვების, დაბრუნებებისა და ნისიების ისტორია')}</span>
           </h1>
-          <p className="text-[10px] sm:text-[11px] lg:text-xs text-slate-400 mt-0.5">
-            ტრანზაქციების რეესტრი, დაბრუნების და გაცვლის სრული აღრიცხვა
-          </p>
+          <p className="text-[10px] sm:text-[11px] lg:text-xs text-slate-400 mt-0.5">{tr('ტრანზაქციების რეესტრი, დაბრუნების და გაცვლის სრული აღრიცხვა')}</p>
         </div>
 
         <div className="relative w-full sm:w-64 lg:w-80">
@@ -405,7 +405,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="ძებნა ჩეკით / კლიენტით / კოდით..."
+            placeholder={tr('ძებნა ჩეკით / კლიენტით / კოდით...')}
             className="w-full pl-8 pr-3 py-1.5 sm:py-2 bg-slate-900 border border-slate-800 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
           />
           <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2 sm:top-2.5" />
@@ -423,7 +423,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
           }`}
         >
           <Receipt className="w-3.5 h-3.5" />
-          <span>ყველა გაყიდვა ({sales.length})</span>
+          <span>{tr('ყველა გაყიდვა ({length})', { length: sales.length })}</span>
         </button>
 
         <button
@@ -435,7 +435,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
           }`}
         >
           <RotateCcw className="w-3.5 h-3.5" />
-          <span>დაბრუნებები ({returnsList.length})</span>
+          <span>{tr('დაბრუნებები ({length})', { length: returnsList.length })}</span>
         </button>
 
         <button
@@ -447,7 +447,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
           }`}
         >
           <ArrowRightLeft className="w-3.5 h-3.5" />
-          <span>გაცვლები ({sales.filter(s => s.sale_type === 'exchange').length})</span>
+          <span>{tr('გაცვლები ({length})', { length: sales.filter(s => s.sale_type === 'exchange').length })}</span>
         </button>
 
         <button
@@ -459,7 +459,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
           }`}
         >
           <Users className="w-3.5 h-3.5" />
-          <span>ნისიები ({sales.filter(s => s.debt_amount_tetri > 0).length})</span>
+          <span>{tr('ნისიები ({length})', { length: sales.filter(s => s.debt_amount_tetri > 0).length })}</span>
         </button>
       </div>
 
@@ -473,7 +473,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
             {activeTab === 'returns' ? (
               // Dedicated Returns listing tab
               returnsList.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-400">დაბრუნებები არ ფიქსირდება</div>
+                <div className="p-8 text-center text-xs text-slate-400">{tr('დაბრუნებები არ ფიქსირდება')}</div>
               ) : (
                 returnsList.map((ret) => (
                   <div
@@ -487,22 +487,18 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                   >
                     <div>
                       <div className="flex items-center space-x-2">
-                        <span className="font-mono font-bold text-xs text-amber-400">ჩეკი #{ret.receipt_number || ret.sale_id}</span>
+                        <span className="font-mono font-bold text-xs text-amber-400">{tr('ჩეკი #{value}', { value: ret.receipt_number || ret.sale_id })}</span>
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950/60 text-amber-300 border border-amber-800/60 flex items-center space-x-1">
                           <RotateCcw className="w-2.5 h-2.5" />
-                          <span>{ret.return_type === 'exchange' ? 'გაცვლა' : 'დაბრუნება'}</span>
+                          <span>{ret.return_type === 'exchange' ? tr('გაცვლა') : tr('დაბრუნება')}</span>
                         </span>
                         <span className="text-[10px] text-slate-400">
-                          {ret.condition === 'resellable' ? '✓ ვარგისი' : '⚠ დაზიანებული'}
+                          {ret.condition === 'resellable' ? tr('✓ ვარგისი') : tr('⚠ დაზიანებული')}
                         </span>
                       </div>
-                      <div className="text-[11px] text-slate-400 mt-1">
-                        {new Date(ret.created_at).toLocaleString('ka-GE')} &bull; მიიღო: {ret.user_name}
-                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">{tr('{date} • მიიღო: {user_name}', { date: fmtDateTime(ret.created_at), user_name: ret.user_name })}</div>
                       {ret.customer_name && (
-                        <div className="text-[11px] text-slate-300 mt-0.5 font-medium">
-                          კლიენტი: {ret.customer_name}
-                        </div>
+                        <div className="text-[11px] text-slate-300 mt-0.5 font-medium">{tr('კლიენტი: {customer_name}', { customer_name: ret.customer_name })}</div>
                       )}
                     </div>
 
@@ -511,7 +507,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                         -{formatTetri(ret.total_refund_tetri)}
                       </div>
                       <div className="text-[10px] text-slate-400">
-                        {ret.debt_deduction_tetri > 0 ? `ვალი: -${formatTetri(ret.debt_deduction_tetri)}` : `ნაღდი: ${formatTetri(ret.cash_refund_tetri)}`}
+                        {ret.debt_deduction_tetri > 0 ? tr('ვალი: -{amount}', { amount: formatTetri(ret.debt_deduction_tetri) }) : tr('ნაღდი: {amount}', { amount: formatTetri(ret.cash_refund_tetri) })}
                       </div>
                     </div>
                   </div>
@@ -520,7 +516,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
             ) : (
               // Sales, Exchanges, Debts listing
               displayedSales.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-400">ჩანაწერები არ მოიძებნა</div>
+                <div className="p-8 text-center text-xs text-slate-400">{tr('ჩანაწერები არ მოიძებნა')}</div>
               ) : (
                 displayedSales.map((s) => {
                   const isSelected = s.id === selectedSaleId;
@@ -544,53 +540,49 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                           {isExchange && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-950/70 text-blue-300 border border-blue-800 flex items-center space-x-1">
                               <ArrowRightLeft className="w-2.5 h-2.5" />
-                              <span>გაცვლა</span>
+                              <span>{tr('გაცვლა')}</span>
                             </span>
                           )}
 
                           {s.status === 'completed' && !isExchange && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-950/60 text-emerald-400 border border-emerald-800/50 flex items-center space-x-1">
                               <Check className="w-2.5 h-2.5" />
-                              <span>დასრულებული</span>
+                              <span>{tr('დასრულებული')}</span>
                             </span>
                           )}
 
                           {s.status === 'partially_returned' && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-950/60 text-amber-400 border border-amber-800/50 flex items-center space-x-1">
                               <RotateCcw className="w-2.5 h-2.5" />
-                              <span>ნაწილ. დაბრუნებული</span>
+                              <span>{tr('ნაწილ. დაბრუნებული')}</span>
                             </span>
                           )}
 
                           {s.status === 'returned' && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-950/60 text-red-400 border border-red-800/50 flex items-center space-x-1">
                               <RotateCcw className="w-2.5 h-2.5" />
-                              <span>სრულად დაბრუნებული</span>
+                              <span>{tr('სრულად დაბრუნებული')}</span>
                             </span>
                           )}
 
                           {hasOpenDebt && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-950/60 text-purple-300 border border-purple-800 flex items-center space-x-1">
                               <Clock className="w-2.5 h-2.5" />
-                              <span>აქტიური ნისია</span>
+                              <span>{tr('აქტიური ნისია')}</span>
                             </span>
                           )}
 
                           {isFullyRepaidDebt && (
-                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
-                              ნისია დაფარულია
-                            </span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">{tr('ნისია დაფარულია')}</span>
                           )}
                         </div>
 
                         <div className="text-[11px] text-slate-400 mt-1 truncate">
-                          {new Date(s.created_at).toLocaleString('ka-GE')} &bull; {s.user_name}
+                          {fmtDateTime(s.created_at)} &bull; {s.user_name}
                         </div>
 
                         {s.customer_name && (
-                          <div className="text-[11px] text-slate-300 font-medium mt-0.5 truncate">
-                            კლიენტი: {s.customer_name}
-                          </div>
+                          <div className="text-[11px] text-slate-300 font-medium mt-0.5 truncate">{tr('კლიენტი: {customer_name}', { customer_name: s.customer_name })}</div>
                         )}
                       </div>
 
@@ -599,12 +591,10 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                           {formatTetri(s.total_tetri)}
                         </div>
                         <div className="text-[10px] sm:text-[11px] text-slate-400">
-                          {s.payment_method === 'cash' ? 'ნაღდი' : s.payment_method === 'debt' ? 'ნისია' : 'შერეული'}
+                          {s.payment_method === 'cash' ? tr('ნაღდი') : s.payment_method === 'debt' ? tr('ნისია') : tr('შერეული')}
                         </div>
                         {hasOpenDebt && (
-                          <div className="text-[10px] font-bold text-amber-400 tabular-nums">
-                            ვალი: {formatTetri(s.debt_remaining_tetri)}
-                          </div>
+                          <div className="text-[10px] font-bold text-amber-400 tabular-nums">{tr('ვალი: {amount}', { amount: formatTetri(s.debt_remaining_tetri) })}</div>
                         )}
                       </div>
                     </div>
@@ -619,9 +609,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                   type="button"
                   onClick={handleLoadMore}
                   className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-colors cursor-pointer w-full"
-                >
-                  მაჩვენე მეტი (შემდეგი 50)
-                </button>
+                >{tr('მაჩვენე მეტი (შემდეგი 50)')}</button>
               </div>
             )}
           </div>
@@ -639,18 +627,12 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                     <Receipt className="w-5 h-5 text-emerald-400" />
                     <h2 className="text-base sm:text-lg font-mono font-bold text-white">{selectedSale.receipt_number}</h2>
                     {selectedSale.sale_type === 'exchange' && (
-                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-900/60 text-blue-300 border border-blue-700">
-                        გაცვლითი გაყიდვა
-                      </span>
+                      <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-900/60 text-blue-300 border border-blue-700">{tr('გაცვლითი გაყიდვა')}</span>
                     )}
                   </div>
-                  <div className="text-xs text-slate-400 mt-0.5">
-                    თარიღი: {new Date(selectedSale.created_at).toLocaleString('ka-GE')} &bull; გამყიდველი: {selectedSale.user_name}
-                  </div>
+                  <div className="text-xs text-slate-400 mt-0.5">{tr('თარიღი: {date} • გამყიდველი: {user_name}', { date: fmtDateTime(selectedSale.created_at), user_name: selectedSale.user_name })}</div>
                   {selectedSale.customer_name && (
-                    <div className="text-xs text-slate-300 font-semibold mt-0.5">
-                      კლიენტი: {selectedSale.customer_name}
-                    </div>
+                    <div className="text-xs text-slate-300 font-semibold mt-0.5">{tr('კლიენტი: {customer_name}', { customer_name: selectedSale.customer_name })}</div>
                   )}
                 </div>
 
@@ -661,7 +643,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                       className="px-3 py-1.5 sm:px-3.5 sm:py-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-md shadow-amber-950/40 cursor-pointer"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      <span>დაბრუნება</span>
+                      <span>{tr('დაბრუნება')}</span>
                     </button>}
 
                     {canExchange && <button
@@ -669,7 +651,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                       className="px-3 py-1.5 sm:px-3.5 sm:py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-md shadow-blue-950/40 cursor-pointer"
                     >
                       <ArrowRightLeft className="w-3.5 h-3.5" />
-                      <span>გაცვლა</span>
+                      <span>{tr('გაცვლა')}</span>
                     </button>}
                   </div>
                 )}
@@ -678,21 +660,21 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
               {/* Payment Summary Box */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-950 p-2.5 sm:p-3 rounded-xl border border-slate-800 mb-3 sm:mb-4 text-xs shrink-0">
                 <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-semibold">მეთოდი</div>
+                  <div className="text-slate-400 text-[10px] uppercase font-semibold">{tr('მეთოდი')}</div>
                   <div className="font-bold text-white mt-0.5">
-                    {selectedSale.payment_method === 'cash' ? 'ნაღდი' : selectedSale.payment_method === 'debt' ? 'ნისია' : 'შერეული'}
+                    {selectedSale.payment_method === 'cash' ? tr('ნაღდი') : selectedSale.payment_method === 'debt' ? tr('ნისია') : tr('შერეული')}
                   </div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-semibold">ჯამური თანხა</div>
+                  <div className="text-slate-400 text-[10px] uppercase font-semibold">{tr('ჯამური თანხა')}</div>
                   <div className="font-bold text-emerald-400 mt-0.5 text-xs sm:text-sm tabular-nums">{formatTetri(selectedSale.total_tetri)}</div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-semibold">ნაღდად მიღებული</div>
+                  <div className="text-slate-400 text-[10px] uppercase font-semibold">{tr('ნაღდად მიღებული')}</div>
                   <div className="font-bold text-white mt-0.5 tabular-nums">{formatTetri(selectedSale.cash_received_tetri)}</div>
                 </div>
                 <div>
-                  <div className="text-slate-400 text-[10px] uppercase font-semibold">დარჩენილი ნისია</div>
+                  <div className="text-slate-400 text-[10px] uppercase font-semibold">{tr('დარჩენილი ნისია')}</div>
                   <div className="font-bold text-amber-400 mt-0.5 tabular-nums">
                     {formatTetri(selectedSale.debt_remaining_tetri !== undefined ? selectedSale.debt_remaining_tetri : selectedSale.debt_amount_tetri)}
                   </div>
@@ -704,12 +686,12 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                 <table className="w-full text-left text-xs min-w-[500px]">
                   <thead className="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-800">
                     <tr>
-                      <th className="py-2 px-3">პროდუქტი</th>
-                      <th className="py-2 px-3">კოდი</th>
-                      <th className="py-2 px-3 text-right">გაყიდული</th>
-                      <th className="py-2 px-3 text-right">ფასი</th>
-                      <th className="py-2 px-3 text-right">ჯამი</th>
-                      <th className="py-2 px-3 text-center">დაბრუნებული</th>
+                      <th className="py-2 px-3">{tr('პროდუქტი')}</th>
+                      <th className="py-2 px-3">{tr('კოდი')}</th>
+                      <th className="py-2 px-3 text-right">{tr('გაყიდული')}</th>
+                      <th className="py-2 px-3 text-right">{tr('ფასი')}</th>
+                      <th className="py-2 px-3 text-right">{tr('ჯამი')}</th>
+                      <th className="py-2 px-3 text-center">{tr('დაბრუნებული')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60">
@@ -750,27 +732,27 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                 <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 shrink-0">
                   <div className="text-xs font-bold text-amber-400 flex items-center space-x-1.5 mb-2">
                     <RotateCcw className="w-3.5 h-3.5" />
-                    <span>ამ გაყიდვის დაბრუნების ჩანაწერები (Linked Returns):</span>
+                    <span>{tr('ამ გაყიდვის დაბრუნების ჩანაწერები (Linked Returns):')}</span>
                   </div>
                   <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
                     {(selectedSale as any).returns.map((ret: any) => (
                       <div key={ret.id} className="bg-slate-900 p-2 rounded-lg text-xs flex items-center justify-between border border-slate-800">
                         <div>
                           <span className="text-slate-300 font-medium">
-                            {new Date(ret.created_at).toLocaleString('ka-GE')}
+                            {fmtDateTime(ret.created_at)}
                           </span>
                           <span className="text-slate-400 ml-2">
-                            ({ret.condition === 'resellable' ? 'ვარგისი/მარაგში' : 'დაზიანებული'})
+                            ({ret.condition === 'resellable' ? tr('ვარგისი/მარაგში') : tr('დაზიანებული')})
                           </span>
-                          {ret.reason && <span className="text-slate-400 ml-2">&bull; {ret.reason}</span>}
+                          {ret.reason && <span className="text-slate-400 ml-2">&bull; {trServer(ret.reason)}</span>}
                         </div>
                         <div className="text-right tabular-nums">
                           <span className="font-bold text-amber-400">-{formatTetri(ret.total_refund_tetri)}</span>
                           {ret.debt_deduction_tetri > 0 && (
-                            <span className="text-[10px] text-purple-300 ml-2">(ვალი: -{formatTetri(ret.debt_deduction_tetri)})</span>
+                            <span className="text-[10px] text-purple-300 ml-2">{tr('(ვალი: -{amount})', { amount: formatTetri(ret.debt_deduction_tetri) })}</span>
                           )}
                           {ret.cash_refund_tetri > 0 && (
-                            <span className="text-[10px] text-emerald-300 ml-2">(ნაღდი: {formatTetri(ret.cash_refund_tetri)})</span>
+                            <span className="text-[10px] text-emerald-300 ml-2">{tr('(ნაღდი: {amount})', { amount: formatTetri(ret.cash_refund_tetri) })}</span>
                           )}
                         </div>
                       </div>
@@ -781,9 +763,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
 
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-xs">
-              აირჩიეთ ტრანზაქცია სიიდან დეტალების სანახავად
-            </div>
+            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 text-xs">{tr('აირჩიეთ ტრანზაქცია სიიდან დეტალების სანახავად')}</div>
           )}
         </div>
 
@@ -796,7 +776,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
             <div className="flex justify-between items-center border-b border-slate-800 p-4 shrink-0">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <RotateCcw className="w-5 h-5 text-amber-400" />
-                <span>პროდუქტის დაბრუნება (ჩეკი #{selectedSale.receipt_number})</span>
+                <span>{tr('პროდუქტის დაბრუნება (ჩეკი #{receipt_number})', { receipt_number: selectedSale.receipt_number })}</span>
               </h3>
               <button onClick={() => setIsReturnModalOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
@@ -812,9 +792,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
               )}
 
               <form id="return-form" onSubmit={handleReturnSubmit} className="space-y-4">
-                <div className="text-xs text-slate-300">
-                  აირჩიეთ დასაბრუნებელი რაოდენობა და ნივთის მდგომარეობა:
-                </div>
+                <div className="text-xs text-slate-300">{tr('აირჩიეთ დასაბრუნებელი რაოდენობა და ნივთის მდგომარეობა:')}</div>
 
                 <div className="space-y-3">
                   {selectedSale.items?.map((item) => {
@@ -827,17 +805,16 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                       <div key={item.id} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 text-xs">
                         <div className="flex justify-between font-bold text-white">
                           <span>{item.product_name_snap} ({item.variant_name_snap})</span>
-                          <span className="tabular-nums">{formatTetri(item.unit_price_tetri)} / {unitOf(item.unit_type) === 'kg' ? 'კგ' : 'ც'}</span>
+                          <span className="tabular-nums">{formatTetri(item.unit_price_tetri)} / {unitOf(item.unit_type) === 'kg' ? tr('კგ') : tr('ც')}</span>
                         </div>
 
-                        <div className="text-slate-400">
-                          დარჩენილი დაბრუნებადი: <span className="text-emerald-400 font-bold tabular-nums">{formatUnitQuantity(maxReturnable, unitOf(item.unit_type))}</span>
+                        <div className="text-slate-400">{tr('დარჩენილი დაბრუნებადი:')}{' '}<span className="text-emerald-400 font-bold tabular-nums">{formatUnitQuantity(maxReturnable, unitOf(item.unit_type))}</span>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3 pt-1">
                           <div>
                             <label className="block text-[11px] text-slate-400 mb-1">
-                              {unitOf(item.unit_type) === 'kg' ? 'დასაბრუნებელი წონა (კგ)' : 'დასაბრუნებელი რაოდენობა'}
+                              {unitOf(item.unit_type) === 'kg' ? tr('დასაბრუნებელი წონა (კგ)') : tr('დასაბრუნებელი რაოდენობა')}
                             </label>
                             <ReturnQuantityField
                               unit={unitOf(item.unit_type)}
@@ -849,7 +826,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                           </div>
 
                           <div>
-                            <label className="block text-[11px] text-slate-400 mb-1">მდგომარეობა</label>
+                            <label className="block text-[11px] text-slate-400 mb-1">{tr('მდგომარეობა')}</label>
                             <select
                               value={st.condition}
                               onChange={(e) => {
@@ -860,8 +837,8 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                               }}
                               className="w-full px-2 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-xs"
                             >
-                              <option value="resellable">ვარგისი (დაემატება მარაგს)</option>
-                              <option value="damaged">დაზიანებული (ჩამოიწერება)</option>
+                              <option value="resellable">{tr('ვარგისი (დაემატება მარაგს)')}</option>
+                              <option value="damaged">{tr('დაზიანებული (ჩამოიწერება)')}</option>
                             </select>
                           </div>
                         </div>
@@ -871,12 +848,12 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">დაბრუნების მიზეზი (სურვილისამებრ)</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('დაბრუნების მიზეზი (სურვილისამებრ)')}</label>
                   <input
                     type="text"
                     value={returnReason}
                     onChange={(e) => setReturnReason(e.target.value)}
-                    placeholder="მაგ. ზომა არ მოერგო, დეფექტი..."
+                    placeholder={tr('მაგ. ზომა არ მოერგო, დეფექტი...')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   />
                 </div>
@@ -888,16 +865,14 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                 type="button"
                 onClick={() => setIsReturnModalOpen(false)}
                 className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700 cursor-pointer"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="submit"
                 form="return-form"
                 disabled={isSubmitting}
                 className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-amber-900/40 disabled:opacity-50 cursor-pointer"
               >
-                {isSubmitting ? 'სრულდება...' : 'დაბრუნების დადასტურება'}
+                {isSubmitting ? tr('სრულდება...') : tr('დაბრუნების დადასტურება')}
               </button>
             </div>
           </div>
@@ -911,7 +886,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
             <div className="flex justify-between items-center border-b border-slate-800 p-4 shrink-0">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <ArrowRightLeft className="w-5 h-5 text-blue-400" />
-                <span>პროდუქტის გაცვლა (ჩეკი #{selectedSale.receipt_number})</span>
+                <span>{tr('პროდუქტის გაცვლა (ჩეკი #{receipt_number})', { receipt_number: selectedSale.receipt_number })}</span>
               </h3>
               <button onClick={() => setIsExchangeModalOpen(false)} className="text-slate-400 hover:text-white cursor-pointer">
                 <X className="w-5 h-5" />
@@ -928,9 +903,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
 
               {/* 1. Step: Select which sold items to return */}
               <div>
-                <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">
-                  1. აირჩიეთ დასაბრუნებელი ნივთი ამ ჩეკიდან:
-                </h4>
+                <h4 className="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">{tr('1. აირჩიეთ დასაბრუნებელი ნივთი ამ ჩეკიდან:')}</h4>
                 <div className="space-y-2">
                   {selectedSale.items?.map((item) => {
                     const maxReturnable = item.quantity - item.returned_quantity;
@@ -941,9 +914,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                       <div key={item.id} className="bg-slate-950 p-2.5 rounded-xl border border-slate-800 flex items-center justify-between text-xs">
                         <div>
                           <div className="font-semibold text-white">{item.product_name_snap} ({item.variant_name_snap})</div>
-                          <div className="text-[11px] text-slate-400">
-                            ფასი: {formatTetri(item.unit_price_tetri)}{unitOf(item.unit_type) === 'kg' ? ' / კგ' : ''} &bull; დარჩენილი: {formatUnitQuantity(maxReturnable, unitOf(item.unit_type))}
-                          </div>
+                          <div className="text-[11px] text-slate-400">{tr('ფასი: {amount}{value} • დარჩენილი: {formatUnitQuantity}', { amount: formatTetri(item.unit_price_tetri), value: unitOf(item.unit_type) === 'kg' ? tr(' / კგ') : '', formatUnitQuantity: formatUnitQuantity(maxReturnable, unitOf(item.unit_type)) })}</div>
                         </div>
 
                         <div className="flex items-center space-x-2">
@@ -954,7 +925,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                             onChange={(qty) => setExchangeReturnItems(prev => ({ ...prev, [item.id]: { ...st, qty } }))}
                             className="w-20 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
                           />
-                          <span className="text-slate-400">{unitOf(item.unit_type) === 'kg' ? 'კგ' : 'ცალი'}</span>
+                          <span className="text-slate-400">{unitOf(item.unit_type) === 'kg' ? tr('კგ') : tr('ცალი')}</span>
                         </div>
                       </div>
                     );
@@ -964,15 +935,13 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
 
               {/* 2. Step: Choose new replacement product */}
               <div>
-                <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">
-                  2. აირჩიეთ ახალი პროდუქტი გასაცვლელად:
-                </h4>
+                <h4 className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">{tr('2. აირჩიეთ ახალი პროდუქტი გასაცვლელად:')}</h4>
                 <div className="relative mb-2">
                   <input
                     type="text"
                     value={exchangeSearch}
                     onChange={(e) => setExchangeSearch(e.target.value)}
-                    placeholder="მოძებნეთ პროდუქტი სახელით ან კოდით..."
+                    placeholder={tr('მოძებნეთ პროდუქტი სახელით ან კოდით...')}
                     className="w-full pl-8 pr-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs text-white"
                   />
                   <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2" />
@@ -1010,8 +979,8 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                           </div>
                           <div className="text-right">
                             <span className="font-bold text-emerald-400">{formatTetri(effectivePrice)}</span>
-                            {unitOf(product.unit_type) === 'kg' && <span className="text-[10px] text-slate-400"> / კგ</span>}
-                            {hasStockNumber(variant.stock_quantity) && <span className="text-[10px] text-slate-400 ml-2">მარაგი: {formatUnitQuantity(variant.stock_quantity, unitOf(product.unit_type))}</span>}
+                            {unitOf(product.unit_type) === 'kg' && <span className="text-[10px] text-slate-400">{' '}{tr('/ კგ')}</span>}
+                            {hasStockNumber(variant.stock_quantity) && <span className="text-[10px] text-slate-400 ml-2">{tr('მარაგი: {formatUnitQuantity}', { formatUnitQuantity: formatUnitQuantity(variant.stock_quantity, unitOf(product.unit_type)) })}</span>}
                           </div>
                         </div>
                       );
@@ -1021,7 +990,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                 {selectedNewVariant && (
                   <div className="mt-2 flex items-center justify-between gap-3 bg-slate-950 p-2.5 rounded-xl border border-blue-900/50 text-xs">
                     <label className="text-slate-300 font-semibold">
-                      {unitOf(selectedNewVariant.product.unit_type) === 'kg' ? 'ახალი პროდუქტის წონა (კგ)' : 'ახალი პროდუქტის რაოდენობა (ცალი)'}
+                      {unitOf(selectedNewVariant.product.unit_type) === 'kg' ? tr('ახალი პროდუქტის წონა (კგ)') : tr('ახალი პროდუქტის რაოდენობა (ცალი)')}
                     </label>
                     {unitOf(selectedNewVariant.product.unit_type) === 'kg' ? (
                       <EditableWeightInput
@@ -1029,7 +998,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                         value={newVariantQty > 0 ? gramsToField(newVariantQty) : ''}
                         onChange={(val) => setNewVariantQty(weightToGrams(val) ?? 0)}
                         className="w-24 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
-                        ariaLabel="ახალი პროდუქტის წონა (კგ)"
+                        ariaLabel={tr('ახალი პროდუქტის წონა (კგ)')}
                       />
                     ) : (
                       <EditableIntegerInput
@@ -1038,7 +1007,7 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                         value={newVariantQty > 0 ? newVariantQty : ''}
                         onChange={(val) => setNewVariantQty(val === '' ? 0 : val)}
                         className="w-20 px-2 py-1 bg-slate-900 border border-slate-700 rounded text-center text-white font-bold tabular-nums"
-                        ariaLabel="ახალი პროდუქტის რაოდენობა"
+                        ariaLabel={tr('ახალი პროდუქტის რაოდენობა')}
                       />
                     )}
                   </div>
@@ -1049,26 +1018,26 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
               {selectedNewVariant && exchangePreview && (
                 <div className="bg-slate-950 p-3 rounded-xl border border-blue-900/50 space-y-1.5 text-xs">
                   <div className="flex justify-between text-slate-400">
-                    <span>დაბრუნებული ნივთ(ებ)ის ღირებულება (გადახდილი ფასით):</span>
+                    <span>{tr('დაბრუნებული ნივთ(ებ)ის ღირებულება (გადახდილი ფასით):')}</span>
                     <span className="font-bold text-amber-400 tabular-nums">{formatTetri(exchangePreview.returned)}</span>
                   </div>
                   <div className="flex justify-between text-slate-400">
-                    <span>ახალი ნივთის ღირებულება:</span>
+                    <span>{tr('ახალი ნივთის ღირებულება:')}</span>
                     <span className="font-bold text-blue-400 tabular-nums">{formatTetri(exchangePreview.newValue)}</span>
                   </div>
                   {exchangePreview.debtReduction > 0 && (
                     <div className="flex justify-between text-slate-400">
-                      <span>ნისია შემცირდება:</span>
+                      <span>{tr('ნისია შემცირდება:')}</span>
                       <span className="font-bold text-amber-300 tabular-nums">{formatTetri(exchangePreview.debtReduction)}</span>
                     </div>
                   )}
                   <div className="flex justify-between text-sm font-extrabold pt-1 border-t border-slate-800">
                     {exchangePreview.due > 0 ? (
-                      <><span className="text-white">კლიენტი ამატებს:</span><span className="text-emerald-400 tabular-nums">{formatTetri(exchangePreview.due)}</span></>
+                      <><span className="text-white">{tr('კლიენტი ამატებს:')}</span><span className="text-emerald-400 tabular-nums">{formatTetri(exchangePreview.due)}</span></>
                     ) : exchangePreview.cashBack > 0 ? (
-                      <><span className="text-white">მაღაზია უბრუნებს ნაღდს:</span><span className="text-amber-400 tabular-nums">{formatTetri(exchangePreview.cashBack)}</span></>
+                      <><span className="text-white">{tr('მაღაზია უბრუნებს ნაღდს:')}</span><span className="text-amber-400 tabular-nums">{formatTetri(exchangePreview.cashBack)}</span></>
                     ) : (
-                      <><span className="text-white">თანაბარი გაცვლა</span><span className="text-slate-300">ფული არ მოძრაობს</span></>
+                      <><span className="text-white">{tr('თანაბარი გაცვლა')}</span><span className="text-slate-300">{tr('ფული არ მოძრაობს')}</span></>
                     )}
                   </div>
 
@@ -1083,19 +1052,19 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                             onClick={() => setExchangePayMethod(m)}
                             className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${exchangePayMethod === m ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-300'}`}
                           >
-                            {m === 'cash' ? 'ნაღდი' : m === 'debt' ? 'ნისია' : 'ნაღდი + ნისია'}
+                            {m === 'cash' ? tr('ნაღდი') : m === 'debt' ? tr('ნისია') : tr('ნაღდი + ნისია')}
                           </button>
                         ))}
                       </div>
                       {!selectedSale.customer_id && (
-                        <p className="text-[10px] text-slate-500">ნისია ხელმისაწვდომია მხოლოდ კლიენტზე გაფორმებული გაყიდვისთვის.</p>
+                        <p className="text-[10px] text-slate-500">{tr('ნისია ხელმისაწვდომია მხოლოდ კლიენტზე გაფორმებული გაყიდვისთვის.')}</p>
                       )}
                       {exchangePayMethod !== 'debt' && (
                         <input
                           inputMode="decimal"
                           value={exchangeCashInput}
                           onChange={(e) => setExchangeCashInput(e.target.value)}
-                          placeholder={exchangePayMethod === 'cash' ? `მიღებული ნაღდი (მინ. ${formatTetri(exchangePreview.due, false)})` : 'ახლა გადახდილი ნაღდი'}
+                          placeholder={exchangePayMethod === 'cash' ? tr('მიღებული ნაღდი (მინ. {amount})', { amount: formatTetri(exchangePreview.due, false) }) : tr('ახლა გადახდილი ნაღდი')}
                           className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white text-sm font-bold tabular-nums focus:outline-none focus:border-blue-500"
                         />
                       )}
@@ -1110,16 +1079,14 @@ export const SalesHistoryView: React.FC<SalesHistoryViewProps> = ({ currentUser 
                 type="button"
                 onClick={() => setIsExchangeModalOpen(false)}
                 className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700 cursor-pointer"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="button"
                 onClick={handleExchangeSubmit}
                 disabled={isSubmitting}
                 className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-blue-900/40 disabled:opacity-50 cursor-pointer"
               >
-                {isSubmitting ? 'სრულდება...' : 'გაცვლის დადასტურება'}
+                {isSubmitting ? tr('სრულდება...') : tr('გაცვლის დადასტურება')}
               </button>
             </div>
           </div>

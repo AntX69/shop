@@ -6,6 +6,8 @@
  * Used identically across main process (SQLite/service layer), preload, and renderer.
  */
 
+import type { Lang } from './i18n/index.ts';
+
 export type UserRole = 'owner' | 'seller';
 export type UnitType = 'piece' | 'kg';
 
@@ -16,6 +18,8 @@ export interface User {
   is_active: number; // 1 or 0
   permissions?: string[];
   created_at: string;
+  /** Interface language chosen by this user; null = the language chosen on this computer. */
+  language?: Lang | null;
 }
 
 export interface UserSession {

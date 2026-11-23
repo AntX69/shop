@@ -22,6 +22,9 @@ import { SettingsView } from './renderer/pages/SettingsView.tsx';
 import { SellerBackupView } from './renderer/pages/SellerBackupView.tsx';
 import { invokeIpc, setClientToken } from './renderer/api/ipcClient.ts';
 import { AppTab, canOpenTab, firstAllowedTab } from './renderer/utils/access.ts';
+import { getLanguage, isLang, Lang, onLanguageChange, setLanguage, tr } from './shared/i18n/index.ts';
+import { setCurrency } from './shared/currency.ts';
+import { setStoreTimeZone } from './shared/time.ts';
 
 const HOTKEY_TABS: Record<string, AppTab> = {
   F1: 'pos', F2: 'products', F3: 'inventory', F4: 'debts', F5: 'history', F6: 'finance', F7: 'staff', F8: 'settings',
@@ -32,20 +35,72 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('pos');
   const [storeName, setStoreName] = useState<string>('ჩემი მაღაზია');
   const [lockMinutes, setLockMinutes] = useState<number>(15);
+  // Changing the language re-renders the whole window (every text is read through tr()).
+  const [, setLang] = useState<Lang>(getLanguage());
+  const [ready, setReady] = useState<boolean>(false);
+  // Bumped when the currency or time zone is loaded, so amounts and dates are drawn again.
+  const [, setSettingsVersion] = useState<number>(0);
 
-  // Store name and auto-lock interval (owner-configurable, readable before login)
+  useEffect(() => {
+    const apply = (lang: Lang) => {
+      setLang(lang);
+      document.documentElement.lang = lang;
+      document.title = tr('StorePOS - ლოკალური მაღაზიის მართვა');
+    };
+    apply(getLanguage());
+    return onLanguageChange(apply);
+  }, []);
+
+  // Language of this computer's screens before sign-in (last choice, or the installer's).
+  const loadDeviceLanguage = () =>
+    invokeIpc<{ language: string }>('app:getDeviceLanguage')
+      .then((r) => { if (isLang(r.language)) setLanguage(r.language); })
+      .catch(() => {});
+
+  useEffect(() => {
+    loadDeviceLanguage().finally(() => setReady(true));
+  }, []);
+
+  // Store name, auto-lock interval, currency and time zone (owner-configurable, readable before login)
   useEffect(() => {
     invokeIpc<Record<string, string>>('settings:getPublic')
       .then((s) => {
         if (s.store_name) setStoreName(s.store_name);
         const minutes = parseInt(s.inactivity_lock_minutes || '', 10);
         if (Number.isInteger(minutes) && minutes >= 1 && minutes <= 240) setLockMinutes(minutes);
+        setCurrency(s.currency);
+        setStoreTimeZone(s.timezone);
+        setSettingsVersion((v) => v + 1);
       })
       .catch(() => {});
   }, [currentUser]);
 
+  const reloadPublicSettings = () => {
+    invokeIpc<Record<string, string>>('settings:getPublic')
+      .then((s) => {
+        if (s.store_name) setStoreName(s.store_name);
+        setCurrency(s.currency);
+        setStoreTimeZone(s.timezone);
+        setSettingsVersion((v) => v + 1);
+      })
+      .catch(() => {});
+  };
+
+  // The language chosen in the header (or on the sign-in screen) is kept for this computer
+  // and, once signed in, for the user's account.
+  const changeLanguage = (lang: Lang) => {
+    setLanguage(lang);
+    invokeIpc('app:setDeviceLanguage', { language: lang }).catch(() => {});
+    if (currentUser) {
+      invokeIpc<User>('auth:setLanguage', { language: lang })
+        .then((me) => setCurrentUser((prev) => (prev && prev.id === me.id ? me : prev)))
+        .catch(() => {});
+    }
+  };
+
   // Handle Login
   const handleLoginSuccess = (session: UserSession) => {
+    if (isLang(session.user.language)) setLanguage(session.user.language);
     setCurrentUser(session.user);
     setActiveTab(firstAllowedTab(session.user) ?? 'pos');
   };
@@ -79,6 +134,7 @@ export default function App() {
     invokeIpc('auth:logout').catch(() => {});
     setCurrentUser(null);
     setClientToken('');
+    loadDeviceLanguage();
   };
 
   // Inactivity auto-lock (configurable, 15 minutes by default)
@@ -125,9 +181,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleGlobalShortcuts);
   }, [currentUser]);
 
+  if (!ready) {
+    return <div className="h-screen w-screen bg-slate-950" />;
+  }
+
   // If locked or not authenticated, render Login Screen
   if (!currentUser) {
-    return <LoginView onLoginSuccess={handleLoginSuccess} />;
+    return <LoginView onLoginSuccess={handleLoginSuccess} onChangeLanguage={changeLanguage} />;
   }
 
   return (
@@ -138,14 +198,15 @@ export default function App() {
         currentUser={currentUser}
         storeName={storeName}
         onLockSession={handleLockSession}
+        onChangeLanguage={changeLanguage}
       />
 
       <main className="flex-1 flex flex-col overflow-hidden min-h-0">
         {!firstAllowedTab(currentUser) && (
           <div className="flex-1 flex items-center justify-center p-6 text-center">
             <div className="max-w-md space-y-2">
-              <div className="text-lg font-bold text-white">ამ ანგარიშს ჯერ არცერთი უფლება არ აქვს</div>
-              <div className="text-sm text-slate-400">მიმართეთ მფლობელს: უფლებებს ის ანიჭებს „პერსონალის“ ეკრანზე.</div>
+              <div className="text-lg font-bold text-white">{tr('ამ ანგარიშს ჯერ არცერთი უფლება არ აქვს')}</div>
+              <div className="text-sm text-slate-400">{tr('მიმართეთ მფლობელს: უფლებებს ის ანიჭებს „პერსონალის“ ეკრანზე.')}</div>
             </div>
           </div>
         )}
@@ -160,6 +221,7 @@ export default function App() {
           <SettingsView
             currentUser={currentUser}
             onStoreNameChanged={(name) => setStoreName(name)}
+            onShopSettingsChanged={reloadPublicSettings}
           />
         ) : (
           <SellerBackupView currentUser={currentUser} />

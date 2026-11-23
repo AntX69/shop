@@ -1,3 +1,4 @@
+import { tr } from '../../shared/i18n/index.ts';
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -11,14 +12,14 @@ export const MAX_PHOTO_SIDE = 1280;
 
 export async function resizeImageFile(file: File, maxSide: number = MAX_PHOTO_SIDE): Promise<string> {
   if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
-    throw new Error('აირჩიეთ JPEG, PNG ან WebP ფორმატის ფოტო');
+    throw new Error(tr('აირჩიეთ JPEG, PNG ან WebP ფორმატის ფოტო'));
   }
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
       const el = new Image();
       el.onload = () => resolve(el);
-      el.onerror = () => reject(new Error('ფოტოს წაკითხვა ვერ მოხერხდა'));
+      el.onerror = () => reject(new Error(tr('ფოტოს წაკითხვა ვერ მოხერხდა')));
       el.src = url;
     });
     const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
@@ -28,7 +29,7 @@ export async function resizeImageFile(file: File, maxSide: number = MAX_PHOTO_SI
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('ფოტოს დამუშავება ვერ მოხერხდა');
+    if (!ctx) throw new Error(tr('ფოტოს დამუშავება ვერ მოხერხდა'));
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(img, 0, 0, w, h);

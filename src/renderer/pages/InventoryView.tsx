@@ -19,7 +19,7 @@ import { can, hasStockNumber } from '../utils/access.ts';
 
 /** Stock as text; a dash when this user may not see quantities ("inventory.quantities"). */
 const qtyText = (grams: number | null | undefined, unit: string | undefined, withUnit = true) =>
-  !hasStockNumber(grams) ? '—' : unit === 'kg' ? `${gramsToKg(grams)}${withUnit ? ' კგ' : ''}` : `${grams}${withUnit ? ' ცალი' : ''}`;
+  !hasStockNumber(grams) ? '—' : unit === 'kg' ? `${gramsToKg(grams)}${withUnit ? tr(' კგ') : ''}` : `${grams}${withUnit ? tr(' ცალი') : ''}`;
 import { invokeIpc } from '../api/ipcClient.ts';
 import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
 import { 
@@ -34,6 +34,9 @@ import {
   ArrowDownRight,
   ArrowUpRight
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
+import { currencySymbol } from '../../shared/currency.ts';
+import { fmtDateTime } from '../../shared/i18n/format.ts';
 
 interface InventoryViewProps {
   currentUser: User;
@@ -109,7 +112,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
     setModalError('');
 
     if (!selectedVariantId) {
-      setModalError('გთხოვთ აირჩიოთ პროდუქტის ვარიანტი');
+      setModalError(tr('გთხოვთ აირჩიოთ პროდუქტის ვარიანტი'));
       return;
     }
     const selVariant = allVariants.find(v => v.id === selectedVariantId);
@@ -118,14 +121,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
     if (isKg) {
       const grams = weightToGrams(restockQty);
       if (grams === null || grams <= 0) {
-        setModalError('მიუთითეთ მიღებული წონა კილოგრამებში, 0-ზე მეტი (მაგ. 2.500)');
+        setModalError(tr('მიუთითეთ მიღებული წონა კილოგრამებში, 0-ზე მეტი (მაგ. 2.500)'));
         return;
       }
       qty = grams;
     } else {
       qty = Number(restockQty.trim());
       if (restockQty.trim() === '' || !Number.isInteger(qty) || qty <= 0) {
-        setModalError('რაოდენობა უნდა იყოს მთელი რიცხვი, 1 ან მეტი');
+        setModalError(tr('რაოდენობა უნდა იყოს მთელი რიცხვი, 1 ან მეტი'));
         return;
       }
     }
@@ -134,7 +137,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
     if (restockUnitCost.trim()) {
       unitCostTetri = moneyToTetri(restockUnitCost);
       if (unitCostTetri === null) {
-        setModalError(`შესყიდვის ფასი არასწორია: "${restockUnitCost}" (მაგ. 12.50)`);
+        setModalError(tr('შესყიდვის ფასი არასწორია: "{restockUnitCost}" (მაგ. 12.50)', { restockUnitCost }));
         return;
       }
     }
@@ -153,7 +156,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       setRestockNotes('');
       loadData();
     } catch (err: any) {
-      setModalError(err.message || 'მარაგის შევსება ვერ მოხერხდა');
+      setModalError(trServer(err.message) || tr('მარაგის შევსება ვერ მოხერხდა'));
     }
   };
 
@@ -162,7 +165,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
     setModalError('');
 
     if (!correctionVariantId) {
-      setModalError('გთხოვთ აირჩიოთ პროდუქტის ვარიანტი');
+      setModalError(tr('გთხოვთ აირჩიოთ პროდუქტის ვარიანტი'));
       return;
     }
     const corrVariant = allVariants.find(v => v.id === correctionVariantId);
@@ -172,20 +175,20 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       // Empty is not 0: clearing the field must never set the stock to zero.
       const grams = weightToGrams(countedQty);
       if (grams === null) {
-        setModalError('მიუთითეთ დათვლილი წონა კილოგრამებში (0 დასაშვებია, მაგ. 0 ან 1.250)');
+        setModalError(tr('მიუთითეთ დათვლილი წონა კილოგრამებში (0 დასაშვებია, მაგ. 0 ან 1.250)'));
         return;
       }
       counted = grams;
     } else {
       counted = Number(countedQty.trim());
       if (countedQty.trim() === '' || !Number.isInteger(counted) || counted < 0) {
-        setModalError('დათვლილი მარაგი უნდა იყოს მთელი, არაუარყოფითი რიცხვი');
+        setModalError(tr('დათვლილი მარაგი უნდა იყოს მთელი, არაუარყოფითი რიცხვი'));
         return;
       }
     }
 
     if (!correctionReason.trim()) {
-      setModalError('კორექტირების მიზეზის მითითება სავალდებულოა');
+      setModalError(tr('კორექტირების მიზეზის მითითება სავალდებულოა'));
       return;
     }
 
@@ -201,7 +204,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
       setCorrectionReason('');
       loadData();
     } catch (err: any) {
-      setModalError(err.message || 'კორექტირება ვერ შესრულდა');
+      setModalError(trServer(err.message) || tr('კორექტირება ვერ შესრულდა'));
     }
   };
 
@@ -213,9 +216,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
         <div>
           <h1 className="text-lg sm:text-xl font-bold text-white flex items-center space-x-2">
             <Boxes className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-400" />
-            <span>მარაგების აღრიცხვა და მოძრაობა</span>
+            <span>{tr('მარაგების აღრიცხვა და მოძრაობა')}</span>
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">ინვენტარიზაცია, მარაგის შევსება და კორექტირების ისტორია</p>
+          <p className="text-xs text-slate-400 mt-0.5">{tr('ინვენტარიზაცია, მარაგის შევსება და კორექტირების ისტორია')}</p>
         </div>
 
         <div className="flex items-center space-x-2 sm:space-x-3">
@@ -226,17 +229,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
               className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                 activeTab === 'stock' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
-            >
-              მარაგების ნაშთი
-            </button>
+            >{tr('მარაგების ნაშთი')}</button>
             <button
               onClick={() => setActiveTab('movements')}
               className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                 activeTab === 'movements' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
               }`}
-            >
-              მოძრაობის ისტორია
-            </button>
+            >{tr('მოძრაობის ისტორია')}</button>
           </div>
 
           {(canReceive || canAdjust) && (
@@ -249,7 +248,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 className="px-3 sm:px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors shadow-lg shadow-emerald-900/40 cursor-pointer shrink-0"
               >
                 <PlusCircle className="w-3.5 h-3.5" />
-                <span>შევსება</span>
+                <span>{tr('შევსება')}</span>
               </button>}
 
               {canAdjust && <button
@@ -260,7 +259,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 className="px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-400 text-xs font-bold rounded-xl flex items-center space-x-1.5 transition-colors cursor-pointer shrink-0"
               >
                 <Sliders className="w-3.5 h-3.5" />
-                <span>კორექცია</span>
+                <span>{tr('კორექცია')}</span>
               </button>}
             </>
           )}
@@ -277,7 +276,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                   type="text"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="ძებნა პროდუქტით / კოდით..."
+                  placeholder={tr('ძებნა პროდუქტით / კოდით...')}
                   className="w-full pl-8 pr-3 py-1.5 bg-slate-900 border border-slate-800 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                 />
                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
@@ -294,14 +293,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                       : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
                   }`}
                 >
-                  {f === 'all' ? 'ყველა' : f === 'in_stock' ? 'მარაგშია (>0)' : f === 'zero' ? 'ამოწურული (0)' : `მცირე მარაგი (≤${lowThreshold})`}
+                  {f === 'all' ? tr('ყველა') : f === 'in_stock' ? tr('მარაგშია (>0)') : f === 'zero' ? tr('ამოწურული (0)') : tr('მცირე მარაგი (≤{lowThreshold})', { lowThreshold })}
                 </button>
               ))}
             </div>
 
             {stockFilter === 'low' && (
               <div className="flex items-center space-x-1 text-xs text-slate-400">
-                <span>ზღვარი:</span>
+                <span>{tr('ზღვარი:')}</span>
                 <select
                   value={lowThreshold}
                   onChange={(e) => setLowThreshold(parseInt(e.target.value, 10))}
@@ -322,12 +321,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
               <table className="w-full min-w-[700px] text-left text-xs">
                 <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold tracking-wider sticky top-0 border-b border-slate-800">
                   <tr>
-                    <th className="py-3 px-4">პროდუქტი</th>
-                    <th className="py-3 px-4">ვარიანტი (ზომა / ფერი)</th>
-                    <th className="py-3 px-4">კოდი</th>
-                    <th className="py-3 px-4 text-right">გასაყიდი ფასი</th>
-                    <th className="py-3 px-4 text-right">ნაშთი</th>
-                    <th className="py-3 px-4 text-center">სტატუსი</th>
+                    <th className="py-3 px-4">{tr('პროდუქტი')}</th>
+                    <th className="py-3 px-4">{tr('ვარიანტი (ზომა / ფერი)')}</th>
+                    <th className="py-3 px-4">{tr('კოდი')}</th>
+                    <th className="py-3 px-4 text-right">{tr('გასაყიდი ფასი')}</th>
+                    <th className="py-3 px-4 text-right">{tr('ნაშთი')}</th>
+                    <th className="py-3 px-4 text-center">{tr('სტატუსი')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
@@ -349,12 +348,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                           {primaryCode}
                         </td>
                         <td className="py-3 px-4 text-right font-extrabold text-white text-sm">
-                          {formatTetri(price)}{v.unit_type === 'kg' ? ' / კგ' : ''}
+                          {formatTetri(price)}{v.unit_type === 'kg' ? tr(' / კგ') : ''}
                         </td>
                         <td className="py-3 px-4 text-right font-extrabold text-base">
                           <span className={isZero ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-slate-100'}>
                             {qtyText(v.stock_quantity, v.unit_type, false)}
-                          </span> <span className="text-xs text-slate-400 font-normal">{v.unit_type === 'kg' ? 'კგ' : 'ც'}</span>
+                          </span> <span className="text-xs text-slate-400 font-normal">{v.unit_type === 'kg' ? tr('კგ') : tr('ც')}</span>
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
@@ -364,7 +363,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                               ? 'bg-amber-950/60 text-amber-400 border border-amber-800/50'
                               : 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/50'
                           }`}>
-                            {isZero ? 'ამოწურულია' : isLow ? 'მცირე მარაგი' : 'მარაგშია'}
+                            {isZero ? tr('ამოწურულია') : isLow ? tr('მცირე მარაგი') : tr('მარაგშია')}
                           </span>
                         </td>
                       </tr>
@@ -382,28 +381,28 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
             <table className="w-full min-w-[760px] text-left text-xs">
               <thead className="bg-slate-950/80 text-slate-400 uppercase font-semibold tracking-wider sticky top-0 border-b border-slate-800">
                 <tr>
-                  <th className="py-3 px-4">თარიღი</th>
-                  <th className="py-3 px-4">ტიპი</th>
-                  <th className="py-3 px-4">პროდუქტი / ვარიანტი</th>
-                  <th className="py-3 px-4 text-right">ცვლილება</th>
-                  <th className="py-3 px-4 text-right">ნაშთი ოპერაციის შემდეგ</th>
-                  <th className="py-3 px-4">მიზეზი / დოკუმენტი</th>
-                  <th className="py-3 px-4">ავტორი</th>
+                  <th className="py-3 px-4">{tr('თარიღი')}</th>
+                  <th className="py-3 px-4">{tr('ტიპი')}</th>
+                  <th className="py-3 px-4">{tr('პროდუქტი / ვარიანტი')}</th>
+                  <th className="py-3 px-4 text-right">{tr('ცვლილება')}</th>
+                  <th className="py-3 px-4 text-right">{tr('ნაშთი ოპერაციის შემდეგ')}</th>
+                  <th className="py-3 px-4">{tr('მიზეზი / დოკუმენტი')}</th>
+                  <th className="py-3 px-4">{tr('ავტორი')}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
                 {movements.map((m) => {
                   const isPositive = m.quantity_change > 0;
                   const typeLabel = 
-                    m.movement_type === 'initial' ? 'საწყისი' :
-                    m.movement_type === 'restock' ? 'შევსება' :
-                    m.movement_type === 'sale' ? 'გაყიდვა' :
-                    m.movement_type === 'return' ? 'დაბრუნება' : 'კორექცია';
+                    m.movement_type === 'initial' ? tr('საწყისი') :
+                    m.movement_type === 'restock' ? tr('შევსება') :
+                    m.movement_type === 'sale' ? tr('გაყიდვა') :
+                    m.movement_type === 'return' ? tr('დაბრუნება') : tr('კორექცია');
 
                   return (
                     <tr key={m.id} className="hover:bg-slate-800/40 transition-colors">
                       <td className="py-2.5 px-4 text-slate-400 font-mono text-[11px]">
-                        {new Date(m.created_at).toLocaleString('ka-GE')}
+                        {fmtDateTime(m.created_at)}
                       </td>
                       <td className="py-2.5 px-4">
                         <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium text-[11px]">
@@ -418,13 +417,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                           {!hasStockNumber(m.quantity_change) ? '—' : m.unit_type === 'kg'
                             ? (isPositive ? `+${gramsToKg(m.quantity_change)}` : `-${gramsToKg(Math.abs(m.quantity_change))}`)
                             : (isPositive ? `+${m.quantity_change}` : m.quantity_change)}
-                        </span> <span className="text-xs text-slate-400 font-normal">{m.unit_type === 'kg' ? 'კგ' : 'ც'}</span>
+                        </span> <span className="text-xs text-slate-400 font-normal">{m.unit_type === 'kg' ? tr('კგ') : tr('ც')}</span>
                       </td>
                       <td className="py-2.5 px-4 text-right font-mono text-slate-200">
                         {qtyText(m.resulting_stock, m.unit_type)}
                       </td>
                       <td className="py-2.5 px-4 text-slate-300">
-                        {m.reason} {m.reference_id ? `(#${m.reference_id})` : ''}
+                        {trServer(m.reason)} {m.reference_id ? `(#${m.reference_id})` : ''}
                       </td>
                       <td className="py-2.5 px-4 text-slate-400">
                         {m.user_name || '-'}
@@ -445,7 +444,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
             <div className="flex justify-between items-center border-b border-slate-800 p-4 sm:p-5 shrink-0">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <PlusCircle className="w-5 h-5 text-emerald-400" />
-                <span>მარაგის შევსება</span>
+                <span>{tr('მარაგის შევსება')}</span>
               </h3>
               <button onClick={() => setIsRestockOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
@@ -461,18 +460,16 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
 
               <form id="restock-form" onSubmit={handleRestockSubmit} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">აირჩიეთ პროდუქტი / ვარიანტი *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('აირჩიეთ პროდუქტი / ვარიანტი *')}</label>
                   <select
                     required
                     value={selectedVariantId || ''}
                     onChange={(e) => { setSelectedVariantId(parseInt(e.target.value, 10)); setRestockQty(''); }}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   >
-                    <option value="">-- აირჩიეთ --</option>
+                    <option value="">{tr('-- აირჩიეთ --')}</option>
                     {allVariants.map(v => (
-                      <option key={v.id} value={v.id}>
-                        {v.product_name} - {v.variant_name} (მიმდინარე ნაშთი: {qtyText(v.stock_quantity, v.unit_type)})
-                      </option>
+                      <option key={v.id} value={v.id}>{tr('{product_name} - {variant_name} (მიმდინარე ნაშთი: {qtyText})', { product_name: v.product_name, variant_name: v.variant_name, qtyText: qtyText(v.stock_quantity, v.unit_type) })}</option>
                     ))}
                   </select>
                 </div>
@@ -480,14 +477,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
                     {allVariants.find(v => v.id === selectedVariantId)?.unit_type === 'kg'
-                      ? 'დამატებული წონა (კგ) *'
-                      : 'დამატებული რაოდენობა (ცალი) *'}
+                      ? tr('დამატებული წონა (კგ) *')
+                      : tr('დამატებული რაოდენობა (ცალი) *')}
                   </label>
                   {allVariants.find(v => v.id === selectedVariantId)?.unit_type === 'kg' ? (
                     <EditableWeightInput
                       value={restockQty}
                       onChange={setRestockQty}
-                      ariaLabel="მიღებული წონა (კგ)"
+                      ariaLabel={tr('მიღებული წონა (კგ)')}
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm font-bold"
                     />
                   ) : (
@@ -503,23 +500,23 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">{allVariants.find(v => v.id === selectedVariantId)?.unit_type === 'kg' ? 'შესყიდვის ფასი 1 კგ-ზე (₾, არასავალდებულო)' : 'შესყიდვის ფასი 1 ცალზე (₾, არასავალდებულო)'}</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{allVariants.find(v => v.id === selectedVariantId)?.unit_type === 'kg' ? tr('შესყიდვის ფასი 1 კგ-ზე ({currency}, არასავალდებულო)', { currency: currencySymbol() }) : tr('შესყიდვის ფასი 1 ცალზე ({currency}, არასავალდებულო)', { currency: currencySymbol() })}</label>
                   <EditableMoneyInput
                     value={restockUnitCost}
                     onChange={(val) => setRestockUnitCost(val)}
-                    placeholder="ცარიელი = პროდუქტის ბარათში მითითებული ფასი"
+                    placeholder={tr('ცარიელი = პროდუქტის ბარათში მითითებული ფასი')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-sm"
                   />
-                  <p className="text-[10px] text-slate-500 mt-1">თუ ბარათშიც არ არის მითითებული, თვითღირებულება „უცნობი“ დარჩება და 0-ად არ ჩაითვლება.</p>
+                  <p className="text-[10px] text-slate-500 mt-1">{tr('თუ ბარათშიც არ არის მითითებული, თვითღირებულება „უცნობი“ დარჩება და 0-ად არ ჩაითვლება.')}</p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">შენიშვნა</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('შენიშვნა')}</label>
                   <input
                     type="text"
                     value={restockNotes}
                     onChange={(e) => setRestockNotes(e.target.value)}
-                    placeholder="მაგ. ახალი პარტია"
+                    placeholder={tr('მაგ. ახალი პარტია')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   />
                 </div>
@@ -531,16 +528,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 type="button"
                 onClick={() => setIsRestockOpen(false)}
                 className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="submit"
                 form="restock-form"
                 className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-emerald-900/40"
-              >
-                მარაგის შევსება
-              </button>
+              >{tr('მარაგის შევსება')}</button>
             </div>
           </div>
         </div>
@@ -553,7 +546,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
             <div className="flex justify-between items-center border-b border-slate-800 p-4 sm:p-5 shrink-0">
               <h3 className="text-base font-bold text-white flex items-center space-x-2">
                 <Sliders className="w-5 h-5 text-amber-400" />
-                <span>მარაგის კორექცია</span>
+                <span>{tr('მარაგის კორექცია')}</span>
               </h3>
               <button onClick={() => setIsCorrectionOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
@@ -569,7 +562,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
 
               <form id="correction-form" onSubmit={handleCorrectionSubmit} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">აირჩიეთ პროდუქტი / ვარიანტი *</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('აირჩიეთ პროდუქტი / ვარიანტი *')}</label>
                   <select
                     required
                     value={correctionVariantId || ''}
@@ -581,11 +574,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                     }}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   >
-                    <option value="">-- აირჩიეთ --</option>
+                    <option value="">{tr('-- აირჩიეთ --')}</option>
                     {allVariants.map(v => (
-                      <option key={v.id} value={v.id}>
-                        {v.product_name} - {v.variant_name} (ბაზაში: {qtyText(v.stock_quantity, v.unit_type)})
-                      </option>
+                      <option key={v.id} value={v.id}>{tr('{product_name} - {variant_name} (ბაზაში: {qtyText})', { product_name: v.product_name, variant_name: v.variant_name, qtyText: qtyText(v.stock_quantity, v.unit_type) })}</option>
                     ))}
                   </select>
                 </div>
@@ -593,14 +584,14 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1">
                     {allVariants.find(v => v.id === correctionVariantId)?.unit_type === 'kg'
-                      ? 'ფაქტობრივად დათვლილი წონა (კგ) *'
-                      : 'ფაქტობრივად დათვლილი ახალი მარაგი (ცალი) *'}
+                      ? tr('ფაქტობრივად დათვლილი წონა (კგ) *')
+                      : tr('ფაქტობრივად დათვლილი ახალი მარაგი (ცალი) *')}
                   </label>
                   {allVariants.find(v => v.id === correctionVariantId)?.unit_type === 'kg' ? (
                     <EditableWeightInput
                       value={countedQty}
                       onChange={setCountedQty}
-                      ariaLabel="დათვლილი წონა (კგ)"
+                      ariaLabel={tr('დათვლილი წონა (კგ)')}
                       className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-base font-bold"
                     />
                   ) : (
@@ -616,13 +607,13 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">კორექტირების მიზეზი * (აუცილებელია Audit-ისთვის)</label>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">{tr('კორექტირების მიზეზი * (აუცილებელია Audit-ისთვის)')}</label>
                   <textarea
                     required
                     rows={2}
                     value={correctionReason}
                     onChange={(e) => setCorrectionReason(e.target.value)}
-                    placeholder="მაგ. ინვენტარიზაციის გადამოწმება, დაზიანებული ნივთის ჩამოწერა..."
+                    placeholder={tr('მაგ. ინვენტარიზაციის გადამოწმება, დაზიანებული ნივთის ჩამოწერა...')}
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-white text-xs"
                   />
                 </div>
@@ -634,16 +625,12 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                 type="button"
                 onClick={() => setIsCorrectionOpen(false)}
                 className="flex-1 py-2.5 bg-slate-800 text-slate-300 font-bold rounded-xl text-xs hover:bg-slate-700"
-              >
-                გაუქმება
-              </button>
+              >{tr('გაუქმება')}</button>
               <button
                 type="submit"
                 form="correction-form"
                 className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-amber-900/40"
-              >
-                კორექტირების შენახვა
-              </button>
+              >{tr('კორექტირების შენახვა')}</button>
             </div>
           </div>
         </div>

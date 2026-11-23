@@ -23,6 +23,8 @@ import { pathToFileURL } from 'node:url';
 import { initDatabaseWithRetry, closeDatabase, getDb } from './db/database.ts';
 import { migrateInlineImagesToFiles, SAFE_IMAGE_FILE } from './domain/productImages.ts';
 import { handleIpcMessage, setNativeHost } from './ipc/handlers.ts';
+import { configureDeviceLanguage, getDeviceLanguage } from './deviceLanguage.ts';
+import { trIn, trServer } from '../shared/i18n/index.ts';
 import { startBackupScheduler } from './backupScheduler.ts';
 import { configureOcrWorker, stopOcrWorker } from './ocr/workerClient.ts';
 import { OcrService } from './domain/ocrService.ts';
@@ -103,6 +105,8 @@ if (!gotTheLock) {
 
     // 1. Resolve and prepare Windows userData persistent directories
     const userDataPath = app.getPath('userData');
+    configureDeviceLanguage({ userData: userDataPath, exeDir: app.isPackaged ? path.dirname(process.execPath) : null });
+    const L = (text: string, params?: Record<string, unknown>) => trIn(getDeviceLanguage(), text, params);
     const dataDir = path.join(userDataPath, 'data');
     process.env.STORE_DATA_DIR = dataDir;
 
@@ -123,10 +127,11 @@ if (!gotTheLock) {
     } catch (err: any) {
       console.error('[StorePOS Main] Database initialization failed:', err);
       dialog.showErrorBox(
-        'StorePOS — მონაცემთა ბაზა ვერ გაიხსნა',
-        `მონაცემთა ბაზის გახსნა ვერ მოხერხდა და პროგრამა დაიხურება. მონაცემები არ წაშლილა.\n\n` +
-        `ბაზის ფაილი: ${dbPath}\nშეცდომა: ${err?.message || err}\n\n` +
-        `სცადეთ კომპიუტერის გადატვირთვა. თუ შეცდომა მეორდება, ბოლო სარეზერვო ასლები ინახება საქაღალდეში:\n${path.join(dataDir, 'backups')}`
+        L('StorePOS — მონაცემთა ბაზა ვერ გაიხსნა'),
+        L('მონაცემთა ბაზის გახსნა ვერ მოხერხდა და პროგრამა დაიხურება. მონაცემები არ წაშლილა.') + '\n\n' +
+        L('ბაზის ფაილი: {path}', { path: dbPath }) + '\n' +
+        L('შეცდომა: {error}', { error: trServer(String(err?.message || err), getDeviceLanguage()) }) + '\n\n' +
+        L('სცადეთ კომპიუტერის გადატვირთვა. თუ შეცდომა მეორდება, ბოლო სარეზერვო ასლები ინახება საქაღალდეში:') + '\n' + path.join(dataDir, 'backups')
       );
       app.exit(1);
       return;
@@ -149,7 +154,7 @@ if (!gotTheLock) {
       },
       chooseBackupFile: async () => {
         const res = await dialog.showOpenDialog(mainWindow!, {
-          title: 'აირჩიეთ StorePOS-ის სარეზერვო ასლი',
+          title: L('აირჩიეთ StorePOS-ის სარეზერვო ასლი'),
           properties: ['openFile'],
           filters: [{ name: 'StorePOS Backup', extensions: ['posbackup'] }]
         });
@@ -211,7 +216,7 @@ if (!gotTheLock) {
       minWidth: 1024,
       minHeight: 600,
       show: false,
-      title: 'StorePOS — ლოკალური მაღაზიის მართვა (Offline)',
+      title: L('StorePOS — ლოკალური მაღაზიის მართვა (Offline)'),
       icon: iconPath,
       backgroundColor: '#020617', // slate-950
       autoHideMenuBar: true,
@@ -252,7 +257,7 @@ if (!gotTheLock) {
       while (crashTimes.length && now - crashTimes[0] > 10 * 60_000) crashTimes.shift();
       crashTimes.push(now);
       if (crashTimes.length > 3) {
-        dialog.showErrorBox('StorePOS', 'პროგრამის ფანჯარა რამდენჯერმე ავარიულად დაიხურა. დახურეთ StorePOS და გახსენით თავიდან. მონაცემები შენახულია.');
+        dialog.showErrorBox('StorePOS', L('პროგრამის ფანჯარა რამდენჯერმე ავარიულად დაიხურა. დახურეთ StorePOS და გახსენით თავიდან. მონაცემები შენახულია.'));
         return;
       }
       if (devServerUrl) mainWindow.loadURL(devServerUrl);

@@ -39,6 +39,8 @@ import {
   Upload,
   Play
 } from 'lucide-react';
+import { tr, trServer } from '../../shared/i18n/index.ts';
+import { fmtDateTime } from '../../shared/i18n/format.ts';
 
 interface WebcamModalProps {
   isOpen: boolean;
@@ -70,15 +72,15 @@ function stopStream(stream: MediaStream | null): void {
 export function describeCameraError(err: any): string {
   const name = String(err?.name || '');
   if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
-    return 'კამერაზე წვდომა დაბლოკილია. Windows-ის პარამეტრებში (Settings → Privacy & security → Camera) ჩართეთ „Camera access“ და „Let desktop apps access your camera“, შემდეგ დააჭირეთ „ხელახლა ცდა“.';
+    return tr('კამერაზე წვდომა დაბლოკილია. Windows-ის პარამეტრებში (Settings → Privacy & security → Camera) ჩართეთ „Camera access“ და „Let desktop apps access your camera“, შემდეგ დააჭირეთ „ხელახლა ცდა“.');
   }
   if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError') {
-    return 'კამერა ვერ ჩაირთო: სავარაუდოდ მას სხვა პროგრამა იყენებს (მაგ. Camera, Zoom, Skype, Teams). დახურეთ ის პროგრამა და დააჭირეთ „ხელახლა ცდა“.';
+    return tr('კამერა ვერ ჩაირთო: სავარაუდოდ მას სხვა პროგრამა იყენებს (მაგ. Camera, Zoom, Skype, Teams). დახურეთ ის პროგრამა და დააჭირეთ „ხელახლა ცდა“.');
   }
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
-    return 'კამერა ვერ მოიძებნა. შეაერთეთ კამერა და დააჭირეთ „ხელახლა ცდა“.';
+    return tr('კამერა ვერ მოიძებნა. შეაერთეთ კამერა და დააჭირეთ „ხელახლა ცდა“.');
   }
-  return `კამერის ჩართვა ვერ მოხერხდა${name ? ` (${name})` : ''}. დააჭირეთ „ხელახლა ცდა“ ან შეიყვანეთ კოდი ხელით.`;
+  return tr('კამერის ჩართვა ვერ მოხერხდა{value}. დააჭირეთ „ხელახლა ცდა“ ან შეიყვანეთ კოდი ხელით.', { value: name ? ` (${name})` : '' });
 }
 
 export const WebcamModal: React.FC<WebcamModalProps> = ({
@@ -176,7 +178,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
       setCameraError('');
       setCameraNotice('');
       if (!navigator.mediaDevices?.getUserMedia) {
-        setCameraError('ამ კომპიუტერზე კამერა მიუწვდომელია. შეიყვანეთ კოდი ხელით ან გამოიყენეთ შტრიხკოდის სკანერი.');
+        setCameraError(tr('ამ კომპიუტერზე კამერა მიუწვდომელია. შეიყვანეთ კოდი ხელით ან გამოიყენეთ შტრიხკოდის სკანერი.'));
         return;
       }
       // Full HD when the camera has it: more pixels per pen stroke.
@@ -205,7 +207,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
       if (videoRef.current) videoRef.current.srcObject = stream;
       const track = stream.getVideoTracks()[0];
       track?.addEventListener('ended', () => {
-        if (!cancelled) setCameraError('კამერა გაითიშა. შეაერთეთ ის თავიდან და დააჭირეთ „ხელახლა ცდა“.');
+        if (!cancelled) setCameraError(tr('კამერა გაითიშა. შეაერთეთ ის თავიდან და დააჭირეთ „ხელახლა ცდა“.'));
       });
       setActiveDeviceId(track?.getSettings().deviceId || requestedDeviceId);
       // Camera names are listed only once access has been granted.
@@ -265,7 +267,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
         latestLookupRef.current = '';
         setDigitInputs(EMPTY_DIGITS);
         setFlagged(NO_FLAGS);
-        setLookupError(`კოდი ვერ ამოიცნო: ${result.message || ''} კოდის შეყვანა ხელითაც შეგიძლიათ.`);
+        setLookupError(tr('კოდი ვერ ამოიცნო: {value} კოდის შეყვანა ხელითაც შეგიძლიათ.', { value: trServer(result.message || '') }));
         return;
       }
       // Unreadable positions stay empty for the seller; a digit is never invented.
@@ -278,10 +280,10 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
       } else {
         latestLookupRef.current = '';
         const missing = digitsArr.map((d, i) => (d ? null : `#${i + 1}`)).filter(Boolean).join(', ');
-        setLookupError(`ციფრ(ებ)ი ${missing} ვერ ამოიცნო. შეიყვანეთ ხელით ან გადაიღეთ თავიდან.`);
+        setLookupError(tr('ციფრ(ებ)ი {missing} ვერ ამოიცნო. შეიყვანეთ ხელით ან გადაიღეთ თავიდან.', { missing }));
       }
     } catch (err: any) {
-      setLookupError('OCR ამოცნობის შეცდომა: ' + (err.message || ''));
+      setLookupError(tr('OCR ამოცნობის შეცდომა: ') + (trServer(err.message) || ''));
     } finally {
       setIsRecognizing(false);
     }
@@ -294,7 +296,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     const canvas = canvasRef.current;
 
     if (video.videoWidth === 0 || video.videoHeight === 0) {
-      setCameraNotice('კამერა ჯერ არ არის მზად. დაელოდეთ გამოსახულებას და სცადეთ თავიდან.');
+      setCameraNotice(tr('კამერა ჯერ არ არის მზად. დაელოდეთ გამოსახულებას და სცადეთ თავიდან.'));
       return;
     }
 
@@ -308,7 +310,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     // box, so both are measured from it.
     const box = video.getBoundingClientRect();
     const roi = frameInVideo({ width: box.width, height: box.height }, { width: video.videoWidth, height: video.videoHeight });
-    const label = devices.find((d) => d.deviceId === activeDeviceId)?.label || 'კამერა';
+    const label = devices.find((d) => d.deviceId === activeDeviceId)?.label || tr('კამერა');
     await processCanvasImage(canvas, roi, `${label}, ${video.videoWidth}×${video.videoHeight}`);
   };
 
@@ -343,7 +345,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
       ctx.fillText(sample[i], roiX + i * slotW + slotW / 2, roiY + roiHeight / 2);
     }
 
-    await processCanvasImage(canvas, { x: roiX, y: roiY, width: roiWidth, height: roiHeight }, 'სატესტო ნიმუში 10001');
+    await processCanvasImage(canvas, { x: roiX, y: roiY, width: roiWidth, height: roiHeight }, tr('სატესტო ნიმუში 10001'));
   };
 
   // A photo of a handwritten code (JPG/PNG), through exactly the same pipeline.
@@ -353,19 +355,19 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     if (!file || !canvasRef.current) return;
     const problem = await checkPhotoFile(file);
     if (problem) {
-      setLookupError(`ფოტოს გახსნა ვერ მოხერხდა: ${problem}`);
+      setLookupError(tr('ფოტოს გახსნა ვერ მოხერხდა: {problem}', { problem }));
       return;
     }
     let bitmap: ImageBitmap;
     try {
       bitmap = await createImageBitmap(file);
     } catch {
-      setLookupError('ფოტოს გახსნა ვერ მოხერხდა: ფაილი დაზიანებულია');
+      setLookupError(tr('ფოტოს გახსნა ვერ მოხერხდა: ფაილი დაზიანებულია'));
       return;
     }
     if (bitmap.width * bitmap.height > PHOTO_MAX_PIXELS) {
       bitmap.close();
-      setLookupError('ფოტოს გახსნა ვერ მოხერხდა: 40 მეგაპიქსელზე დიდია');
+      setLookupError(tr('ფოტოს გახსნა ვერ მოხერხდა: 40 მეგაპიქსელზე დიდია'));
       return;
     }
     const canvas = canvasRef.current;
@@ -377,14 +379,14 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(bitmap, 0, 0);
     bitmap.close();
-    await processCanvasImage(canvas, { x: 0, y: 0, width: canvas.width, height: canvas.height }, `ფოტო: ${file.name}`);
+    await processCanvasImage(canvas, { x: 0, y: 0, width: canvas.width, height: canvas.height }, tr('ფოტო: {name}', { name: file.name }));
   };
 
   const saveSample = async (changeFolder: boolean) => {
     if (!ocrResult || !region) return;
     try {
-      setSaveNotice('ინახება...');
-      const composite = compositeCanvas(ocrResult, region, frameInfo, `StorePOS OCR — ${new Date().toLocaleString('ka-GE')} — ${source}`);
+      setSaveNotice(tr('ინახება...'));
+      const composite = compositeCanvas(ocrResult, region, frameInfo, `StorePOS OCR — ${fmtDateTime(new Date())} — ${source}`);
       const { diagnostics, ...summary } = ocrResult;
       const report = {
         savedAt: new Date().toISOString(),
@@ -411,16 +413,16 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
         expectedCode,
         changeFolder,
       });
-      setSaveNotice(saved ? `შენახულია: ${saved.files[0]}` : 'შენახვა გაუქმდა');
+      setSaveNotice(saved ? tr('შენახულია: {value}', { value: saved.files[0] }) : tr('შენახვა გაუქმდა'));
     } catch (err: any) {
-      setSaveNotice(`შენახვა ვერ მოხერხდა: ${err?.message || ''}`);
+      setSaveNotice(tr('შენახვა ვერ მოხერხდა: {value}', { value: trServer(err?.message) || '' }));
     }
   };
 
   const checkProductLookup = async (code: string) => {
     latestLookupRef.current = code;
     if (!/^\d{5}$/.test(code)) {
-      setLookupError('კოდი უნდა იყოს ზუსტად 5-ნიშნა რიცხვი (10000-99999)');
+      setLookupError(tr('კოდი უნდა იყოს ზუსტად 5-ნიშნა რიცხვი (10000-99999)'));
       setMatchedItem(null);
       return;
     }
@@ -433,11 +435,11 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
         setMatchedItem(found);
       } else {
         setMatchedItem(null);
-        setLookupError(`კოდით "${code}" პროდუქტი ვერ მოიძებნა`);
+        setLookupError(tr('კოდით "{code}" პროდუქტი ვერ მოიძებნა', { code }));
       }
     } catch (err: any) {
       if (latestLookupRef.current !== code) return;
-      setLookupError(err.message || 'ძებნის შეცდომა');
+      setLookupError(trServer(err.message) || tr('ძებნის შეცდომა'));
     }
   };
 
@@ -472,12 +474,12 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               <Camera className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
             <div>
-              <h3 className="text-sm sm:text-base font-bold text-white">ვებკამერით 5-ნიშნა კოდის ამოცნობა (Offline ONNX OCR)</h3>
-              <p className="text-[10px] sm:text-[11px] text-slate-400">მიიტანეთ ხელით დაწერილი 5-ნიშნა კოდი მწვანე ჩარჩოში, ნებისმიერ ადგილას</p>
+              <h3 className="text-sm sm:text-base font-bold text-white">{tr('ვებკამერით 5-ნიშნა კოდის ამოცნობა (Offline ONNX OCR)')}</h3>
+              <p className="text-[10px] sm:text-[11px] text-slate-400">{tr('მიიტანეთ ხელით დაწერილი 5-ნიშნა კოდი მწვანე ჩარჩოში, ნებისმიერ ადგილას')}</p>
             </div>
           </div>
 
-          <button onClick={onClose} aria-label="დახურვა" className="text-slate-400 hover:text-white transition-colors cursor-pointer">
+          <button onClick={onClose} aria-label={tr('დახურვა')} className="text-slate-400 hover:text-white transition-colors cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -488,24 +490,22 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
           {/* Camera Selector & Tools Bar */}
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center space-x-2 min-w-0">
-              <span className="text-slate-400 font-medium shrink-0">კამერა:</span>
+              <span className="text-slate-400 font-medium shrink-0">{tr('კამერა:')}</span>
               {devices.length > 0 ? (
                 <select
                   value={activeDeviceId || requestedDeviceId || devices[0]?.deviceId || ''}
                   onChange={(e) => chooseCamera(e.target.value)}
-                  aria-label="კამერის არჩევა"
+                  aria-label={tr('კამერის არჩევა')}
                   className="max-w-[16rem] truncate px-2.5 py-1 bg-slate-950 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:border-emerald-500"
                 >
                   {devices.map((d, idx) => (
                     <option key={d.deviceId || idx} value={d.deviceId}>
-                      {d.label || `კამერა #${idx + 1}`}
+                      {d.label || tr('კამერა #{value}', { value: idx + 1 })}
                     </option>
                   ))}
                 </select>
               ) : (
-                <span className="text-amber-400 font-mono text-[10px] sm:text-[11px] bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40">
-                  კამერა არ მოიძებნა
-                </span>
+                <span className="text-amber-400 font-mono text-[10px] sm:text-[11px] bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/40">{tr('კამერა არ მოიძებნა')}</span>
               )}
             </div>
 
@@ -521,7 +521,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 }`}
               >
                 <Microscope className="w-3.5 h-3.5" />
-                <span>დიაგნოსტიკა</span>
+                <span>{tr('დიაგნოსტიკა')}</span>
               </button>
             </div>
           </div>
@@ -532,9 +532,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               <div className="text-center p-4 sm:p-6 text-slate-400 max-w-md">
                 <AlertCircle className="w-8 h-8 sm:w-10 sm:h-10 text-amber-500 mx-auto mb-2" />
                 <p className="text-xs sm:text-sm font-semibold text-slate-200">{cameraError}</p>
-                <p className="text-[11px] sm:text-xs text-slate-400 mt-1 mb-3">
-                  შეგიძლიათ ასევე ატვირთოთ კოდის ფოტო ან გაუშვათ სატესტო 5-ნიშნა კოდის ამოცნობა:
-                </p>
+                <p className="text-[11px] sm:text-xs text-slate-400 mt-1 mb-3">{tr('შეგიძლიათ ასევე ატვირთოთ კოდის ფოტო ან გაუშვათ სატესტო 5-ნიშნა კოდის ამოცნობა:')}</p>
                 <div className="flex items-center justify-center flex-wrap gap-2.5 sm:gap-3">
                   <button
                     type="button"
@@ -542,7 +540,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-lg border border-slate-600 flex items-center space-x-1.5 cursor-pointer transition-colors"
                   >
                     <RotateCw className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>ხელახლა ცდა</span>
+                    <span>{tr('ხელახლა ცდა')}</span>
                   </button>
                   <button
                     type="button"
@@ -550,7 +548,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-lg border border-slate-600 flex items-center space-x-1.5 cursor-pointer transition-colors"
                   >
                     <Upload className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>ფოტოს ატვირთვა</span>
+                    <span>{tr('ფოტოს ატვირთვა')}</span>
                   </button>
                   <button
                     type="button"
@@ -558,7 +556,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                     className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-lg border border-emerald-500 flex items-center space-x-1.5 cursor-pointer transition-colors"
                   >
                     <Play className="w-3.5 h-3.5" />
-                    <span>ONNX ტესტი</span>
+                    <span>{tr('ONNX ტესტი')}</span>
                   </button>
                 </div>
               </div>
@@ -584,14 +582,14 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                   }}
                 >
                   <div className="flex justify-between items-center text-[10px] text-emerald-300 font-mono font-bold uppercase tracking-wider">
-                    <span className="bg-slate-950/50 rounded px-1">ხელნაწერი 5-ნიშნა კოდი</span>
+                    <span className="bg-slate-950/50 rounded px-1">{tr('ხელნაწერი 5-ნიშნა კოდი')}</span>
                     <span className="flex items-center space-x-1 bg-slate-950/50 rounded px-1">
                       <Scan className="w-3 h-3 animate-pulse" />
                       <span>OFFLINE</span>
                     </span>
                   </div>
                   <div className="text-[9px] text-slate-200 text-center">
-                    <span className="bg-slate-950/50 rounded px-1">ციფრები ერთ ხაზზე, ჩარჩოს ნებისმიერ ადგილას</span>
+                    <span className="bg-slate-950/50 rounded px-1">{tr('ციფრები ერთ ხაზზე, ჩარჩოს ნებისმიერ ადგილას')}</span>
                   </div>
                 </div>
               </>
@@ -608,7 +606,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 className="w-full py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs sm:text-sm rounded-xl transition-all shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer"
               >
                 <Sparkles className="w-4 h-4" />
-                <span>{isRecognizing ? 'ამოცნობა მიმდინარეობს...' : 'კადრის გადაღება და ამოცნობა'}</span>
+                <span>{isRecognizing ? tr('ამოცნობა მიმდინარეობს...') : tr('კადრის გადაღება და ამოცნობა')}</span>
               </button>
             )}
 
@@ -620,7 +618,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                 className="w-full py-2.5 sm:py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-extrabold text-xs sm:text-sm rounded-xl transition-all shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer"
               >
                 <Play className="w-4 h-4" />
-                <span>{isRecognizing ? 'ამოცნობა მიმდინარეობს...' : 'სატესტო 5-ნიშნა კოდის გაშვება (ONNX)'}</span>
+                <span>{isRecognizing ? tr('ამოცნობა მიმდინარეობს...') : tr('სატესტო 5-ნიშნა კოდის გაშვება (ONNX)')}</span>
               </button>
             )}
 
@@ -635,23 +633,19 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
           {/* 5 Recognized Editable Digits */}
           <div className="bg-slate-950 p-3 sm:p-4 rounded-2xl border border-slate-800 space-y-2.5">
             <div className="flex justify-between items-center">
-              <span className="text-[11px] sm:text-xs font-bold text-slate-300 uppercase tracking-wider">
-                ამოცნობილი 5-ნიშნა კოდი (შესაძლებელია ჩასწორება):
-              </span>
+              <span className="text-[11px] sm:text-xs font-bold text-slate-300 uppercase tracking-wider">{tr('ამოცნობილი 5-ნიშნა კოდი (შესაძლებელია ჩასწორება):')}</span>
               {showsResult && ocrResult && (
                 <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border tabular-nums ${
                   ocrResult.status === 'ok' && toCheck.length === 0
                     ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800'
                     : 'bg-amber-950/60 text-amber-400 border-amber-800'
-                }`}>
-                  სანდოობა: {ocrResult.confidence}%
-                </span>
+                }`}>{tr('სანდოობა: {confidence}%', { confidence: ocrResult.confidence })}</span>
               )}
             </div>
 
             {showsResult && ocrResult && ocrResult.digits.length > 0 && region && (
               <div className="flex justify-center">
-                <canvas ref={codeCropRef} aria-label="ამოკითხული კოდის არე" className="max-w-full h-14 rounded border border-slate-700 bg-white" />
+                <canvas ref={codeCropRef} aria-label={tr('ამოკითხული კოდის არე')} className="max-w-full h-14 rounded border border-slate-700 bg-white" />
               </div>
             )}
 
@@ -660,7 +654,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               <div className="text-[10px] sm:text-[11px] text-amber-300 bg-amber-950/40 border border-amber-800/50 px-2.5 py-1 rounded-lg flex items-center space-x-2">
                 <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-400" />
                 <span>
-                  {`შეამოწმეთ მონიშნული ციფრები: ${toCheck.map((d) => (d.digit ? `#${d.position} („${d.digit}“, ${d.confidence}%)` : `#${d.position} (ვერ ამოიცნო)`)).join(', ')}. შეადარეთ ფურცელს და საჭიროებისას შეასწორეთ.`}
+                  {tr('შეამოწმეთ მონიშნული ციფრები: {join}. შეადარეთ ფურცელს და საჭიროებისას შეასწორეთ.', { join: toCheck.map((d) => (d.digit ? `#${d.position} („${d.digit}“, ${d.confidence}%)` : tr('#{position} (ვერ ამოიცნო)', { position: d.position }))).join(', ') })}
                 </span>
               </div>
             )}
@@ -702,7 +696,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
               {toCheck.length > 0 && (
                 <div className="text-[11px] text-amber-300 flex items-center gap-1.5">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  <span>კოდი შეადარეთ ფურცელს: მონიშნული ციფრები საეჭვოა. პროდუქტის არსებობა ამოცნობის სისწორეს არ ადასტურებს.</span>
+                  <span>{tr('კოდი შეადარეთ ფურცელს: მონიშნული ციფრები საეჭვოა. პროდუქტის არსებობა ამოცნობის სისწორეს არ ადასტურებს.')}</span>
                 </div>
               )}
               <div className="flex items-center justify-between gap-2">
@@ -712,13 +706,9 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                   </div>
                   <div className="min-w-0">
                     <div className="text-xs sm:text-sm font-extrabold text-white truncate">{matchedItem.product.name}</div>
-                    <div className="text-[11px] sm:text-xs text-slate-300 truncate">
-                      ვარიანტი: <span className="text-emerald-300 font-bold">{matchedItem.variant.variant_name}</span> &bull;
-                      მარაგი: <span className="font-bold text-white tabular-nums">{matchedItem.variant.stock_quantity} ც</span>
+                    <div className="text-[11px] sm:text-xs text-slate-300 truncate">{tr('ვარიანტი:')}{' '}<span className="text-emerald-300 font-bold">{matchedItem.variant.variant_name}</span>{' '}{tr('• მარაგი:')}{' '}<span className="font-bold text-white tabular-nums">{tr('{stock_quantity} ც', { stock_quantity: matchedItem.variant.stock_quantity })}</span>
                     </div>
-                    <div className="text-[11px] sm:text-xs font-extrabold text-emerald-400 mt-0.5 tabular-nums">
-                      ფასი: {formatTetri(matchedItem.variant.price_override_tetri ?? matchedItem.product.base_price_tetri)}
-                    </div>
+                    <div className="text-[11px] sm:text-xs font-extrabold text-emerald-400 mt-0.5 tabular-nums">{tr('ფასი: {amount}', { amount: formatTetri(matchedItem.variant.price_override_tetri ?? matchedItem.product.base_price_tetri) })}</div>
                   </div>
                 </div>
 
@@ -732,7 +722,7 @@ export const WebcamModal: React.FC<WebcamModalProps> = ({
                   className="px-3.5 sm:px-5 py-2 sm:py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-xs rounded-xl shadow-lg shadow-emerald-900/40 transition-colors cursor-pointer flex items-center space-x-1.5 shrink-0"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>დადასტურება</span>
+                  <span>{tr('დადასტურება')}</span>
                 </button>
               </div>
             </div>

@@ -23,12 +23,13 @@
 
 import { DatabaseSync } from 'node:sqlite';
 import {
-  getDb, getDatabasePath, closeDatabase, initDatabase, runInTransaction, databaseFileOf, dataDirectoryFor,
+  getDb, getDatabasePath, closeDatabase, initDatabase, runInTransaction, databaseFileOf, dataDirectoryFor, applyShopSettings, hasMoneyRecords,
 } from '../db/database.ts';
 import { LATEST_SCHEMA_VERSION, runMigrations } from '../db/migrations.ts';
 import { registerDowngradeGuardFunction } from '../db/downgradeGuard.ts';
 import { AuditLog, SystemErrorLog, User, BackupInfo } from '../../shared/types.ts';
-import { localDate, STORE_TIME_ZONE } from '../../shared/time.ts';
+import { getStoreTimeZone, isValidTimeZone, localDate } from '../../shared/time.ts';
+import { isCurrency } from '../../shared/currency.ts';
 import { revokeAllSessions } from './sessions.ts';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -87,6 +88,14 @@ const SETTINGS_RULES: Record<string, (v: string) => string> = {
   },
   backup_directory: (v) => validateFolderSetting(v),
   backup_mirror_directory: (v) => validateFolderSetting(v),
+  currency: (v) => {
+    if (!isCurrency(v)) throw new Error('ვალუტა არასწორია');
+    return v;
+  },
+  timezone: (v) => {
+    if (!isValidTimeZone(v)) throw new Error('დროის სარტყელი არასწორია');
+    return v;
+  },
 };
 
 function validateFolderSetting(value: string): string {
@@ -110,7 +119,7 @@ function sha256(buf: Buffer | string): string {
 
 /** Local (Tbilisi) timestamp safe for file names: 2026-11-02_20-15-30-123 */
 function fileStamp(now: Date): string {
-  const time = now.toLocaleTimeString('en-GB', { timeZone: STORE_TIME_ZONE, hour12: false }).replace(/:/g, '-');
+  const time = now.toLocaleTimeString('en-GB', { timeZone: getStoreTimeZone(), hour12: false }).replace(/:/g, '-');
   return `${localDate(now)}_${time}-${String(now.getMilliseconds()).padStart(3, '0')}`;
 }
 
@@ -937,10 +946,25 @@ export class BackupService {
       clean.push([k, rule(String(v ?? ''))]);
     }
     runInTransaction((db) => {
+      // Amounts are never converted: the currency changes only while there are no money records.
+      const currency = clean.find(([k]) => k === 'currency');
+      if (currency) {
+        const now = (db.prepare("SELECT value FROM app_settings WHERE key = 'currency'").get() as { value: string } | undefined)?.value ?? 'GEL';
+        if (currency[1] !== now && hasMoneyRecords(db)) {
+          throw new Error('მაღაზიას უკვე აქვს ფულადი ჩანაწერები: ვალუტის შეცვლა შეუძლებელია');
+        }
+      }
       const stmt = db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)");
       for (const [k, v] of clean) stmt.run(k, v);
       db.prepare("INSERT INTO audit_logs (user_id, action, entity, entity_id, details, created_at) VALUES (?, 'SETTINGS_UPDATE', 'app_settings', NULL, ?, ?)")
         .run(user.id, `Updated: ${clean.map(([k]) => k).join(', ')}`, new Date().toISOString());
     }, this.db);
+    applyShopSettings(this.db);
+  }
+
+  /** True while the currency can still be chosen (no money records yet). */
+  canChangeCurrency(user: User): boolean {
+    this.checkOwner(user);
+    return !hasMoneyRecords(this.db);
   }
 }

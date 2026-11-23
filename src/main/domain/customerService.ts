@@ -20,6 +20,8 @@ import {
   optionalId, optionalIdempotencyKey, optionalString, requireId, requireObject,
   requirePositiveAmount, requireString,
 } from './validation.ts';
+import { formatTetri } from '../../shared/money.ts';
+import { getCurrency } from '../../shared/currency.ts';
 
 const CUSTOMER_DEBT_SQL = `COALESCE((SELECT SUM(b.remaining_tetri) FROM sale_debt_balances b WHERE b.customer_id = c.id), 0)`;
 
@@ -182,7 +184,7 @@ export class CustomerService {
 
       if (amount > currentDebt) {
         throw new Error(
-          `შეტანილი თანხა (${(amount / 100).toFixed(2)} ₾) აღემატება მიმდინარე დავალიანებას (${(currentDebt / 100).toFixed(2)} ₾)`
+          `შეტანილი თანხა (${formatTetri(amount)}) აღემატება მიმდინარე დავალიანებას (${formatTetri(currentDebt)})`
         );
       }
 
@@ -200,7 +202,7 @@ export class CustomerService {
         const saleRemaining = this.saleBalance(db, saleId);
         if (amount > saleRemaining) {
           throw new Error(
-            `შეტანილი თანხა (${(amount / 100).toFixed(2)} ₾) აღემატება ამ ჩეკის დარჩენილ ვალს (${(saleRemaining / 100).toFixed(2)} ₾)`
+            `შეტანილი თანხა (${formatTetri(amount)}) აღემატება ამ ჩეკის დარჩენილ ვალს (${formatTetri(saleRemaining)})`
           );
         }
       }
@@ -246,7 +248,7 @@ export class CustomerService {
       `).run(
         user.id,
         String(repaymentId),
-        `Repaid ${(amount / 100).toFixed(2)} GEL for customer ${customer.first_name} by ${user.name}. Allocated across ${allocations.length} sales.`,
+        `Repaid ${formatTetri(amount, false)} ${getCurrency()} for customer ${customer.first_name} by ${user.name}. Allocated across ${allocations.length} sales.`,
         now
       );
 
@@ -333,7 +335,7 @@ export class CustomerService {
 
       const saleBefore = this.saleBalance(db, saleId);
       if (amount > saleBefore) {
-        throw new Error(`ჩამოსაწერი თანხა (${(amount / 100).toFixed(2)} ₾) აღემატება ჩეკის დარჩენილ ვალს (${(saleBefore / 100).toFixed(2)} ₾)`);
+        throw new Error(`ჩამოსაწერი თანხა (${formatTetri(amount)}) აღემატება ჩეკის დარჩენილ ვალს (${formatTetri(saleBefore)})`);
       }
       const customerBefore = this.getCustomerById(sale.customer_id)!.total_debt_tetri || 0;
       const now = new Date().toISOString();

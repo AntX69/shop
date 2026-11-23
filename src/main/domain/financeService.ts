@@ -36,6 +36,8 @@ export const PROFIT_FIELDS = [
   'unknown_cost_grams', 'unknown_cost_returned_grams',
 ];
 import { optionalString, requirePositiveAmount, requireObject, requireString } from './validation.ts';
+import { Lang, trIn } from '../../shared/i18n/index.ts';
+import { currencySymbol, getCurrency } from '../../shared/currency.ts';
 
 function csvCell(value: unknown): string {
   const s = value === null || value === undefined ? '' : String(value);
@@ -348,7 +350,7 @@ export class FinanceService {
   /**
    * Generates a UTF-8 BOM CSV export for Sales.
    */
-  exportSalesCSV(user: User): string {
+  exportSalesCSV(user: User, lang: Lang = 'ka'): string {
     this.requirePermission(user, 'reports.export', 'გაყიდვების ექსპორტი');
     const sales = this.db.prepare(`
       SELECT s.receipt_number, s.created_at, u.name as seller,
@@ -362,16 +364,23 @@ export class FinanceService {
     `).all() as any[];
 
     const gel = (t: number | null) => ((t || 0) / 100).toFixed(2);
-    const header = ['ჩეკის #', 'თარიღი (UTC)', 'გამყიდველი', 'კლიენტი', 'გადახდის მეთოდი', 'ტიპი', 'ფასდაკლებამდე (₾)', 'ფასდაკლება (₾)', 'ჯამი (₾)', 'ნაღდი (₾)', 'ნისია (₾)', 'გაცვლის კრედიტი (₾)', 'სტატუსი'];
+    // Column names and words in the language of the user who exports; amounts in the shop currency.
+    const L = (text: string, params?: Record<string, unknown>) => trIn(lang, text, params);
+    const currency = currencySymbol(getCurrency());
+    const header = [
+      L('ჩეკის #'), L('თარიღი (UTC)'), L('გამყიდველი'), L('კლიენტი'), L('გადახდის მეთოდი'), L('ტიპი'),
+      L('ფასდაკლებამდე ({currency})', { currency }), L('ფასდაკლება ({currency})', { currency }), L('ჯამი ({currency})', { currency }),
+      L('ნაღდი ({currency})', { currency }), L('ნისია ({currency})', { currency }), L('გაცვლის კრედიტი ({currency})', { currency }), L('სტატუსი'),
+    ];
     // UTF-8 BOM (﻿) for Excel Georgian character compatibility
     let csv = '﻿' + header.map(csvCell).join(',') + '\n';
 
     for (const s of sales) {
-      const method = s.payment_method === 'cash' ? 'ნაღდი' : s.payment_method === 'debt' ? 'ნისია' : 'შერეული';
-      const status = s.status === 'completed' ? 'დასრულებული' : s.status === 'returned' ? 'დაბრუნებული' : 'ნაწილობრივ დაბრუნებული';
+      const method = L(s.payment_method === 'cash' ? 'ნაღდი' : s.payment_method === 'debt' ? 'ნისია' : 'შერეული');
+      const status = L(s.status === 'completed' ? 'დასრულებული' : s.status === 'returned' ? 'დაბრუნებული' : 'ნაწილობრივ დაბრუნებული');
       csv += [
         s.receipt_number, s.created_at, s.seller, (s.customer || '').trim() || '-', method,
-        s.sale_type === 'exchange' ? 'გაცვლა' : 'გაყიდვა',
+        L(s.sale_type === 'exchange' ? 'გაცვლა' : 'გაყიდვა'),
         gel(s.subtotal_tetri ?? s.total_tetri), gel(s.discount_tetri), gel(s.total_tetri),
         gel(s.cash_received_tetri - s.change_given_tetri), gel(s.debt_amount_tetri), gel(s.exchange_credit_tetri), status
       ].map(csvCell).join(',') + '\n';

@@ -9,6 +9,7 @@
 import type { OcrBox, OcrComponentKind, OcrResult } from '../../shared/ocr.ts';
 import type { RegionImage } from './offlineOcr.ts';
 import type { Rect } from './cameraRoi.ts';
+import { tr } from '../../shared/i18n/index.ts';
 
 export const KIND_COLOURS: Record<OcrComponentKind, string> = {
   digit: '#22c55e',
@@ -110,21 +111,21 @@ export function compositeCanvas(result: OcrResult, region: RegionImage, frame: {
     const c = document.createElement('canvas');
     const s = drawScaled(c, frame.canvas, half);
     strokeBox(c.getContext('2d')!, frame.roi, s, '#22c55e');
-    parts.push({ label: 'კამერის კადრი და დამუშავებული არე', canvas: c });
+    parts.push({ label: tr('კამერის კადრი და დამუშავებული არე'), canvas: c });
   }
   const r = document.createElement('canvas');
   drawRegionWithDigits(r, region, result, half);
-  parts.push({ label: 'აღმოჩენილი კოდი და ციფრები', canvas: r });
+  parts.push({ label: tr('აღმოჩენილი კოდი და ციფრები'), canvas: r });
   if (d) {
     const g = document.createElement('canvas');
     drawScaled(g, planeCanvas(d.gray, d.previewWidth, d.previewHeight), half);
-    parts.push({ label: 'ნაცრისფერი', canvas: g });
+    parts.push({ label: tr('ნაცრისფერი'), canvas: g });
     const k = document.createElement('canvas');
     drawScaled(k, planeCanvas(d.contrast, d.previewWidth, d.previewHeight), half);
-    parts.push({ label: 'კონტრასტი (განათების კორექციით)', canvas: k });
+    parts.push({ label: tr('კონტრასტი (განათების კორექციით)'), canvas: k });
     const m = document.createElement('canvas');
     drawMaskWithComponents(m, result, half);
-    parts.push({ label: 'მელანი და ნაპოვნი ნაწილები', canvas: m });
+    parts.push({ label: tr('მელანი და ნაპოვნი ნაწილები'), canvas: m });
   }
   const rowHeights: number[] = [];
   for (let i = 0; i < parts.length; i += 2) rowHeights.push(Math.max(parts[i].canvas.height, parts[i + 1]?.canvas.height || 0) + 22);

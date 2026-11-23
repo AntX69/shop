@@ -147,12 +147,12 @@ export class PosService {
           if (!canDiscount) {
             throw new Error(
               `გამყიდველს ფასის შეცვლის ან ფასდაკლების უფლება არ აქვს. ` +
-              `"${v.product_name}"-ის აქტუალური ფასია: ${(listPrice / 100).toFixed(2)} ₾ (გაგზავნილი: ${(sent / 100).toFixed(2)} ₾)`
+              `"${v.product_name}"-ის აქტუალური ფასია: ${formatTetri(listPrice)} (გაგზავნილი: ${formatTetri(sent)})`
             );
           }
           if (sent > listPrice) {
             throw new Error(
-              `"${v.product_name}": გასაყიდი ფასი არ შეიძლება აღემატებოდეს პროდუქტის ფასს (${(listPrice / 100).toFixed(2)} ₾). ` +
+              `"${v.product_name}": გასაყიდი ფასი არ შეიძლება აღემატებოდეს პროდუქტის ფასს (${formatTetri(listPrice)}). ` +
               `ფასის შესაცვლელად შეცვალეთ პროდუქტის ბარათი.`
             );
           }
@@ -293,7 +293,7 @@ export class PosService {
       if (paymentMethod === 'cash') {
         cashReceivedTetri = cashInput;
         if (cashReceivedTetri < dueTetri) {
-          throw new Error(`მიღებული ნაღდი თანხა (${(cashReceivedTetri / 100).toFixed(2)} ₾) ნაკლებია ჯამურ თანხაზე (${(dueTetri / 100).toFixed(2)} ₾)`);
+          throw new Error(`მიღებული ნაღდი თანხა (${formatTetri(cashReceivedTetri)}) ნაკლებია ჯამურ თანხაზე (${formatTetri(dueTetri)})`);
         }
         changeGivenTetri = cashReceivedTetri - dueTetri;
       } else if (paymentMethod === 'debt') {
@@ -310,7 +310,7 @@ export class PosService {
         }
         cashReceivedTetri = cashInput;
         if (cashReceivedTetri <= 0 || cashReceivedTetri >= dueTetri) {
-          throw new Error(`შერეული გადახდისას მიღებული ნაღდი თანხა უნდა იყოს 0-ზე მეტი და მთლიან თანხაზე (${(dueTetri / 100).toFixed(2)} ₾) ნაკლები`);
+          throw new Error(`შერეული გადახდისას მიღებული ნაღდი თანხა უნდა იყოს 0-ზე მეტი და მთლიან თანხაზე (${formatTetri(dueTetri)}) ნაკლები`);
         }
         debtAmountTetri = dueTetri - cashReceivedTetri;
       }
