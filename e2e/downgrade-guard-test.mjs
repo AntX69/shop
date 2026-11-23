@@ -41,6 +41,7 @@ const newExe = arg('new-exe');
 const rc3Exe = arg('rc3-exe');
 const root = path.resolve(arg('data', 'downgrade-guard'));
 const outDir = path.resolve(arg('out', 'downgrade-guard-report'));
+const expectSchema = Number(arg('schema', '12')); // schema of the new program (V1.1 RC2: 11, V1.2: 12)
 const realInstalls = [path.join(process.env.LOCALAPPDATA || '', 'Programs', 'StorePOS'), path.join(process.env.ProgramFiles || 'C:\\Program Files', 'StorePOS')];
 const insideReal = (p) => realInstalls.some((r) => path.resolve(p).toLowerCase().startsWith(r.toLowerCase() + path.sep));
 if (!newExe || !rc3Exe || !fs.existsSync(newExe) || !fs.existsSync(rc3Exe)) {
@@ -120,8 +121,8 @@ async function main() {
   const same = sameAsRc3(fpRc3, fpUpgraded);
   await closeApp(app);
   const afterUpgrade = tables(dbFile(P));
-  check('B. V1.1 upgrade: schema v11, all 57 guard triggers, every RC3 record and finance figure unchanged',
-    afterUpgrade.meta.schema === 11 && afterUpgrade.meta.guards === 57 && same.ok, `schema v${afterUpgrade.meta.schema}, ${afterUpgrade.meta.guards} triggers ${same.detail}`);
+  check(`B. V1.1+ upgrade: schema v${expectSchema}, all 57 guard triggers, every RC3 record and finance figure unchanged`,
+    afterUpgrade.meta.schema === expectSchema && afterUpgrade.meta.guards === 57 && same.ok, `schema v${afterUpgrade.meta.schema}, ${afterUpgrade.meta.guards} triggers ${same.detail}`);
 
   app = await launchApp(newExe, P, port++);
   OT = await login(app.cdp, 'owner');
@@ -221,7 +222,7 @@ async function main() {
   const changed = changedTables(beforeRc3.out, afterRc3.out);
   const guardedChanged = changed.filter((t) => GUARDED.includes(t) || t === 'users' || t === 'schema_migrations');
   check('C. after RC3: every guarded table (and users apart from sign-in counters) exactly as V1.1 left it; guard intact',
-    guardedChanged.length === 0 && afterRc3.meta.guards === 57 && afterRc3.meta.schema === 11, `changed: ${changed.join(', ') || 'none'} (only logs/settings may change)`);
+    guardedChanged.length === 0 && afterRc3.meta.guards === 57 && afterRc3.meta.schema === expectSchema, `changed: ${changed.join(', ') || 'none'} (only logs/settings may change)`);
   const recC = reconcileDatabase(dbFile(P));
   check('C. bookkeeping and FIFO identities hold after RC3 ran', recC.checks.every((x) => x.ok), JSON.stringify(recC.checks.filter((x) => !x.ok)));
 

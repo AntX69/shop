@@ -13,13 +13,13 @@
 import React, { useState, useEffect } from 'react';
 import { Product, ProductVariant, User } from '../../shared/types.ts';
 import { formatTetri } from '../../shared/money.ts';
-import { gramsToKg } from '../../shared/quantity.ts';
+import { gramsToKg, kgText } from '../../shared/quantity.ts';
 import { weightToGrams, moneyToTetri } from '../utils/numericInput.ts';
 import { can, hasStockNumber } from '../utils/access.ts';
 
 /** Stock as text; a dash when this user may not see quantities ("inventory.quantities"). */
 const qtyText = (grams: number | null | undefined, unit: string | undefined, withUnit = true) =>
-  !hasStockNumber(grams) ? '—' : unit === 'kg' ? `${gramsToKg(grams)}${withUnit ? tr(' კგ') : ''}` : `${grams}${withUnit ? tr(' ცალი') : ''}`;
+  !hasStockNumber(grams) ? '—' : unit === 'kg' ? `${kgText(grams)}${withUnit ? tr(' კგ') : ''}` : `${grams}${withUnit ? tr(' ცალი') : ''}`;
 import { invokeIpc } from '../api/ipcClient.ts';
 import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
 import { 
@@ -415,7 +415,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ currentUser }) => 
                       <td className="py-2.5 px-4 text-right font-bold text-sm">
                         <span className={isPositive ? 'text-emerald-400' : 'text-red-400'}>
                           {!hasStockNumber(m.quantity_change) ? '—' : m.unit_type === 'kg'
-                            ? (isPositive ? `+${gramsToKg(m.quantity_change)}` : `-${gramsToKg(Math.abs(m.quantity_change))}`)
+                            ? (isPositive ? `+${kgText(m.quantity_change)}` : `-${kgText(Math.abs(m.quantity_change))}`)
                             : (isPositive ? `+${m.quantity_change}` : m.quantity_change)}
                         </span> <span className="text-xs text-slate-400 font-normal">{m.unit_type === 'kg' ? tr('კგ') : tr('ც')}</span>
                       </td>

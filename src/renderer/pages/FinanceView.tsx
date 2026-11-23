@@ -17,7 +17,7 @@ import { Expense, FinancialSummary, User } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { can } from '../utils/access.ts';
-import { gramsToKg } from '../../shared/quantity.ts';
+import { kgText } from '../../shared/quantity.ts';
 import { EditableMoneyInput } from '../components/inputs/NumericInputs.tsx';
 import { 
   TrendingUp, 
@@ -262,7 +262,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
         {canProfit && summary?.has_unknown_costs && (
           <div className="p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl text-amber-200 text-xs flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{tr('{value}{value2}{value3}{value4}შესყიდვის ფასი უცნობია. თვითღირებულება 0-ად არ ითვლება, ამიტომ ზუსტი მოგება ვერ დაითვლება — ქვემოთ ნაჩვენებია მხოლოდ ცნობილი ფასების მიხედვით (არასრული).', { value: summary.unknown_cost_items_count > 0 && tr('{unknown_cost_items_count} გაყიდულ ერთეულს ', { unknown_cost_items_count: summary.unknown_cost_items_count }), value2: (summary.unknown_cost_returned_items_count || 0) > 0 && tr('{unknown_cost_returned_items_count} დაბრუნებულ ერთეულს ', { unknown_cost_returned_items_count: summary.unknown_cost_returned_items_count }), value3: (summary.unknown_cost_grams || 0) > 0 && tr('{gramsToKg} კგ გაყიდულ წონას ', { gramsToKg: gramsToKg(summary.unknown_cost_grams) }), value4: (summary.unknown_cost_returned_grams || 0) > 0 && tr('{gramsToKg} კგ დაბრუნებულ წონას ', { gramsToKg: gramsToKg(summary.unknown_cost_returned_grams) }) })}</span>
+            <span>{tr('{value}{value2}{value3}{value4}შესყიდვის ფასი უცნობია. თვითღირებულება 0-ად არ ითვლება, ამიტომ ზუსტი მოგება ვერ დაითვლება — ქვემოთ ნაჩვენებია მხოლოდ ცნობილი ფასების მიხედვით (არასრული).', { value: summary.unknown_cost_items_count > 0 && tr('{unknown_cost_items_count} გაყიდულ ერთეულს ', { unknown_cost_items_count: summary.unknown_cost_items_count }), value2: (summary.unknown_cost_returned_items_count || 0) > 0 && tr('{unknown_cost_returned_items_count} დაბრუნებულ ერთეულს ', { unknown_cost_returned_items_count: summary.unknown_cost_returned_items_count }), value3: (summary.unknown_cost_grams || 0) > 0 && tr('{gramsToKg} კგ გაყიდულ წონას ', { gramsToKg: kgText(summary.unknown_cost_grams) }), value4: (summary.unknown_cost_returned_grams || 0) > 0 && tr('{gramsToKg} კგ დაბრუნებულ წონას ', { gramsToKg: kgText(summary.unknown_cost_returned_grams) }) })}</span>
           </div>
         )}
 
@@ -295,7 +295,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
           <FinanceSection title={tr('მარაგის ღირებულება ახლა (FIFO, შესყიდვის ფასით)')}>
             {summary.inventory_value_tetri === null || summary.inventory_value_tetri === undefined ? (
               <Stat label={tr('მარაგის ღირებულება (არასრული)')} value={summary.inventory_value_known_tetri} tone="amber" strong
-                hint={tr('უცნობი ფასით: {value} ცალი{value2}', { value: summary.inventory_unknown_cost_units || 0, value2: (summary.inventory_unknown_cost_grams || 0) > 0 ? tr(', {gramsToKg} კგ', { gramsToKg: gramsToKg(summary.inventory_unknown_cost_grams) }) : '' })} />
+                hint={tr('უცნობი ფასით: {value} ცალი{value2}', { value: summary.inventory_unknown_cost_units || 0, value2: (summary.inventory_unknown_cost_grams || 0) > 0 ? tr(', {gramsToKg} კგ', { gramsToKg: kgText(summary.inventory_unknown_cost_grams) }) : '' })} />
             ) : (
               <Stat label={tr('მარაგის ღირებულება')} value={summary.inventory_value_tetri} tone="cyan" strong hint={tr('თაროზე დარჩენილი საქონელი, პარტიების შესყიდვის ფასით')} />
             )}
@@ -305,7 +305,7 @@ export const FinanceView: React.FC<FinanceViewProps> = ({ currentUser }) => {
         {/* 3. Operating result */}
         {canReport && <FinanceSection title={tr('საოპერაციო შედეგი')}>
           {canProfit && <Stat label={tr('დაზიანებული საქონელი')} value={summary?.damaged_goods_writeoff_tetri} tone="red"
-            hint={tr('{value} ერთეული{value2} ჩამოიწერა (თვითღირებულებით)', { value: summary?.damaged_goods_units || 0, value2: (summary?.damaged_goods_grams || 0) > 0 ? tr(' და {gramsToKg} კგ', { gramsToKg: gramsToKg(summary?.damaged_goods_grams) }) : '' })} />}
+            hint={tr('{value} ერთეული{value2} ჩამოიწერა (თვითღირებულებით)', { value: summary?.damaged_goods_units || 0, value2: (summary?.damaged_goods_grams || 0) > 0 ? tr(' და {gramsToKg} კგ', { gramsToKg: kgText(summary?.damaged_goods_grams) }) : '' })} />}
           <Stat label={tr('ჩამოწერილი ნისია')} value={summary?.debt_written_off_tetri} tone="red" hint={tr('მფლობელის მიერ ჩამოწერილი ვალი')} />
           <Stat label={tr('საოპერაციო ხარჯები')} value={summary?.total_expenses_tetri} tone="red" hint={tr('ქირა, კომუნალური, ტრანსპორტი და სხვა')} />
           {!canProfit ? null : summary?.operating_result_tetri === null ? (

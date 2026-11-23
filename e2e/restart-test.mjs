@@ -53,7 +53,8 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 const killTree = (pid) => { try { execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' }); } catch {} };
 
 /**
- * Watches (every 100 ms, for `ms`) for a dialog box (#32770) of any StorePOS.exe process and
+ * Watches (every 100 ms, for `ms`) for a dialog box (#32770) of any StorePOS.exe or
+ * StorePOS-Test.exe (test identity) process and
  * resolves with the titles seen. Started before the app, so even a dialog that someone closes
  * within a second is noticed. The start-up error box (Electron's showErrorBox) is captioned
  * "Error"; its Georgian heading and text are inside the dialog.
@@ -72,7 +73,7 @@ public class StorePosDialogs { public delegate bool EnumProc(IntPtr h, IntPtr l)
 Write-Output 'ready'
 $sw = [Diagnostics.Stopwatch]::StartNew(); $seen = @{}
 while ($sw.ElapsedMilliseconds -lt ${ms}) {
-  $ids = @(Get-Process StorePOS -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+  $ids = @(Get-Process StorePOS, StorePOS-Test -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
   $found = New-Object System.Collections.ArrayList
   [void][StorePosDialogs]::EnumWindows({ param($h, $l) $id = 0; [void][StorePosDialogs]::GetWindowThreadProcessId($h, [ref]$id)
     if ($ids -contains $id -and [StorePosDialogs]::IsWindowVisible($h)) { $c = New-Object System.Text.StringBuilder 64; [void][StorePosDialogs]::GetClassName($h, $c, 64)

@@ -142,7 +142,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center space-x-1 sm:space-x-1.5 px-2 py-1.5 bg-slate-800 hover:bg-red-950/60 hover:text-red-300 hover:border-red-800 text-slate-300 rounded-lg border border-slate-700 transition-colors text-xs font-medium cursor-pointer shrink-0"
           >
             <Lock className="w-3.5 h-3.5 shrink-0" />
-            <span className="hidden 2xl:inline text-xs">{tr('ჩაკეტვა')}</span>
+            <span className="hidden min-[1700px]:inline text-xs">{tr('ჩაკეტვა')}</span>
             <span className="text-[9px] sm:text-[10px] px-1 py-0.5 rounded bg-slate-900 font-mono text-slate-400 border border-slate-800 leading-none">F12</span>
           </button>
         </div>

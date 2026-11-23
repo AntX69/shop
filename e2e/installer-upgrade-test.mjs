@@ -152,7 +152,7 @@ async function main() {
     const lots = db.prepare('SELECT COUNT(*) AS n, SUM(remaining_cost_tetri = unit_cost_tetri * remaining_quantity) AS ok FROM inventory_lots WHERE unit_cost_tetri IS NOT NULL').get();
     const units = db.prepare("SELECT COUNT(*) AS n FROM products WHERE unit_type <> 'piece'").get().n;
     db.close();
-    check('database migrated to schema v11; existing products stay pieces; piece layer costs = unit cost × quantity', schema === 11 && units === 0 && lots.n > 0 && lots.ok === lots.n, `v${schema}, ${lots.ok}/${lots.n} layers, ${units} non-piece`);
+    check('database migrated to schema v12; existing products stay pieces; piece layer costs = unit cost × quantity', schema === 12 && units === 0 && lots.n > 0 && lots.ok === lots.n, `v${schema}, ${lots.ok}/${lots.n} layers, ${units} non-piece`);
   }
 
   // 5. uninstall keeps the data

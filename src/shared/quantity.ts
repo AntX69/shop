@@ -9,7 +9,7 @@
  * Internal storage is ALWAYS integer base units.
  */
 
-import { tr } from './i18n/index.ts';
+import { getLanguage, tr } from './i18n/index.ts';
 
 export type UnitType = 'piece' | 'kg';
 
@@ -50,6 +50,16 @@ export function kgToGrams(kg: number | string): number {
  * Converts integer grams to a KG display string with up to 3 decimals (e.g. 1250 -> "1.250" or "1.25").
  * If `fixedDecimals` is true, always returns 3 decimals ("1.250").
  */
+/**
+ * Weight for display: "1.250" in Georgian and English, "1,250" in Russian and Spanish (where a
+ * point would read as thousands). Input fields keep using gramsToKg (point).
+ */
+export function kgText(grams: number | null | undefined, fixedDecimals: boolean = true): string {
+  const s = gramsToKg(grams, fixedDecimals);
+  const lang = getLanguage();
+  return lang === 'ru' || lang === 'es' ? s.replace('.', ',') : s;
+}
+
 export function gramsToKg(grams: number | null | undefined, fixedDecimals: boolean = true): string {
   if (grams === null || grams === undefined || isNaN(grams) || grams <= 0) {
     return fixedDecimals ? '0.000' : '0';
@@ -89,7 +99,7 @@ export function formatUnitQuantity(quantity: number | null | undefined, unit: Un
     return unit === 'kg' ? (includeUnitName ? tr('0.000 კგ') : '0.000') : (includeUnitName ? tr('0 ცალი') : '0');
   }
   if (unit === 'kg') {
-    const kgStr = gramsToKg(quantity, true);
+    const kgStr = kgText(quantity, true);
     return includeUnitName ? tr('{kgStr} კგ', { kgStr }) : kgStr;
   }
   const qtyStr = String(Math.round(quantity));

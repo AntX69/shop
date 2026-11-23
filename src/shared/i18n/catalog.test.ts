@@ -29,6 +29,8 @@ const NOT_SHOWN = new Set([
 interface Literal {
   text: string; // cooked text; templates with {} for each ${...}
   template: boolean;
+  /** First argument of tr() / L(): always shown, so it always needs a translation. */
+  inTr: boolean;
   file: string;
   line: number;
 }
@@ -40,7 +42,9 @@ function scan(src: string, file: string): { literals: Literal[]; code: string } 
   let i = 0;
   let last = '';
   let braceDepth = 0;
-  const templates: Array<{ text: string; depth: number; start: number }> = [];
+  type Tpl = { text: string; depth: number; start: number; inTr: boolean };
+  const templates: Tpl[] = [];
+  const callsTr = () => /\b(tr|L)\(\s*$/.test(code.slice(-16));
   const lineAt = (pos: number) => src.slice(0, pos).split('\n').length;
   const readEscape = (j: number): [string, number] => {
     const e = src[j + 1];
@@ -55,7 +59,7 @@ function scan(src: string, file: string): { literals: Literal[]; code: string } 
     if (e === '\n') return ['', j + 2];
     return [map[e] ?? e, j + 2];
   };
-  const readTemplateChunk = (j: number, tpl: { text: string; depth: number; start: number }): number => {
+  const readTemplateChunk = (j: number, tpl: Tpl): number => {
     while (j < src.length) {
       const c = src[j];
       if (c === '\\') {
@@ -63,7 +67,7 @@ function scan(src: string, file: string): { literals: Literal[]; code: string } 
         tpl.text += s;
         j = next;
       } else if (c === '`') {
-        literals.push({ text: tpl.text, template: tpl.text.includes('\u0000{}'), file, line: lineAt(tpl.start) });
+        literals.push({ text: tpl.text, template: tpl.text.includes('\u0000{}'), inTr: tpl.inTr, file, line: lineAt(tpl.start) });
         return j + 1;
       } else if (c === '$' && src[j + 1] === '{') {
         tpl.text += '\u0000{}';
@@ -104,16 +108,17 @@ function scan(src: string, file: string): { literals: Literal[]; code: string } 
           j++;
         }
       }
-      literals.push({ text, template: false, file, line: lineAt(i) });
+      literals.push({ text, template: false, inTr: callsTr(), file, line: lineAt(i) });
       code += ' 0 ';
       last = '0';
       i = j + 1;
       continue;
     }
     if (c === '`') {
+      const inTr = callsTr();
       code += ' 0 ';
       last = '0';
-      i = readTemplateChunk(i + 1, { text: '', depth: 0, start: i });
+      i = readTemplateChunk(i + 1, { text: '', depth: 0, start: i, inTr });
       continue;
     }
     if (c === '}' && templates.length && braceDepth - 1 === templates[templates.length - 1].depth) {
@@ -196,13 +201,15 @@ test('every Georgian text in the code has a translation (screens, main-process m
   for (const s of scanned) {
     for (const lit of s.literals) {
       if (!GEORGIAN.test(lit.text)) continue;
-      if (NOT_SHOWN.has(lit.text) || /\b(INSERT|VALUES|SELECT)\b/.test(lit.text)) continue;
+      if (!lit.inTr && (NOT_SHOWN.has(lit.text) || /\b(INSERT|VALUES|SELECT)\b/.test(lit.text))) continue;
       checked++;
       const ok = lit.template ? shapes.has(shape(lit.text)) : exact.has(lit.text);
       if (!ok) missing.push(`${lit.file}:${lit.line}  ${lit.text.replace(/\u0000\{\}/g, '${…}').slice(0, 100)}`);
     }
   }
   assert.ok(checked > 1000, `only ${checked} Georgian texts found: the scanner is broken`);
+  const viaTr = scanned.reduce((n, s) => n + s.literals.filter((l) => l.inTr && GEORGIAN.test(l.text)).length, 0);
+  assert.ok(viaTr > 900, `only ${viaTr} texts recognised as tr() arguments: the scanner is broken`);
   assert.deepEqual(missing, [], `texts without translation:\n${missing.join('\n')}`);
 });
 
@@ -277,4 +284,25 @@ test('formatMoney: the shop currency in each language', () => {
   assert.equal(formatMoney(2550, { currency: 'GEL', lang: 'en' }), '₾25.50');
   assert.equal(formatMoney(2550, { currency: 'EUR', lang: 'es', symbol: false }), '25.50');
   for (const lang of LANGUAGES) assert.ok(formatMoney(0, { currency: 'USD', lang }).includes('0'), lang);
+});
+
+test('weights on screen: decimal comma in Russian and Spanish, point in Georgian and English', async () => {
+  const { setLanguage } = await import('./index.ts');
+  const { kgText, gramsToKg, formatUnitQuantity } = await import('../quantity.ts');
+  try {
+    setLanguage('es');
+    assert.equal(kgText(3500), '3,500');
+    assert.equal(formatUnitQuantity(1250, 'kg'), '1,250 kg');
+    assert.equal(formatUnitQuantity(3, 'piece'), '3 ud.');
+    assert.equal(gramsToKg(3500), '3.500', 'input fields keep the point');
+    setLanguage('ru');
+    assert.equal(formatUnitQuantity(1250, 'kg'), '1,250 кг');
+    setLanguage('en');
+    assert.equal(formatUnitQuantity(1250, 'kg'), '1.250 kg');
+    setLanguage('ka');
+    assert.equal(formatUnitQuantity(1250, 'kg'), '1.250 კგ');
+    assert.equal(formatUnitQuantity(3, 'piece'), '3 ცალი');
+  } finally {
+    setLanguage('ka');
+  }
 });

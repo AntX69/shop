@@ -23,7 +23,7 @@ import { photoSrc } from '../utils/imageResize.ts';
 import { ScanDetector, SCAN_NO_SUFFIX_FLUSH_MS } from '../utils/scannerInput.ts';
 import { WebcamModal } from '../components/WebcamModal.tsx';
 import { EditableIntegerInput, EditableMoneyInput, EditableWeightInput } from '../components/inputs/NumericInputs.tsx';
-import { gramsToKg, formatUnitQuantity, lineTotalTetri } from '../../shared/quantity.ts';
+import { gramsToKg, formatUnitQuantity, lineTotalTetri, kgText } from '../../shared/quantity.ts';
 import { weightToGrams } from '../utils/numericInput.ts';
 import { can, hasStockNumber, stockLimit } from '../utils/access.ts';
 
@@ -31,7 +31,7 @@ import { can, hasStockNumber, stockLimit } from '../utils/access.ts';
 const stockOf = (v: { stock_quantity?: number | null }) => stockLimit(v.stock_quantity);
 /** Stock as text, or a dash when this user may not see quantities. */
 const stockText = (stock: number | null | undefined, isKg: boolean) =>
-  hasStockNumber(stock) ? (isKg ? tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(stock) }) : tr('{stock} ცალი', { stock })) : '—';
+  hasStockNumber(stock) ? (isKg ? tr('{gramsToKg} კგ', { gramsToKg: kgText(stock) }) : tr('{stock} ცალი', { stock })) : '—';
 import { 
   Barcode, 
   Search, 
@@ -287,8 +287,8 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
         ...current,
         quantityToAdd: next,
         scanNote: next > current.quantityToAdd
-          ? (isKg ? tr('იგივე პროდუქტი კიდევ ერთხელ: წონა {gramsToKg} კგ', { gramsToKg: gramsToKg(next) }) : tr('იგივე პროდუქტი კიდევ ერთხელ: რაოდენობა {next}', { next }))
-          : (isKg ? tr('მარაგში მეტი არ არის ({gramsToKg} კგ)', { gramsToKg: gramsToKg(stockOf(variant)) }) : tr('მარაგში მეტი არ არის ({stockOf} ცალი)', { stockOf: stockOf(variant) }))
+          ? (isKg ? tr('იგივე პროდუქტი კიდევ ერთხელ: წონა {gramsToKg} კგ', { gramsToKg: kgText(next) }) : tr('იგივე პროდუქტი კიდევ ერთხელ: რაოდენობა {next}', { next }))
+          : (isKg ? tr('მარაგში მეტი არ არის ({gramsToKg} კგ)', { gramsToKg: kgText(stockOf(variant)) }) : tr('მარაგში მეტი არ არის ({stockOf} ცალი)', { stockOf: stockOf(variant) }))
       });
       return;
     }
@@ -418,7 +418,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       const existing = cart[existingIndex];
       const newQty = existing.quantity + quantityToAdd;
       if (newQty > stockOf(variant)) {
-        alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? gramsToKg(stockOf(variant)) + tr(' კგ') : stockOf(variant) + tr(' ცალი') }));
+        alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? kgText(stockOf(variant)) + tr(' კგ') : stockOf(variant) + tr(' ცალი') }));
         return;
       }
       const updatedCart = [...cart];
@@ -426,7 +426,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
       setCart(updatedCart);
     } else {
       if (quantityToAdd > stockOf(variant)) {
-        alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? gramsToKg(stockOf(variant)) + tr(' კგ') : stockOf(variant) + tr(' ცალი') }));
+        alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? kgText(stockOf(variant)) + tr(' კგ') : stockOf(variant) + tr(' ცალი') }));
         return;
       }
       setCart(prev => [
@@ -459,7 +459,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
           const newQty = item.quantity + step;
           if (newQty < minQty) return null;
           if (newQty > item.available_stock) {
-            alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? gramsToKg(item.available_stock) + tr(' კგ') : item.available_stock + tr(' ცალი') }));
+            alert(tr('მარაგი შეზღუდულია! ხელმისაწვდომია: {value}', { value: isKg ? kgText(item.available_stock) + tr(' კგ') : item.available_stock + tr(' ცალი') }));
             return item;
           }
           return { ...item, quantity: newQty };
@@ -758,7 +758,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                     </div>
                     <div className="text-xs text-slate-300 font-semibold mt-0.5 tabular-nums">
                       {item.unit_type === 'kg' ? (
-                        <>{tr('{amount}/კგ × {gramsToKg} კგ = {amount2}', { amount: formatTetri(item.unit_price_tetri), gramsToKg: gramsToKg(item.quantity), amount2: formatTetri(lineSubtotalOf(item)) })}{canDiscount && (item.line_discount_tetri || 0) > 0 && (
+                        <>{tr('{amount}/კგ × {gramsToKg} კგ = {amount2}', { amount: formatTetri(item.unit_price_tetri), gramsToKg: kgText(item.quantity), amount2: formatTetri(lineSubtotalOf(item)) })}{canDiscount && (item.line_discount_tetri || 0) > 0 && (
                             <span className="ml-1.5 text-amber-400">− {formatTetri(item.line_discount_tetri)} = {formatTetri(lineSubtotalOf(item) - (item.line_discount_tetri || 0))}</span>
                           )}
                         </>
@@ -809,7 +809,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                       <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                     </button>
                     {item.unit_type === 'kg' ? (
-                      <span className="min-w-14 text-center text-xs font-bold text-white tabular-nums px-1">{tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(item.quantity) })}</span>
+                      <span className="min-w-14 text-center text-xs font-bold text-white tabular-nums px-1">{tr('{gramsToKg} კგ', { gramsToKg: kgText(item.quantity) })}</span>
                     ) : (
                       <span className="w-5 sm:w-6 text-center text-xs sm:text-sm font-bold text-white tabular-nums">
                         {item.quantity}
@@ -1373,7 +1373,7 @@ export const PosView: React.FC<PosViewProps> = ({ currentUser }) => {
                 {completedSale.items?.map((it) => (
                   <div key={it.id} className="flex justify-between items-center">
                     <span className="text-slate-300 truncate pr-2">
-                      {it.product_name_snap} ({it.variant_name_snap}) &times; {it.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(it.quantity) }) : tr('{quantity} ც', { quantity: it.quantity })}
+                      {it.product_name_snap} ({it.variant_name_snap}) &times; {it.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: kgText(it.quantity) }) : tr('{quantity} ც', { quantity: it.quantity })}
                     </span>
                     <span className="font-semibold text-white shrink-0 tabular-nums">{formatTetri(it.total_price_tetri)}</span>
                   </div>

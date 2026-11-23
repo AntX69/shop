@@ -64,6 +64,13 @@ nsis:
   shortcutName: StorePOS
   # Store data lives in %APPDATA%\StorePOS and is never removed by uninstall or update.
   deleteAppDataOnUninstall: false
+  # The installer opens with a language choice (Georgian, English, Russian, Spanish); the chosen
+  # language is written next to StorePOS.exe and used by the program (resources/installer.nsh).
+  displayLanguageSelector: true
   installerLanguages:
+    - ka_GE
     - en_US
-  language: "1033"
+    - ru_RU
+    - es_ES
+  language: "1079"
+  include: resources/installer.nsh

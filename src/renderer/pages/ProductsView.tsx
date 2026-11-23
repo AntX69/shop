@@ -10,7 +10,7 @@
 import React, { useState, useEffect } from 'react';
 import { Category, Product, User, UnitType } from '../../shared/types.ts';
 import { formatTetri, gelToTetri } from '../../shared/money.ts';
-import { formatUnitQuantity, gramsToKg } from '../../shared/quantity.ts';
+import { formatUnitQuantity, kgText } from '../../shared/quantity.ts';
 import { invokeIpc } from '../api/ipcClient.ts';
 import { ProductEditModal } from '../components/ProductEditModal.tsx';
 import { CategoryManagerModal } from '../components/CategoryManagerModal.tsx';
@@ -498,7 +498,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                                 </span>
                               ))}
                               <span className="text-slate-400 font-medium">
-                                {hasStockNumber(v.stock_quantity) ? `(${p.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(v.stock_quantity) }) : tr('{stock_quantity} ც', { stock_quantity: v.stock_quantity })})` : ''}
+                                {hasStockNumber(v.stock_quantity) ? `(${p.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: kgText(v.stock_quantity) }) : tr('{stock_quantity} ც', { stock_quantity: v.stock_quantity })})` : ''}
                               </span>
                             </div>
                           ))}
@@ -524,7 +524,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ currentUser }) => {
                             ? 'bg-amber-950/60 text-amber-400 border border-amber-800/40'
                             : 'bg-red-950/60 text-red-400 border border-red-800/40'
                         }`}>
-                          {!stockKnown ? '—' : p.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: gramsToKg(totalStock) }) : tr('{totalStock} ცალი', { totalStock })}
+                          {!stockKnown ? '—' : p.unit_type === 'kg' ? tr('{gramsToKg} კგ', { gramsToKg: kgText(totalStock) }) : tr('{totalStock} ცალი', { totalStock })}
                         </span>
                       </td>
                       {canEditAny && (

@@ -47,7 +47,7 @@ const EXE = 'StorePOS-Test.exe';
 // The shop's real installation: per user or for all users (Program Files).
 const realInstalls = [path.join(process.env.LOCALAPPDATA || '', 'Programs', 'StorePOS'), path.join(process.env.ProgramFiles || 'C:\\Program Files', 'StorePOS')];
 const rc3Exe = arg('rc3-exe'); // an unpacked RC3 program, for the 'old program opens new data' experiment
-const expectSchema = Number(arg('schema', '11')); // schema written by the new program (RC1: 10, RC2: 11)
+const expectSchema = Number(arg('schema', '12')); // schema written by the new program (V1.1 RC1: 10, RC2: 11, V1.2: 12)
 if (!oldSetup || !newSetup || !fs.existsSync(oldSetup) || !fs.existsSync(newSetup) || !/StorePOS-Test-Setup/.test(oldSetup) || !/StorePOS-Test-Setup/.test(newSetup)) {
   console.error('usage: --old <StorePOS-Test-Setup-1.0.0-rc.3.exe> --new <StorePOS-Test-Setup-1.1.0-rc.2.exe> --dir <dir> --data <empty dir> --out <dir>');
   process.exit(2);

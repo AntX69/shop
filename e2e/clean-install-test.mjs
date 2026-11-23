@@ -65,6 +65,12 @@ async function main() {
   check('installer finishes silently', (await run(setup, ['/S', `/D=${installDir}`])) === 0);
   check('program installed in the test folder with the right version', fs.existsSync(exePath) && ps(`(Get-Item '${exePath.replace(/'/g, "''")}').VersionInfo.FileVersion`) === version, version);
   check('OCR model installed with the program', fs.existsSync(path.join(installDir, 'resources', 'models', 'handwriting-digits.onnx')));
+  // V1.2: the installer's language (a silent install takes the Windows display language when it
+  // is one of the four, else Georgian) is written for the program's first screens.
+  const langFile = path.join(installDir, 'install-language.txt');
+  const lcid = fs.existsSync(langFile) ? fs.readFileSync(langFile, 'utf8').trim() : '';
+  const LANG_OF = { '1079': ['ka', /მფლობელ/], '1033': ['en', /owner/i], '1049': ['ru', /владельц/i], '3082': ['es', /propietario/i] };
+  check("the installer wrote its language for the program's first screens", !!LANG_OF[lcid], `install-language.txt = ${lcid || 'missing'} (${LANG_OF[lcid]?.[0] || '?'})`);
   check('one Windows uninstall entry', entries().length === 1, JSON.stringify(entries()));
 
   // First start with an empty profile
@@ -74,7 +80,7 @@ async function main() {
   await app.cdp.send('Network.enable');
   await app.cdp.waitFor(`document.querySelectorAll('form input').length >= 3`, 20000, 'owner setup form');
   const first = await app.cdp.evaluate(`({ text: document.body.innerText, version: document.querySelector('[data-testid="app-version"]')?.innerText || '' })`);
-  check('first start asks to create the owner account (no pre-created user)', /მფლობელ/.test(first.text), first.version);
+  check("first start asks to create the owner account (no pre-created user), in the installer's language", (LANG_OF[lcid]?.[1] || /მფლობელ/).test(first.text), `${first.version}, ${LANG_OF[lcid]?.[0] || '?'}`);
   const hasOwner = await app.cdp.ipc('auth:hasOwner', {});
   const users = await app.cdp.ipc('auth:getActiveUsers', {});
   check('no owner and no users exist; nobody can sign in', hasOwner.success && hasOwner.data === false && users.success && users.data.length === 0);
@@ -93,7 +99,7 @@ async function main() {
   const schema = db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v;
   const integrity = db.prepare('PRAGMA integrity_check').get().integrity_check;
   db.close();
-  check('new database is empty (no test customers, products, sales or PINs), schema v11, intact', Object.values(counts).every((n) => n === 0) && schema === 11 && integrity === 'ok', JSON.stringify(counts));
+  check('new database is empty (no test customers, products, sales or PINs), schema v12, intact', Object.values(counts).every((n) => n === 0) && schema === 12 && integrity === 'ok', JSON.stringify(counts));
 
   // Restart, offline (all traffic sent to a dead proxy)
   app = await launchApp(exePath, dataDir, port++, ['--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>']);

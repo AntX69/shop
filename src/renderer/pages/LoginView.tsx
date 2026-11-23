@@ -177,7 +177,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onChangeLa
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-3 sm:p-6 overflow-y-auto select-none">
       
       <div className="w-full max-w-md flex justify-end mb-2 shrink-0">
-        <LanguageSwitcher onChange={onChangeLanguage} />
+        <LanguageSwitcher onChange={onChangeLanguage} full />
       </div>
 
       {/* Brand Header */}

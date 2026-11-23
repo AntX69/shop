@@ -153,6 +153,19 @@ test('the computer language: last choice, else the installer, else Georgian', as
   configureDeviceLanguage({ userData: profile, exeDir }); // a restart reads the saved file
   assert.equal(getDeviceLanguage(), 'en');
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(profile, 'ui-language.json'), 'utf8')), { language: 'en' });
+  // A later reinstall in another language wins over the earlier choice in the program...
+  const installFile = path.join(exeDir, 'install-language.txt');
+  fs.writeFileSync(installFile, '1079');
+  const later = new Date(Date.now() + 60_000);
+  fs.utimesSync(installFile, later, later);
+  configureDeviceLanguage({ userData: profile, exeDir });
+  assert.equal(getDeviceLanguage(), 'ka');
+  // ...and a choice made in the program after that wins again.
+  setDeviceLanguage('ru');
+  const evenLater = new Date(Date.now() + 120_000);
+  fs.utimesSync(path.join(profile, 'ui-language.json'), evenLater, evenLater);
+  configureDeviceLanguage({ userData: profile, exeDir });
+  assert.equal(getDeviceLanguage(), 'ru');
   assert.throws(() => setDeviceLanguage('xx'), /ენა არასწორია/);
   // through the sign-in screen's channels
   assert.equal((await must('app:setDeviceLanguage', { language: 'es' })).language, 'es');
