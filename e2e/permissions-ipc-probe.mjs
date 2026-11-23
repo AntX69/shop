@@ -53,8 +53,8 @@ const mainJs = asar.extractFile(asarFile, path.join('dist-electron', 'main.cjs')
 const routes = [...mainJs.matchAll(/"([a-z]+:[A-Za-z]+)":\{access:"(public|user|owner)"/g)].map((m) => ({ channel: m[1], access: m[2] }));
 const byChannel = new Map(routes.map((r) => [r.channel, r]));
 
-// Channels any signed-in user may call (own session, own PIN, category names, handwriting OCR).
-const OPEN_TO_ANY_USER = new Set(['auth:logout', 'auth:me', 'auth:changeOwnPin', 'products:getCategories', 'ocr:isModelReady', 'ocr:recognize', 'ocr:saveSample']);
+// Channels any signed-in user may call (own session, own PIN, own interface language, category names, handwriting OCR).
+const OPEN_TO_ANY_USER = new Set(['auth:logout', 'auth:me', 'auth:changeOwnPin', 'auth:setLanguage', 'products:getCategories', 'ocr:isModelReady', 'ocr:recognize', 'ocr:saveSample']);
 const GRANTABLE = ['pos.access', 'sales.cash', 'sales.debt', 'sales.mixed', 'customers.create', 'sales.discount', 'debts.view', 'debts.history', 'debts.collect', 'debts.select_receipt', 'debts.correct',
   'sales.history', 'returns.process', 'returns.exchange', 'inventory.view', 'inventory.quantities', 'inventory.receive', 'inventory.adjust',
   'products.view', 'products.create', 'products.edit', 'products.prices', 'products.variants', 'products.archive',
